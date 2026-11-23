@@ -9,6 +9,7 @@ use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use SplFileInfo;
@@ -161,6 +162,31 @@ final class OffsiteBackupTest extends TestCase
         $this->artisan('agentcms:backup-auto')
             ->expectsOutputToContain('手元の backup と同じ場所です')
             ->assertExitCode(1);
+    }
+
+    public function test_外の置き場所がwebから見える場所なら送らない(): void
+    {
+        config()->set('filesystems.disks.'.self::DISK.'.root', public_path('offsite-test-'.getmypid()));
+
+        $this->artisan('agentcms:backup-auto')
+            ->expectsOutputToContain('web から見える場所の中です')
+            ->assertExitCode(1);
+
+        $this->assertDirectoryDoesNotExist(public_path('offsite-test-'.getmypid()));
+    }
+
+    public function test_送れなかったことはログにも残る(): void
+    {
+        Log::spy();
+
+        @mkdir(dirname($this->elsewhere), 0777, true);
+        file_put_contents($this->elsewhere, 'not a directory');
+
+        $this->artisan('agentcms:backup-auto')->assertExitCode(1);
+
+        Log::shouldHaveReceived('error')->withArgs(
+            static fn (string $message): bool => str_contains($message, '外の置き場所へ送れませんでした'),
+        )->once();
     }
 
     public function test_外の置き場所は決めた世代だけ残す(): void

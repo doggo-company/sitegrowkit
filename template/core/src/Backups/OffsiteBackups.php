@@ -347,6 +347,18 @@ final class OffsiteBackups
         if (str_starts_with($normalized, $local) || str_starts_with($local, $normalized)) {
             throw new BackupFailed('外の置き場所が手元の backup と同じ場所です。別のディスクか S3 互換の置き場所を指定してください');
         }
+
+        /*
+         * web から見える場所には置かない（BackupPaths と同じ理由 — URL を推測されただけで
+         * 全データが持ち去られる）。
+         */
+        foreach ([public_path(), storage_path('app/public')] as $exposed) {
+            $exposed = rtrim($exposed, '/').'/';
+
+            if (str_starts_with($normalized, $exposed)) {
+                throw new BackupFailed('外の置き場所が web から見える場所の中です。公開ディレクトリの外を指定してください');
+            }
+        }
     }
 
     private function remoteChecksum(Filesystem $disk, string $id): string

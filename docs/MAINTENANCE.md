@@ -45,8 +45,8 @@ AGENTCMS_BACKUP_OFFSITE_KEEP=14         # 置き場所に残す世代（手元�
 - 自動の取得は、毎分の `php artisan schedule:run`（上の Cron）が動かします。Cron が無いと時刻を入れても取得しません
 - 置き場所は 2 種類から選べます
   - **S3 互換**（Cloudflare R2・Backblaze B2・MinIO など）：`config/filesystems.php` の `s3` disk に `AWS_ACCESS_KEY_ID`・`AWS_SECRET_ACCESS_KEY`・`AWS_DEFAULT_REGION`・`AWS_BUCKET`・`AWS_ENDPOINT`（必要なら `AWS_USE_PATH_STYLE_ENDPOINT=true`）を設定し、プロジェクトで `composer require league/flysystem-aws-s3-v3` を実行します。キットにはこのパッケージを同梱していません
-  - **別のディレクトリ**（別のディスク・ネットワークのマウント）：`AGENTCMS_BACKUP_OFFSITE_DISK=backup-offsite` と `AGENTCMS_BACKUP_OFFSITE_ROOT=<絶対パス>`。手元のバックアップと同じ場所の中を指すと送信を止めます
-- 送った後に大きさを読み直し、`<id>.zip.sha256` を横に置きます。送れなかったときは `agentcms:backup-auto` が終了コード 1 で終わり、手元のバックアップは残します
+  - **別のディレクトリ**（別のディスク・ネットワークのマウント）：`AGENTCMS_BACKUP_OFFSITE_DISK=backup-offsite` と `AGENTCMS_BACKUP_OFFSITE_ROOT=<絶対パス>`。手元のバックアップと同じ場所の中、または公開ディレクトリの中を指すと送信を止めます
+- 送った後に大きさを読み直し、`<id>.zip.sha256` を横に置きます。送れなかったときは `agentcms:backup-auto` が終了コード 1 で終わり、理由をアプリのログ（error）にも残します。手元のバックアップは残します。自動実行（schedule:run）は画面に何も出さないので、失敗に気づくにはログか、置き場所の最新の日時を外から見てください
 - 世代の整理は、このサイトの prefix の中だけで行います
 
 ```sh

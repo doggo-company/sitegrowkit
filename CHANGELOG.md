@@ -9,7 +9,7 @@ SiteGrowKit の変更履歴です。
 ## 未リリース — 毎日のバックアップを別の置き場所へ写せるようにしました
 
 - `AGENTCMS_BACKUP_SCHEDULE=HH:MM` を設定すると、毎日その時刻にバックアップを取ります（`agentcms:backup-auto`。空なら今までどおり自動では取りません）
-- `AGENTCMS_BACKUP_OFFSITE_DISK` を設定すると、取ったバックアップの写しを S3 互換の置き場所か別のディレクトリへ送ります。大きさと checksum を確かめ、送れなければ終了コード 1 で知らせます。置き場所に残す世代は `AGENTCMS_BACKUP_OFFSITE_KEEP`（既定 14）
+- `AGENTCMS_BACKUP_OFFSITE_DISK` を設定すると、取ったバックアップの写しを S3 互換の置き場所か別のディレクトリへ送ります。大きさと checksum を確かめ、送れなければ終了コード 1 で終わり、理由をアプリのログにも残します。置き場所に残す世代は `AGENTCMS_BACKUP_OFFSITE_KEEP`（既定 14）
 - `agentcms:backup-restore --from-offsite --latest` で、置き場所から取り込んで戻せます。checksum が合わないものは取り込みません
 - 手元の置き場所（`storage/app/private/backups`）と 5 世代の整理は変えていません
 

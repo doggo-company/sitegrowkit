@@ -9,6 +9,7 @@ use AgentCms\Core\Backups\BackupCatalog;
 use AgentCms\Core\Backups\BackupFailed;
 use AgentCms\Core\Backups\OffsiteBackups;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
 
 /**
  * 自動の backup（schedule から毎日呼ばれる。手で打ってもよい）。
@@ -20,7 +21,7 @@ use Illuminate\Console\Command;
  *   3. 写せたときだけ、外の古い世代を整理する
  *   4. 手元の世代を整理する（今までと同じ 5 世代）
  *
- * **外へ写せなかったら exit 1 で終わる。** 手元の backup は残す。
+ * **外へ写せなかったら exit 1 で終わり、ログ（error）にも残す。** 手元の backup は残す。
  * 外の置き場所が未設定なら、取ったうえで「このサーバーの中にしか無い」と出す（exit 0）。
  */
 final class AutoBackupCommand extends Command
@@ -35,6 +36,7 @@ final class AutoBackupCommand extends Command
             $manifest = $builder->create();
         } catch (BackupFailed $e) {
             $this->error('backup を作れませんでした: '.$e->getMessage());
+            Log::error('agentcms:backup-auto: backup を作れませんでした: '.$e->getMessage());
 
             return self::FAILURE;
         }
@@ -61,6 +63,9 @@ final class AutoBackupCommand extends Command
                 }
 
                 $this->error($reason.'（手元の backup は残しています）');
+
+                // schedule:run は出力を捨てる。夜中の失敗をログにも残す（鍵などの秘密は理由に含まれない）
+                Log::error('agentcms:backup-auto: '.$reason, ['backup' => $manifest->id]);
                 $failed = true;
             }
         } else {
