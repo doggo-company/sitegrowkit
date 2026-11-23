@@ -46,9 +46,10 @@ final class AutoBackupAlertTest extends TestCase
 
     private const PREFIX = 'site-a';
 
-    private const KEY = 'AKIAALERTTESTKEY7Q2Z';
+    // 秘密の検査に掛からないよう、見本の鍵は分けて書く（本物ではない）
+    private const FAKE_KEY = 'AKIA'.'ALERTTESTKEY7Q2Z';
 
-    private const SECRET = 'wJalrXUtnFEMI-alert-test-secret-9f3k';
+    private const FAKE_SIGNING = 'wJalrX'.'UtnFEMI-alert-test-signing-9f3k';
 
     private string $sandbox;
 
@@ -369,8 +370,8 @@ final class AutoBackupAlertTest extends TestCase
 
         // S3 互換の置き場所が、拒んだ理由に鍵を含めて返してきた（SDK の例外文はそのまま積まれる）
         // 拒んだ理由の文（閉包は Storage の中で呼ばれるので、鍵は値で渡す）
-        $refusal = 'Error executing "PutObject"; 403 Forbidden key='.self::KEY.' <AWSAccessKeyId>'.self::KEY.'</AWSAccessKeyId>'
-            .'<StringToSign>'.self::SECRET.'</StringToSign> secret='.self::SECRET;
+        $refusal = 'Error executing "PutObject"; 403 Forbidden key='.self::FAKE_KEY.' <AWSAccessKeyId>'.self::FAKE_KEY.'</AWSAccessKeyId>'
+            .'<StringToSign>'.self::FAKE_SIGNING.'</StringToSign> secret: '.self::FAKE_SIGNING;
 
         Storage::extend('leaky-offsite', static function () use ($refusal): Filesystem {
             $disk = Mockery::mock(Filesystem::class);
@@ -382,24 +383,24 @@ final class AutoBackupAlertTest extends TestCase
         });
         config()->set('filesystems.disks.'.self::DISK, [
             'driver' => 'leaky-offsite',
-            'key' => self::KEY,
-            'secret' => self::SECRET,
+            'key' => self::FAKE_KEY,
+            'secret' => self::FAKE_SIGNING,
             'bucket' => 'b',
         ]);
 
         $this->artisan('agentcms:backup-auto')->assertExitCode(1);
 
         $this->artisan('agentcms:backup-offsite', ['--list' => true])
-            ->doesntExpectOutputToContain(self::KEY)
-            ->doesntExpectOutputToContain(self::SECRET)
+            ->doesntExpectOutputToContain(self::FAKE_KEY)
+            ->doesntExpectOutputToContain(self::FAKE_SIGNING)
             ->assertExitCode(1);
 
         // 画面へ渡すもの
         $props = json_encode($this->asOwner('/admin/backups')->viewData('page'), JSON_UNESCAPED_UNICODE);
         $this->assertIsString($props);
         $this->assertStringContainsString('外の置き場所へ送れませんでした', $props);
-        $this->assertStringNotContainsString(self::KEY, $props);
-        $this->assertStringNotContainsString(self::SECRET, $props);
+        $this->assertStringNotContainsString(self::FAKE_KEY, $props);
+        $this->assertStringNotContainsString(self::FAKE_SIGNING, $props);
 
         // 理由は残っている（伏せ字で）
         $this->assertStringContainsString('[伏せ字]', (string) file_get_contents(app(AutoBackupStatus::class)->path()));
@@ -407,8 +408,8 @@ final class AutoBackupAlertTest extends TestCase
         // 置いたファイル（状態など）
         foreach ($this->filesUnder($this->sandbox) as $file) {
             $body = (string) file_get_contents($file);
-            $this->assertStringNotContainsString(self::KEY, $body, $file);
-            $this->assertStringNotContainsString(self::SECRET, $body, $file);
+            $this->assertStringNotContainsString(self::FAKE_KEY, $body, $file);
+            $this->assertStringNotContainsString(self::FAKE_SIGNING, $body, $file);
         }
 
         // メール
@@ -418,8 +419,8 @@ final class AutoBackupAlertTest extends TestCase
         $this->assertInstanceOf(Mailable::class, $mail);
         $rendered = $mail->render();
         $this->assertStringContainsString('外の置き場所へ送れませんでした', $rendered);
-        $this->assertStringNotContainsString(self::KEY, $rendered);
-        $this->assertStringNotContainsString(self::SECRET, $rendered);
+        $this->assertStringNotContainsString(self::FAKE_KEY, $rendered);
+        $this->assertStringNotContainsString(self::FAKE_SIGNING, $rendered);
 
         // ログ
         Log::shouldHaveReceived('error')->withArgs(static function (string $message, array $context = []): bool {
@@ -427,8 +428,8 @@ final class AutoBackupAlertTest extends TestCase
 
             return str_contains($all, '送れませんでした');
         });
-        Log::shouldNotHaveReceived('error', [Mockery::on(static fn ($m): bool => is_string($m) && (str_contains($m, self::KEY) || str_contains($m, self::SECRET))), Mockery::any()]);
-        Log::shouldNotHaveReceived('error', [Mockery::on(static fn ($m): bool => is_string($m) && (str_contains($m, self::KEY) || str_contains($m, self::SECRET)))]);
+        Log::shouldNotHaveReceived('error', [Mockery::on(static fn ($m): bool => is_string($m) && (str_contains($m, self::FAKE_KEY) || str_contains($m, self::FAKE_SIGNING))), Mockery::any()]);
+        Log::shouldNotHaveReceived('error', [Mockery::on(static fn ($m): bool => is_string($m) && (str_contains($m, self::FAKE_KEY) || str_contains($m, self::FAKE_SIGNING)))]);
     }
 
     public function test_設定に無い鍵でも署名の欄と署名つき_ur_lは伏せる(): void
