@@ -648,21 +648,61 @@ exit 0`,
     "utf8",
   );
   const sec = docs.slice(docs.indexOf("## 8."), docs.indexOf("## 9."));
-  const restore = (/```bash\n([\s\S]*?)```/.exec(sec)?.[1] ?? "")
-    .replaceAll("<サイト名>", S1.site)
-    .replace(
-      "<release id>-db.sql.gz",
-      // 置き換えは関数で渡す（文字列だと中の $' が「一致の後ろ」と読まれる）
-      () => "$(ls backups | grep -E '^[0-9]{14}-db.sql.gz$' | tail -1)",
-    );
-  check(restore.includes("DROP DATABASE"), "§8 の手順を手順書から取り出せた");
-  // 台本は一時ファイルに置いて流す（標準入力で流すと、中の docker compose が残りの台本を読んでしまう）
-  const rs = remote(
-    `f=$(mktemp) && cat > "$f" << 'E2E_EOS'\nset -euo pipefail\n${restore}\necho restore-rc=0\nE2E_EOS\nbash "$f"; rc=$?; rm -f "$f"; exit $rc`,
+  const restoreScript = /```bash\n([\s\S]*?)```/.exec(sec)?.[1] ?? "";
+  check(
+    restoreScript.includes("DROP DATABASE"),
+    "§8 のスクリプトを手順書から取り出せた（手を加えずに流す）",
+  );
+  remote(
+    `cat > /srv/agentcms/restore-db.sh << 'E2E_EOS'\n${restoreScript}E2E_EOS`,
+  );
+  const restore = (id) =>
+    remote(
+      `cd /srv/agentcms && bash restore-db.sh ${S1.site} ${id} 2>&1; echo "rc=$?"`,
+    ).stdout;
+  const appUp = () =>
+    remote(
+      `docker inspect -f '{{.State.Running}}' agentcms-${S1.site}-app`,
+    ).stdout.trim() === "true";
+
+  // 壊す前に止まること（無い・壊れている）。アプリは動いたまま、DB はそのまま
+  let out = restore("29990101000000");
+  check(
+    !out.includes("rc=0") && out.includes("バックアップがありません"),
+    "無い番号では何も変えずに止まる",
   );
   check(
-    rs.stdout.includes("restore-rc=0"),
-    `§8 の手順が最後まで通った（${(rs.stderr || "").trim().split("\n").pop() ?? ""}）`,
+    appUp() && Number(sql("SELECT COUNT(*) FROM migrations")) === 0,
+    "アプリは動いたまま・DB はそのまま",
+  );
+  remote(
+    `cd /srv/agentcms/sites/${S1.site} && printf 'not a gzip' > backups/29990101000001-db.sql.gz`,
+  );
+  out = restore("29990101000001");
+  check(
+    !out.includes("rc=0"),
+    "壊れたバックアップでは何も変えずに止まる（gzip -t）",
+  );
+  check(
+    appUp() &&
+      sql("SHOW TABLES LIKE 'e2e_after_backup'") === "e2e_after_backup",
+    "アプリは動いたまま・DB はそのまま",
+  );
+  remote(
+    `rm -f /srv/agentcms/sites/${S1.site}/backups/29990101000001-db.sql.gz`,
+  );
+
+  // 本物のバックアップで戻す
+  const id = remote(
+    `cd /srv/agentcms/sites/${S1.site}/backups && ls | grep -E '^[0-9]{14}-db.sql.gz$' | tail -1 | cut -c1-14`,
+  ).stdout.trim();
+  const rel = remote(
+    `cat /srv/agentcms/sites/${S1.site}/backups/${id}-db.release`,
+  ).stdout.trim();
+  out = restore(id);
+  check(
+    out.includes("rc=0"),
+    `§8 のスクリプトで ${id} から戻した（${out.trim().split("\n").slice(-2, -1)[0] ?? ""}）`,
   );
   check(
     rows > 0 && Number(sql("SELECT COUNT(*) FROM migrations")) === rows,
@@ -672,12 +712,51 @@ exit 0`,
     sql("SHOW TABLES LIKE 'e2e_after_backup'") === "",
     "バックアップの後に足した表は消えた",
   );
+  const cur = remote(
+    `basename "$(readlink /srv/agentcms/sites/${S1.site}/current)"`,
+  ).stdout.trim();
+  check(
+    /^\d{14}$/.test(rel) && cur === rel,
+    `コードも DB を取ったときの release（${rel}）に合わせた（current=${cur}）`,
+  );
+  check(
+    remote(
+      `ls /srv/agentcms/sites/${S1.site}/backups | grep -c '^before-restore-.*-db.sql.gz$'`,
+    ).stdout.trim() === "1",
+    "戻す前の DB を backups/before-restore-* に取っておいた",
+  );
   let hz = 0;
   for (let i = 0; i < 20 && hz !== 200; i++) {
     hz = (await get(S1.host, "/healthz")).status;
     if (hz !== 200) await new Promise((res) => setTimeout(res, 1000));
   }
   check(hz === 200, "戻してアプリを起こしたあと /healthz は 200");
+
+  // ------------------------------------------------------------ 6c. PHP-FPM はほかのサイトから届かない
+  step(
+    "6c. PHP-FPM は Caddy からだけ（別のサイトのコンテナから FastCGI を送れない）",
+  );
+  const probe = remote(
+    `docker exec agentcms-${S2.site}-app php -r 'var_dump(@fsockopen("agentcms-${S1.site}-app", 9000, $e, $m, 3));' 2>&1`,
+  ).stdout.trim();
+  check(
+    probe.includes("bool(false)"),
+    `サイト 2 からサイト 1 の 9000 へはつながらない（${probe}）`,
+  );
+  const sock = remote(
+    `test -S /srv/agentcms/sites/${S1.site}/run/php-fpm.sock && echo socket`,
+  ).stdout.trim();
+  check(
+    sock === "socket",
+    "サイト 1 の PHP-FPM は置き場所の中のソケットで待っている",
+  );
+  const seen = remote(
+    `docker exec agentcms-${S2.site}-app sh -c 'ls /srv/agentcms/sites/${S1.site} 2>&1 || true'`,
+  ).stdout.trim();
+  check(
+    /No such file/.test(seen),
+    `サイト 2 のコンテナからサイト 1 の置き場所は見えない（${seen.split("\n")[0]}）`,
+  );
 
   // ------------------------------------------------------------ 7. 秘密が漏れていない
   step("7. サーバーで生成した秘密が、出力・コンテナ設定・ファイルに出ていない");

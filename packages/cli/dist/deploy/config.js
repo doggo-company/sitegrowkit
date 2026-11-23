@@ -116,6 +116,13 @@ function validateVps(raw, target) {
         problems.push("provider vps では remote を書きません（置き場所は vps.site と vps.root から決まります）");
     if (o.api !== undefined)
         problems.push("api は provider xserver の設定です（vps では使いません）");
+    // 掃除はこの数をシェルへ渡す。負の数・小数・文字列だと、戻り先の release まで消しうる
+    if (o.keepReleases !== undefined &&
+        !(typeof o.keepReleases === "number" &&
+            Number.isInteger(o.keepReleases) &&
+            o.keepReleases >= 1 &&
+            o.keepReleases <= 20))
+        problems.push(`keepReleases は 1〜20 の整数です（指定: ${JSON.stringify(o.keepReleases)}）`);
     const vps = o.vps;
     if (!vps || typeof vps !== "object")
         problems.push("vps がありません");

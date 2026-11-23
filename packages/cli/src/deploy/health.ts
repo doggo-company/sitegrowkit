@@ -45,10 +45,9 @@ interface HealthJson {
  * body が `ok: true` と言っていても、status が 200 でなければ**外から見て落ちている**。
  * 申告だけで通すと、**切り戻しの引き金が引かれない**。
  */
-export function healthVerdict(res: { status: number; body: string } | null): {
-  healthy: boolean;
-  why: string;
-} {
+export function healthVerdict(
+  res: { status: number; body: string } | null,
+): { healthy: boolean; why: string } {
   if (res === null) {
     return { healthy: false, why: "接続できませんでした" };
   }
@@ -396,7 +395,9 @@ export async function runHealthChecks(
 
 /** health のあと何をするか（B-12） */
 export type PostHealthAction =
-  { kind: "continue" } | { kind: "rollback"; to: string } | { kind: "stop" };
+  | { kind: "continue" }
+  | { kind: "rollback"; to: string }
+  | { kind: "stop" };
 
 /**
  * health の結果から**次の一手**を決める（B-12）。
@@ -424,7 +425,5 @@ export function postHealthAction(
 
   if (!checks.some((c) => c.status === "FAIL")) return { kind: "continue" };
 
-  return previous === null
-    ? { kind: "stop" }
-    : { kind: "rollback", to: previous };
+  return previous === null ? { kind: "stop" } : { kind: "rollback", to: previous };
 }

@@ -23,7 +23,9 @@ export const EDGE_NETWORK = "agentcms";
 export const CADDY_CONTAINER = "agentcms-caddy";
 export const MYSQL_CONTAINER = "agentcms-mysql";
 /** 各サイトの PHP-FPM が使うイメージ。Dockerfile を変えたら末尾の番号を上げる */
-export const PHP_IMAGE = "agentcms-php:8.5-1";
+export const PHP_IMAGE = "agentcms-php:8.5-2";
+/** コンテナの中の PHP-FPM のソケット（TCP では待たない） */
+export const FPM_SOCKET_IN_CONTAINER = "/run/agentcms/php-fpm.sock";
 export const CADDY_IMAGE = "caddy:2.10-alpine";
 export const MYSQL_IMAGE = "mysql:8.4";
 /**
@@ -118,6 +120,9 @@ import sites/*.caddy
  *   解かないと全 release が同じパスに見え、OPcache が古い release のコードを返し続ける
  *   （Xserver の entry stub が `realpath()` しているのと同じ理由・ADR-0008）
  * - `.well-known` 以外のドットファイルは 404
+ * - PHP-FPM へは**サイトの置き場所の中の Unix ソケット**でつなぐ。TCP（9000）で待たせると、
+ *   同じ Docker ネットワークにいる別のサイトのコンテナから FastCGI を直接送れてしまう
+ *   （PHP の公式の注意。接続元を絞らない FastCGI は任意のコードを動かされる）
  */
 export function siteCaddy(n) {
     return `# SiteGrowKit サイト "${n.site}"（agentcms deploy が書く。手で変えても次の deploy で戻る）
@@ -130,7 +135,7 @@ ${n.tls === "internal" ? "\ttls internal\n" : ""}\troot * ${n.appDir}/current/pu
 \t\tnot path /.well-known/*
 \t}
 \trespond @hidden 404
-\tphp_fastcgi ${n.appContainer}:9000 {
+\tphp_fastcgi unix/${n.appDir}/run/php-fpm.sock {
 \t\tresolve_root_symlink
 \t}
 \tfile_server
@@ -153,8 +158,6 @@ export function siteCompose(n, ids) {
     user: "${ids.uid}:${ids.gid}"
     working_dir: ${n.appDir}
     restart: unless-stopped
-    volumes:
-      - ${n.appDir}:${n.appDir}
     networks: [${EDGE_NETWORK}]`;
     return `# SiteGrowKit サイト "${n.site}"（agentcms deploy が書く。手で変えても次の deploy で戻る）
 name: agentcms-site-${n.site}
@@ -162,9 +165,15 @@ services:
   app:
     container_name: ${n.appContainer}
 ${common}
+    volumes:
+      - ${n.appDir}:${n.appDir}
+      # PHP-FPM はこのソケットだけで待つ（Caddy がサイトの置き場所越しにつなぐ）
+      - ${n.appDir}/run:/run/agentcms
   scheduler:
     container_name: ${n.schedulerContainer}
 ${common}
+    volumes:
+      - ${n.appDir}:${n.appDir}
     command:
       - sh
       - -c
@@ -192,6 +201,12 @@ RUN { \\
       echo 'display_errors = Off'; \\
       echo 'log_errors = On'; \\
     } > /usr/local/etc/php/conf.d/agentcms.ini
+# TCP の 9000 ではなく Unix ソケットで待つ（公式イメージの zz-docker.conf の listen = 9000 を後から上書き）
+RUN { \\
+      echo '[www]'; \\
+      echo 'listen = ${FPM_SOCKET_IN_CONTAINER}'; \\
+      echo 'listen.mode = 0660'; \\
+    } > /usr/local/etc/php-fpm.d/zzz-agentcms.conf
 LABEL org.opencontainers.image.title="SiteGrowKit PHP-FPM"
 `;
 }

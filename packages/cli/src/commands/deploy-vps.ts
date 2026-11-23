@@ -7,7 +7,6 @@ import {
   linkShared,
   migrate,
   optimize,
-  pickRollbackTarget,
   switchCurrent,
   taxonomySync,
   uploadAndExtract,
@@ -19,6 +18,7 @@ import {
   cleanupReleasesVps,
   healthyReleases,
   markHealthy,
+  rollbackTargetByHistory,
   releaseSiteLock,
   runScript,
   siteContainers,
@@ -349,18 +349,13 @@ async function rollbackLocked(
     });
     return 1;
   }
-  // health まで通った release だけを候補にする（途中で落ちた版へ戻らない）
+  // 公開の記録で 1 つ前（health まで通った版だけ・公開した順）。途中で落ちた版へは戻らない
   const curId = cur.split("/").pop() ?? null;
-  const healthy = (await healthyReleases(exec, cfg)).filter(
-    (id) => curId === null || id <= curId,
-  );
-  const candidates =
-    curId !== null && !healthy.includes(curId) ? [curId, ...healthy] : healthy;
-  const prev = pickRollbackTarget(candidates, curId);
+  const prev = rollbackTargetByHistory(await healthyReleases(exec, cfg), curId);
   if (!prev) {
     fail({
       what: "rollback 先がありません",
-      why: `${curId} より古く、health まで通った release がありません`,
+      why: `公開の記録（${n.appDir}/releases.history）に、${curId} の前に出ていて今も残っている release がありません`,
       fix: "再デプロイで復旧してください",
     });
     return 1;

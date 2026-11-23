@@ -264,20 +264,26 @@ exit 0`;
 }
 
 /**
- * 同じサーバーへ 2 つの deploy / setup が同時に来たとき、Caddy の行と DB の作成を
- * 順番に流すための鍵（flock があるときだけ。Debian / Ubuntu / Alpine にはある）。
+ * edge（Caddy の行・MySQL の root パスワード・サイトの DB）を変える台本の鍵。
+ * 同じサーバーへ 2 つの setup / deploy が同時に来ても、順番に流す。
+ *
+ * `mkdir` の成否で取る（flock は BusyBox と macOS で使い方が違う・無いことがある）。
+ * 台本が終われば（失敗でも）trap で外す。取れなければ 1 秒ごとに待ち、
+ * `AGENTCMS_LOCK_WAIT` 秒（既定 300）で諦める。
  */
 function edgeLock(n: VpsNames): string {
-  return `if command -v flock >/dev/null 2>&1 && [ -d ${shq(n.root + "/edge")} ]; then
-  exec 9>${shq(n.root + "/edge/.agentcms.lock")}
-  # BusyBox の flock には -w が無い。-n（取れなければすぐ戻る）を 1 秒ごとに 300 回
-  i=0
-  until flock -n 9; do
-    i=$((i + 1))
-    if [ "$i" -ge 300 ]; then echo "lock-timeout: 別の deploy / setup が 5 分以上終わりません"; exit 7; fi
-    sleep 1
-  done
-fi`;
+  const lock = `${n.root}/edge/.agentcms.lock`;
+  return `mkdir -p ${shq(n.root + "/edge")}
+lock_waited=0
+until mkdir ${shq(lock)} 2>/dev/null; do
+  lock_waited=$((lock_waited + 1))
+  if [ "$lock_waited" -ge "\${AGENTCMS_LOCK_WAIT:-300}" ]; then
+    echo "lock-timeout: 別の setup / deploy が終わりません（${lock} — 止まったまま残っているなら、ほかに動いていないことを確かめてから消す）"
+    exit 7
+  fi
+  sleep 1
+done
+trap 'rmdir ${shq(lock)} 2>/dev/null' EXIT`;
 }
 
 /**
@@ -389,6 +395,7 @@ export function edgeFilesScript(n: VpsNames): string {
   const edge = `${n.root}/edge`;
   return `set -euo pipefail
 umask 077
+${edgeLock(n)}
 mkdir -p ${shq(edge + "/sites")} ${shq(edge + "/secrets")} ${shq(n.root + "/sites")}
 chmod 755 ${shq(edge)} ${shq(edge + "/sites")} ${shq(n.root + "/sites")}
 chmod 700 ${shq(edge + "/secrets")}
@@ -455,20 +462,46 @@ cat > "$tmpl" << 'AGENTCMS_ENV'
 ${template}
 AGENTCMS_ENV
 gen() { head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32; }
-db_pass=$(gen)
-app_key="base64:$(head -c 32 /dev/urandom | base64 | tr -d '\\n')"
-# 同じ名前の DB か利用者が既にあれば作らない（別の置き場所のサイトか、前の setup の残り）。
-# 既にある利用者のパスワードを変えると、そのサイトが DB に入れなくなる
+pending=${shq(env + ".pending")}
 root_sql() { docker exec -i ${MYSQL_CONTAINER} sh -c 'MYSQL_PWD="$(cat /run/agentcms/mysql-root)" exec mysql -uroot -N'; }
-exists=$(printf "SELECT (SELECT COUNT(*) FROM mysql.user WHERE user='%s') + (SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='%s');\n" ${shq(n.dbUser)} ${shq(n.dbName)} | root_sql)
-if [ "$exists" != "0" ]; then
-  rm -f "$tmpl"
-  echo "db-exists: DB か利用者「${n.dbName}」が既にあるのに、このサイトの shared/.env がありません。別の置き場所の同じサイト名か、前の setup が途中で止まった残りです。何も変えずに止めました"
+if [ -s "$pending" ]; then
+  # 前の setup が DB を作ったあと .env を置く前に止まった。そのとき作った値で続きをやる
+  resume=1
+  # IFS='=' で分けると APP_KEY の末尾の = が落ちる。行の頭を外して読む
+  while IFS= read -r line; do
+    case "$line" in
+      DB_PASSWORD=*) db_pass="\${line#DB_PASSWORD=}" ;;
+      APP_KEY=*) app_key="\${line#APP_KEY=}" ;;
+    esac
+  done < "$pending"
+else
+  resume=0
+  db_pass=$(gen)
+  app_key="base64:$(head -c 32 /dev/urandom | base64 | tr -d '\\n')"
+  # DB に触る前に、このサイトの置き場所へ値を残す（600）。止まっても次の setup が同じ値で続けられ、
+  # 「他人の DB」と「自分の途中の setup」を見分けられる
+  printf 'DB_PASSWORD=%s\\nAPP_KEY=%s\\n' "$db_pass" "$app_key" > "$pending.tmp"
+  chmod 600 "$pending.tmp"
+  mv "$pending.tmp" "$pending"
+fi
+# 同じ名前の DB か利用者が既にあれば作らない（別の置き場所のサイトなど）。
+# 既にある利用者のパスワードを変えると、そのサイトが DB に入れなくなる
+exists=$(printf "SELECT (SELECT COUNT(*) FROM mysql.user WHERE user='%s') + (SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='%s');\\n" ${shq(n.dbUser)} ${shq(n.dbName)} | root_sql)
+if [ "$exists" != "0" ] && [ "$resume" = 0 ]; then
+  rm -f "$tmpl" "$pending"
+  echo "db-exists: DB か利用者「${n.dbName}」が既にあるのに、このサイトの shared/.env がありません。別の置き場所の同じサイト名か、手で作ったものです。何も変えずに止めました"
   exit 1
 fi
-printf "CREATE DATABASE \\\`%s\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\nCREATE USER '%s'@'%%' IDENTIFIED BY '%s';\nGRANT ALL PRIVILEGES ON \\\`%s\\\`.* TO '%s'@'%%';\n" \\
-  ${shq(n.dbName)} ${shq(n.dbUser)} "$db_pass" ${shq(n.dbName)} ${shq(n.dbUser)} \\
-  | root_sql
+if [ "$resume" = 1 ]; then
+  # 自分の途中の setup（.env.pending がある）なので、同じ値でそろえ直す
+  printf "CREATE DATABASE IF NOT EXISTS \\\`%s\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\\nCREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s';\\nALTER USER '%s'@'%%' IDENTIFIED BY '%s';\\nGRANT ALL PRIVILEGES ON \\\`%s\\\`.* TO '%s'@'%%';\\n" \\
+    ${shq(n.dbName)} ${shq(n.dbUser)} "$db_pass" ${shq(n.dbUser)} "$db_pass" ${shq(n.dbName)} ${shq(n.dbUser)} \\
+    | root_sql
+else
+  printf "CREATE DATABASE \\\`%s\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\\nCREATE USER '%s'@'%%' IDENTIFIED BY '%s';\\nGRANT ALL PRIVILEGES ON \\\`%s\\\`.* TO '%s'@'%%';\\n" \\
+    ${shq(n.dbName)} ${shq(n.dbUser)} "$db_pass" ${shq(n.dbName)} ${shq(n.dbUser)} \\
+    | root_sql
+fi
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     "APP_KEY=${APP_KEY_PLACEHOLDER}") printf 'APP_KEY=%s\\n' "$app_key" ;;
@@ -479,6 +512,7 @@ done < "$tmpl" > ${shq(env + ".tmp")}
 rm -f "$tmpl"
 chmod 600 ${shq(env + ".tmp")}
 mv ${shq(env + ".tmp")} ${shq(env)}
+rm -f "$pending"
 echo site-env-ok`;
 }
 
@@ -588,6 +622,8 @@ export async function siteContainers(ctx: DeployContext): Promise<StepResult> {
   const r = await runScript(
     ctx.exec,
     `set -euo pipefail
+# PHP-FPM のソケットの置き場所（無いと Docker が root の持ち物で作り、FPM が書けない）
+mkdir -p ${shq(n.appDir + "/run")}
 cat > ${shq(n.appDir + "/compose.yml")} << 'AGENTCMS_COMPOSE'
 ${compose}AGENTCMS_COMPOSE
 docker compose -f ${shq(n.appDir + "/compose.yml")} up -d --remove-orphans --quiet-pull 2>&1 | tail -20
@@ -624,6 +660,8 @@ envval DB_PASSWORD | docker exec -i ${MYSQL_CONTAINER} sh -c 'IFS= read -r p; MY
 gzip -t "$out"
 size=$(wc -c < "$out")
 if [ "$size" -lt 200 ]; then echo "backup-too-small:$size"; exit 1; fi
+# このときに出ていた release を横に残す（DB を戻すとき、コードも同じ版へ合わせるため）
+if [ -L current ]; then basename "$(readlink current)" > "backups/${releaseId}-db.release"; fi
 echo "backup-ok:$size"`;
 }
 
@@ -649,13 +687,21 @@ export async function backupDatabaseVps(
 
 // ---------------------------------------------------------------- release の記録・掃除・鍵
 
-/** health まで通った release に付ける印。rollback はこの印のある release にだけ戻る */
+/** health まで通った release に付ける印 */
 export const HEALTHY_MARK = ".agentcms-healthy";
+/**
+ * 公開の記録（health まで通った deploy を、公開した順に 1 行ずつ）。
+ * rollback と掃除は、release の番号（手元の時計で付けた時刻）ではなく、この順で選ぶ。
+ * 手元で build に時間がかかって後から公開された版や、時計のずれた手元から出した版でも、
+ * 「実際に 1 つ前に出ていた版」へ戻る。
+ */
+export const HISTORY_FILE = "releases.history";
 
 export async function markHealthy(ctx: DeployContext): Promise<StepResult> {
   const n = vpsNames(ctx.cfg);
   const r = await ctx.exec.exec(
-    `touch ${shq(`${n.appDir}/releases/${ctx.releaseId}/${HEALTHY_MARK}`)} && echo mark-ok`,
+    `touch ${shq(`${n.appDir}/releases/${ctx.releaseId}/${HEALTHY_MARK}`)} && ` +
+      `printf '%s\\n' ${shq(ctx.releaseId)} >> ${shq(`${n.appDir}/${HISTORY_FILE}`)} && echo mark-ok`,
   );
   return r.code === 0 && r.stdout.includes("mark-ok")
     ? ok("mark-healthy")
@@ -663,8 +709,8 @@ export async function markHealthy(ctx: DeployContext): Promise<StepResult> {
 }
 
 /**
- * health まで通った release の id（新しい順）。
- * 途中で落ちた release（migration の失敗など）は印が無いので入らない —
+ * health まで通って公開された release の id（**公開した順の新しい順**・重なりなし・
+ * ディレクトリが残っているものだけ）。途中で落ちた release は記録に無いので入らない —
  * **一度も公開できなかった版へ rollback しない**。
  */
 export async function healthyReleases(
@@ -673,31 +719,61 @@ export async function healthyReleases(
 ): Promise<string[]> {
   const n = vpsNames(cfg);
   const r = await exec.exec(
-    `cd ${shq(n.appDir + "/releases")} 2>/dev/null && for d in *; do [ -f "$d/${HEALTHY_MARK}" ] && echo "$d"; done | sort -r | head -50`,
+    `cd ${shq(n.appDir)} 2>/dev/null && [ -f ${HISTORY_FILE} ] && ` +
+      `awk '{ l[NR] = $0 } END { for (i = NR; i > 0; i--) print l[i] }' ${HISTORY_FILE} | ` +
+      `while IFS= read -r d; do [ -f "releases/$d/${HEALTHY_MARK}" ] && echo "$d"; done`,
   );
+  const seen = new Set<string>();
   return r.stdout
     .split("\n")
     .map((l) => l.trim())
-    .filter((l) => /^\d{14}$/.test(l));
+    .filter((l) => /^\d{14}$/.test(l) && !seen.has(l) && seen.add(l));
 }
 
 /**
- * 古い release の掃除。current と、印のある新しい順 keep 個を残し、ほかは消す
+ * rollback の先：公開の記録で current の 1 つ前。current が記録に無ければ選ばない
+ * （どこへ戻るのが正しいか分からないので、推測で動かさない）。
+ */
+export function rollbackTargetByHistory(
+  history: string[],
+  current: string | null,
+): string | null {
+  if (current === null) return null;
+  const at = history.indexOf(current);
+  return at === -1 ? null : (history[at + 1] ?? null);
+}
+
+/**
+ * 古い release の掃除。current と、公開の記録の新しい順 keep 個を残し、ほかは消す
  * （途中で落ちた release も消す。残しておくと rollback 先と取り違える元になる）。
  */
 export async function cleanupReleasesVps(
   ctx: DeployContext,
 ): Promise<StepResult> {
   const n = vpsNames(ctx.cfg);
+  const keep = ctx.cfg.keepReleases;
+  if (!Number.isInteger(keep) || keep < 1)
+    return ng(
+      "cleanup",
+      `keepReleases が 1 以上の整数ではありません（${String(keep)}）。何も消していません`,
+    );
+  const history = await healthyReleases(ctx.exec, ctx.cfg);
+  const cur = await ctx.exec.exec(
+    `basename "$(readlink ${shq(n.appDir + "/current")})"`,
+  );
+  const current = cur.stdout.trim();
+  if (!/^\d{14}$/.test(current))
+    return ng("cleanup", "current を読めませんでした。何も消していません");
+  const keepSet = new Set([
+    current,
+    ...history.filter((id) => id !== current).slice(0, keep),
+  ]);
   const r = await runScript(
     ctx.exec,
     `set -uo pipefail
 cd ${shq(n.appDir + "/releases")} || exit 1
-cur=$(basename "$(readlink ${shq(n.appDir + "/current")})")
-kept=0
-for d in $(ls -1 | grep -E '^[0-9]{14}$' | sort -r); do
-  [ "$d" = "$cur" ] && continue
-  if [ -f "$d/${HEALTHY_MARK}" ] && [ "$kept" -lt ${ctx.cfg.keepReleases} ]; then kept=$((kept + 1)); continue; fi
+for d in $(ls -1 | grep -E '^[0-9]{14}$'); do
+  case " ${[...keepSet].join(" ")} " in *" $d "*) continue ;; esac
   rm -rf "$d"
 done
 rm -f ${shq(n.appDir + "/tmp")}/*.tar.gz

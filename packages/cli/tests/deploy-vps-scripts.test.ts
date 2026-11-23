@@ -22,6 +22,7 @@ import {
   edgeFilesScript,
   healthyReleases,
   releaseSiteLock,
+  rollbackTargetByHistory,
   siteEnvScript,
   siteRoute,
   envTemplate,
@@ -81,7 +82,9 @@ esac
 case "$*" in
   *"caddy validate"*) [ "\${FAKE_VALIDATE:-ok}" = ok ] || { echo "Error: ambiguous site definition"; exit 1; } ;;
   *"caddy reload"*) [ "\${FAKE_RELOAD:-ok}" = ok ] || { echo "Error: reload failed"; exit 1; } ;;
-  *"mysql -uroot -N"*) if grep -q "SELECT (SELECT COUNT" "$FAKE_LOG.stdin.$n"; then echo "\${FAKE_EXISTS:-0}"; fi ;;
+  *"mysql -uroot -N"*)
+    if grep -q "SELECT (SELECT COUNT" "$FAKE_LOG.stdin.$n"; then echo "\${FAKE_EXISTS:-0}";
+    elif [ "\${FAKE_CREATE:-ok}" != ok ]; then echo "ERROR 1396: Operation CREATE USER failed"; exit 1; fi ;;
   *"volume inspect"*) [ "\${FAKE_VOLUME:-none}" = exists ] || exit 1 ;;
   *mysqldump*) [ "\${FAKE_DUMP:-ok}" = ok ] || exit 2; for i in $(seq 1 400); do echo "INSERT INTO t VALUES ($i, 'row-$i-$RANDOM');"; done ;;
 esac
@@ -346,10 +349,12 @@ run("edge の設定を置く台本", () => {
 });
 
 run("release の印・掃除・鍵", () => {
+  /** ids は作る順。healthy なら印を付け、history の順（公開した順）で記録に書く */
   function releases(
     c: DeployTargetConfig,
     ids: Array<[string, boolean]>,
     current: string,
+    history: string[] = ids.filter(([, h]) => h).map(([id]) => id),
   ) {
     for (const [id, healthy] of ids) {
       mkdirSync(join(c.remote.appDir, "releases", id), { recursive: true });
@@ -359,6 +364,10 @@ run("release の印・掃除・鍵", () => {
           "",
         );
     }
+    writeFileSync(
+      join(c.remote.appDir, "releases.history"),
+      history.map((h) => `${h}\n`).join(""),
+    );
     mkdirSync(join(c.remote.appDir, "tmp"), { recursive: true });
     spawnSync("ln", [
       "-sfn",
@@ -367,7 +376,7 @@ run("release の印・掃除・鍵", () => {
     ]);
   }
 
-  it("rollback の候補は health まで通った release だけ", async () => {
+  it("rollback の候補は health まで通った release だけ（公開した順）", async () => {
     const c = cfg();
     releases(
       c,
@@ -384,7 +393,25 @@ run("release の印・掃除・鍵", () => {
     ]);
   });
 
-  it("掃除は current と印のある新しい順 keep 個を残し、途中で落ちた release を消す", async () => {
+  it("番号（手元の時計）ではなく公開した順で 1 つ前を選ぶ", async () => {
+    const c = cfg();
+    // 01:10 に build した版が先に公開され、01:00 に build を始めた版が後から公開された
+    releases(
+      c,
+      [
+        ["20260101005000", true],
+        ["20260101011000", true],
+        ["20260101010000", true],
+      ],
+      "20260101010000",
+      ["20260101005000", "20260101011000", "20260101010000"],
+    );
+    const h = await healthyReleases(new LocalExecutor(), c);
+    expect(h).toEqual(["20260101010000", "20260101011000", "20260101005000"]);
+    expect(rollbackTargetByHistory(h, "20260101010000")).toBe("20260101011000");
+  });
+
+  it("掃除は current と公開の記録の新しい順 keep 個を残し、途中で落ちた release を消す", async () => {
     const c = { ...cfg(), keepReleases: 1 };
     releases(
       c,
@@ -404,6 +431,24 @@ run("release の印・掃除・鍵", () => {
     ]);
   });
 
+  it("keepReleases が 1 以上の整数でなければ何も消さない", async () => {
+    const c = { ...cfg(), keepReleases: -1 };
+    releases(
+      c,
+      [
+        ["20260101000001", true],
+        ["20260101000002", true],
+      ],
+      "20260101000002",
+    );
+    const r = await cleanupReleasesVps(ctx(c));
+    expect(r.ok).toBe(false);
+    expect(readdirSync(join(c.remote.appDir, "releases")).sort()).toEqual([
+      "20260101000001",
+      "20260101000002",
+    ]);
+  });
+
   it("同じサイトの 2 つ目の deploy は鍵が取れずに止まり、外したら取れる", async () => {
     const c = cfg();
     mkdirSync(c.remote.appDir, { recursive: true });
@@ -413,5 +458,70 @@ run("release の印・掃除・鍵", () => {
     expect(second.detail).toContain("deploy 1");
     await releaseSiteLock(ctx(c));
     expect((await acquireSiteLock(ctx(c), "deploy 3")).ok).toBe(true);
+  });
+});
+
+run("setup が途中で止まったあと", () => {
+  it(".env.pending があれば、そのときの値で DB をそろえ直して .env を置く", async () => {
+    const c = cfg();
+    const shared = join(c.remote.appDir, "shared");
+    mkdirSync(shared, { recursive: true });
+    const key = `base64:${Buffer.alloc(32, 7).toString("base64")}`;
+    writeFileSync(
+      join(shared, ".env.pending"),
+      `DB_PASSWORD=Resume0123456789abcdefABCDEF0123\nAPP_KEY=${key}\n`,
+    );
+    const r = await runScript(
+      new LocalExecutor({ FAKE_EXISTS: "2" }),
+      siteEnvScript(vpsNames(c), envTemplate(c)),
+    );
+    expect(r.stdout).toContain("site-env-ok");
+    const env = readFileSync(join(shared, ".env"), "utf8");
+    expect(env).toContain("DB_PASSWORD=Resume0123456789abcdefABCDEF0123\n");
+    // APP_KEY の末尾の = まで落とさない
+    expect(env).toContain(`APP_KEY=${key}\n`);
+    expect(existsSync(join(shared, ".env.pending"))).toBe(false);
+    const sqlIn = readFileSync(`${log}.stdin.1`, "utf8");
+    expect(sqlIn).toContain(
+      "CREATE USER IF NOT EXISTS 'sgk-shop-a'@'%' IDENTIFIED BY 'Resume0123456789abcdefABCDEF0123'",
+    );
+    expect(sqlIn).toContain(
+      "ALTER USER 'sgk-shop-a'@'%' IDENTIFIED BY 'Resume0123456789abcdefABCDEF0123'",
+    );
+  });
+
+  it("新しく始めるときは、DB に触る前に .env.pending（600）を置く", async () => {
+    const c = cfg();
+    // 利用者を作る段で落ちる（GRANT までいかない）
+    const r = await runScript(
+      new LocalExecutor({ FAKE_EXISTS: "0", FAKE_CREATE: "fail" }),
+      siteEnvScript(vpsNames(c), envTemplate(c)),
+    );
+    expect(r.code).not.toBe(0);
+    const pending = join(c.remote.appDir, "shared/.env.pending");
+    expect(statSync(pending).mode & 0o777).toBe(0o600);
+    expect(readFileSync(pending, "utf8")).toMatch(
+      /^DB_PASSWORD=[A-Za-z0-9]{32}\nAPP_KEY=base64:\S+=\n$/,
+    );
+    expect(existsSync(join(c.remote.appDir, "shared/.env"))).toBe(false);
+  });
+});
+
+run("edge の鍵", () => {
+  it("別の setup が edge を変えている間は待ち、時間が来たら何も変えずに止まる", async () => {
+    const n = vpsNames(cfg());
+    mkdirSync(join(n.root, "edge/.agentcms.lock"), { recursive: true });
+    const r = await runScript(
+      new LocalExecutor({ AGENTCMS_LOCK_WAIT: "1" }),
+      edgeFilesScript(n),
+    );
+    expect(r.code).toBe(7);
+    expect(r.stdout).toContain("lock-timeout");
+    expect(existsSync(join(n.root, "edge/secrets/mysql-root"))).toBe(false);
+    // 自分の取った鍵は終わったら外す
+    rmSync(join(n.root, "edge/.agentcms.lock"), { recursive: true });
+    const ok2 = await runScript(new LocalExecutor(), edgeFilesScript(n));
+    expect(ok2.stdout).toContain("edge-files-ok");
+    expect(existsSync(join(n.root, "edge/.agentcms.lock"))).toBe(false);
   });
 });

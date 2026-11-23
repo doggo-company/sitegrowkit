@@ -21,7 +21,7 @@ Docker の入った Linux の VPS 1 台に、SiteGrowKit のサイトを出す�
 | 置き場所（サーバー） | 中身 |
 | --- | --- |
 | `/srv/agentcms/edge/` | Caddy と MySQL の compose・Caddyfile・`sites/<サイト名>.caddy`・`secrets/mysql-root` |
-| `/srv/agentcms/sites/<サイト名>/` | `releases/<id>`・`shared/.env`・`shared/storage`・`backups/`・`current`・`compose.yml` |
+| `/srv/agentcms/sites/<サイト名>/` | `releases/<id>`・`shared/.env`・`shared/storage`・`backups/`・`current`・`compose.yml`・`releases.history`（公開の記録）・`run/php-fpm.sock`（PHP-FPM はここでだけ待つ） |
 
 **秘密（DB パスワード・APP_KEY・MySQL の root パスワード）は `agentcms deploy setup` がサーバーの上で作り、サーバーのファイル（600）にだけ置く。** 手元・Git・設定ファイル・ログ・画面・コマンドの引数・`docker inspect` には出さない。ただし動いているプロセスの中には値がある（PHP は `.env` を読み、MySQL は root パスワードを読んで起動する）。サーバーの root と docker グループの利用者は、それを読める。
 
@@ -132,30 +132,52 @@ agentcms deploy staging -t staging    # 更新（毎回 DB バックアップ �
 agentcms deploy rollback -t staging   # health まで通った 1 つ前の release へ（DB は触らない）
 ```
 
-health まで通った release には印が付き、rollback はその印のある release にだけ戻る（migration などで途中で落ちた release には戻らない）。戻した先の health が通らなければ、元の release に戻して止まる。古い release は、印のあるものを `keepReleases`（既定 3）まで残し、途中で落ちたものは片付ける。同じサイトへの deploy と rollback は同時に 1 つしか動かない（2 つ目は「別の deploy / rollback が動いています」で止まる）。PHP は `current` の symlink を Caddy が実際のパスへ解いてから受け取るので、切り替えた直後から新しい（戻したら古い）コードが動く。
+health まで通った release には印が付き、公開した順に `releases.history` へ書かれる。rollback はこの記録で 1 つ前に出ていた release へ戻る（release の番号＝手元の時計の時刻の順ではない。migration などで途中で落ちた release には戻らない）。戻した先の health が通らなければ、元の release に戻して止まる。古い release は、印のあるものを `keepReleases`（既定 3）まで残し、途中で落ちたものは片付ける。同じサイトへの deploy と rollback は同時に 1 つしか動かない（2 つ目は「別の deploy / rollback が動いています」で止まる）。PHP は `current` の symlink を Caddy が実際のパスへ解いてから受け取るので、切り替えた直後から新しい（戻したら古い）コードが動く。
 
 ## 8. DB を戻す（手で）
 
-deploy のたびに `backups/<release id>-db.sql.gz` を取っている。戻すのは人が判断する（自動ではやらない）。次の順で、**アプリを止め → いまの状態も取っておき → DB を空にしてから → 戻し → アプリを起こす**。空にしてから戻すので、バックアップの後に migration で増えた表も残らない。パスワードは標準入力の 1 行目で渡す（コマンドの引数に載せない）:
+deploy のたびに `backups/<release id>-db.sql.gz` を取っている（その release を出す**直前**の DB）。横の `backups/<release id>-db.release` には、そのとき出ていた release の番号が入っている。戻すのは人が判断する（自動ではやらない）。
+
+次の中身をサーバーに `restore-db.sh` として保存し、`bash restore-db.sh <サイト名> <release id>` で流す（`<release id>` は `ls backups` で見る）。1 行ずつ貼り付けずに、ファイルにして流すこと（途中で失敗したらそこで止まるように書いてある）。
 
 ```bash
-cd /srv/agentcms/sites/<サイト名>
-docker compose -f compose.yml stop
-pw() { grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2-; }
+#!/bin/bash
+# 使い方: bash restore-db.sh <サイト名> <release id>
+set -euo pipefail
+site="$1"; id="$2"
+dir="/srv/agentcms/sites/$site"   # vps.root を変えたなら、ここも変える
+cd "$dir"
+src="backups/$id-db.sql.gz"
+# 1. 何も変える前に確かめる（無い・壊れている なら、ここで止まる。アプリは動いたまま）
+[ -f "$src" ] || { echo "バックアップがありません: $src"; exit 1; }
+gzip -t "$src"
 db=$(grep -E '^DB_DATABASE=' shared/.env | cut -d= -f2-)
 user=$(grep -E '^DB_USERNAME=' shared/.env | cut -d= -f2-)
-{ pw; } | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysqldump --single-transaction --no-tablespaces -h 127.0.0.1 -u "$1" "$2"' sh "$user" "$db" \
-  | gzip > "backups/before-restore-$(date +%Y%m%d%H%M%S).sql.gz"
-{ pw; printf 'DROP DATABASE `%s`;\nCREATE DATABASE `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n' "$db" "$db"; } \
-  | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysql -h 127.0.0.1 -u "$1"' sh "$user"
-{ pw; gunzip -c backups/<release id>-db.sql.gz; } \
-  | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysql -h 127.0.0.1 -u "$1" "$2"' sh "$user" "$db"
+pw() { grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2-; }
+# パスワードは標準入力の 1 行目で MySQL のコンテナへ渡す（コマンドの引数に載せない）
+in_mysql() { docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec "$@"' sh "$@"; }
+trap 'echo "途中で止まりました。アプリは止めたままです。backups/before-restore-* に戻す前の DB があります。直してからもう一度流すか、docker compose -f $dir/compose.yml start で起こしてください"' ERR
+# 2. アプリと scheduler を止める（書き込みを止める）
+docker compose -f compose.yml stop
+# 3. いまの DB を取っておく（取れなければここで止まる。DB はまだ変えていない）
+safe="backups/before-restore-$(date +%Y%m%d%H%M%S)-db.sql.gz"
+pw | in_mysql mysqldump --single-transaction --no-tablespaces -h 127.0.0.1 -u "$user" "$db" | gzip > "$safe"
+gzip -t "$safe"
+[ "$(wc -c < "$safe")" -ge 200 ]
+# 4. DB を空にしてから戻す（バックアップの後に増えた表も残らない）
+{ pw; printf 'DROP DATABASE `%s`;\nCREATE DATABASE `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n' "$db" "$db"; } | in_mysql mysql -h 127.0.0.1 -u "$user"
+{ pw; gunzip -c "$src"; } | in_mysql mysql -h 127.0.0.1 -u "$user" "$db"
+# 5. コードを、この DB を取ったときに出ていた release へ合わせてから起こす
+if [ -f "backups/$id-db.release" ] && [ -d "releases/$(cat "backups/$id-db.release")" ]; then
+  ln -sfn "$dir/releases/$(cat "backups/$id-db.release")" current
+fi
 docker compose -f compose.yml start
+echo "戻しました: DB は $id の直前 / current は $(basename "$(readlink current)")"
 ```
 
-- `<release id>` は戻したい時点の deploy の番号（`ls backups`）。そのバックアップは、その番号の release を出す**直前**の DB
-- DB を古い形に戻したら、コードも合わせる（`agentcms deploy rollback`）。新しいコードのまま古い DB で動かさない
-- 途中で失敗したら、`backups/before-restore-*.sql.gz`（戻す前の状態）で同じ手順をやり直せる
+- 戻したあと、手元で `agentcms verify staging`（本番なら health を見る）で確かめる
+- コードを合わせる元の release が掃除で消えていたら、current はそのまま（最後の 1 行に出る番号を見て、必要なら `agentcms deploy rollback`）
+- 戻す前の DB は `backups/before-restore-*.sql.gz` に残る。同じスクリプトで、その番号を指定すれば元に戻せる（`ls backups` に出る `before-restore-<時刻>-db.sql.gz` の `before-restore-<時刻>` を `<release id>` の代わりに渡す）
 
 ## 9. 毎日のバックアップ
 
@@ -195,6 +217,7 @@ docker exec -it agentcms-mysql sh -c 'MYSQL_PWD="$(cat /run/agentcms/mysql-root)
 | 500 が出る | `/srv/agentcms/sites/<サイト名>/shared/storage/logs/` と `docker logs agentcms-<サイト名>-app` |
 | setup が「DB か利用者 … が既にある」で止まる | 同じサイト名の DB が、別の置き場所か前の setup の途中で作られている。自分のものなら §11 の手順で DB と利用者を消してから setup をもう一度。他人のものならサイト名を変える |
 | deploy が「別の deploy / rollback が動いています」で止まる | 終わるのを待つ。止まったまま残っているなら、ほかに動いていないことを確かめてから `/srv/agentcms/sites/<サイト名>/.agentcms-deploy.lock` を消す |
+| setup が途中で止まった | もう一度流す。DB を作ったあと `.env` を置く前に止まったときは、`shared/.env.pending`（そのとき作った値・600）を使って続きから作る |
 | setup の PHP のイメージで止まる | 時間切れ（30 分）か、VPS から Docker Hub へつながらない。もう一度流せば続きから |
 
 ## 試験（kit を直す人向け）

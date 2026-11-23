@@ -1,7 +1,7 @@
 import { buildArtifact, cleanupBuilds, newReleaseId } from "../deploy/build.js";
 import { postHealthAction, runHealthChecks } from "../deploy/health.js";
-import { currentTarget, ensureLayout, linkShared, migrate, optimize, pickRollbackTarget, switchCurrent, taxonomySync, uploadAndExtract, } from "../deploy/release.js";
-import { acquireSiteLock, backupDatabaseVps, cleanupReleasesVps, healthyReleases, markHealthy, releaseSiteLock, runScript, siteContainers, siteRoute, vpsDoctor, vpsSetupActions, } from "../deploy/providers/vps.js";
+import { currentTarget, ensureLayout, linkShared, migrate, optimize, switchCurrent, taxonomySync, uploadAndExtract, } from "../deploy/release.js";
+import { acquireSiteLock, backupDatabaseVps, cleanupReleasesVps, healthyReleases, markHealthy, rollbackTargetByHistory, releaseSiteLock, runScript, siteContainers, siteRoute, vpsDoctor, vpsSetupActions, } from "../deploy/providers/vps.js";
 import { vpsNames } from "../deploy/providers/vps-assets.js";
 import { worstStatus } from "../deploy/types.js";
 import { fail, heading, info, ok, warn } from "../ui.js";
@@ -241,15 +241,13 @@ async function rollbackLocked(ctx, io, approval) {
         });
         return 1;
     }
-    // health まで通った release だけを候補にする（途中で落ちた版へ戻らない）
+    // 公開の記録で 1 つ前（health まで通った版だけ・公開した順）。途中で落ちた版へは戻らない
     const curId = cur.split("/").pop() ?? null;
-    const healthy = (await healthyReleases(exec, cfg)).filter((id) => curId === null || id <= curId);
-    const candidates = curId !== null && !healthy.includes(curId) ? [curId, ...healthy] : healthy;
-    const prev = pickRollbackTarget(candidates, curId);
+    const prev = rollbackTargetByHistory(await healthyReleases(exec, cfg), curId);
     if (!prev) {
         fail({
             what: "rollback 先がありません",
-            why: `${curId} より古く、health まで通った release がありません`,
+            why: `公開の記録（${n.appDir}/releases.history）に、${curId} の前に出ていて今も残っている release がありません`,
             fix: "再デプロイで復旧してください",
         });
         return 1;

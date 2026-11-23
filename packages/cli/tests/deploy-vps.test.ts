@@ -18,6 +18,7 @@ import {
   APP_KEY_PLACEHOLDER,
   DB_PASSWORD_PLACEHOLDER,
   edgeCompose,
+  phpDockerfile,
   siteCaddy,
   siteCompose,
   vpsNames,
@@ -159,6 +160,14 @@ describe("vps の設定", () => {
     },
   );
 
+  it.each([-1, 0, 1.5, "3", 21])(
+    "keepReleases %s は止める（掃除が戻り先まで消さない）",
+    (k) => {
+      const { error } = load({ ...base, keepReleases: k });
+      expect(error?.why).toContain("keepReleases");
+    },
+  );
+
   it("tls は auto か internal だけ", () => {
     expect(
       load({ ...base, vps: { site: "abc", tls: "off" } }).error?.why,
@@ -208,7 +217,7 @@ describe("サーバーへ置く中身", () => {
       "root * /srv/agentcms/sites/example-staging/current/public",
     );
     expect(c).toMatch(
-      /php_fastcgi agentcms-example-staging-app:9000 \{\s*resolve_root_symlink\s*\}/,
+      /php_fastcgi unix\/\/srv\/agentcms\/sites\/example-staging\/run\/php-fpm\.sock \{\s*resolve_root_symlink\s*\}/,
     );
     expect(c).toContain("# agentcms-domain: staging.example.com");
     expect(c).not.toContain("tls internal");
@@ -258,6 +267,20 @@ describe("サーバーへ置く中身", () => {
     expect(t).toContain("APP_ENV=staging");
     expect(t).toContain("APP_DEBUG=false");
     expect(t).toContain("APP_TIMEZONE=Asia/Tokyo");
+  });
+});
+
+describe("PHP-FPM はソケットでだけ待つ（別のサイトのコンテナから届かない）", () => {
+  it("PHP のイメージは 9000 ではなくソケットで待ち、app はソケットの置き場所を入れる", () => {
+    const d = phpDockerfile();
+    expect(d).toContain("echo 'listen = /run/agentcms/php-fpm.sock'");
+    expect(d).toContain("zzz-agentcms.conf");
+    const y = siteCompose(vpsNames(cfgOf()), { uid: "1000", gid: "1000" });
+    expect(y).toContain(
+      "- /srv/agentcms/sites/example-staging/run:/run/agentcms",
+    );
+    expect(y).not.toContain("9000");
+    expect(siteCaddy(vpsNames(cfgOf()))).not.toContain("9000");
   });
 });
 
@@ -312,7 +335,8 @@ describe("サーバーの上の台本", () => {
       /root_sql\(\) \{ docker exec -i agentcms-mysql sh -c 'MYSQL_PWD="\$\(cat \/run\/agentcms\/mysql-root\)" exec mysql -uroot -N'; \}/,
     );
     // 既にある利用者のパスワードを変えない
-    expect(env).not.toContain("ALTER USER");
+    // ALTER USER は自分の途中の setup（.env.pending がある）のときだけ
+    expect(env).toContain('if [ "$exists" != "0" ] && [ "$resume" = 0 ]');
     expect(env).toContain("| root_sql");
     expect(env).not.toMatch(/mysql[^\n]*-p\S/);
     // 置き換えは builtin の printf（sed の引数に値が載らない）
