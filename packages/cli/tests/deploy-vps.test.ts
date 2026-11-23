@@ -25,6 +25,7 @@ import {
   vpsNames,
 } from "../src/deploy/providers/vps-assets.js";
 import { inDir, type DeployContext } from "../src/deploy/release.js";
+import { runSteps, vpsDeploySteps } from "../src/commands/deploy-vps.js";
 import type { DeployTargetConfig } from "../src/deploy/types.js";
 
 /**
@@ -526,5 +527,45 @@ describe("doctor", () => {
     const d = capabilities.checks.find((c) => c.key === "docker");
     expect(d?.status).toBe("FAIL");
     expect(d?.fix).toContain("docker グループ");
+  });
+});
+
+describe("deploy の工程の順", () => {
+  it("Caddy の行は、送信・展開・サイトのコンテナが済んでから、DB に触る前に差し替える", () => {
+    const labels = vpsDeploySteps(
+      ctxOf(new FakeExecutor([])),
+      "/tmp/a.tar.gz",
+    ).map(([l]) => l);
+    const at = (s: string) => labels.findIndex((l) => l.includes(s));
+    expect(at("Caddy")).toBeGreaterThan(at("artifact アップロード"));
+    expect(at("Caddy")).toBeGreaterThan(at("サイトのコンテナ"));
+    expect(at("Caddy")).toBeLessThan(at("DB バックアップ"));
+    expect(at("current 切り替え")).toBe(labels.length - 1);
+  });
+
+  it("送信で落ちたら、Caddy の行には触らずに止まる（入口は前のまま）", async () => {
+    class UploadFails extends FakeExecutor {
+      async upload(): Promise<ExecResult> {
+        return { code: 1, stdout: "", stderr: "scp: connection lost" };
+      }
+    }
+    const ex = new UploadFails([
+      ["release-free", { stdout: "release-free" }],
+      ["grep -c '^APP_KEY=base64:'", { stdout: "1" }],
+      ["'^APP_ENV='", { stdout: "APP_ENV=staging" }],
+      ["'^APP_DEBUG='", { stdout: "APP_DEBUG=false" }],
+    ]);
+    const run = await runSteps(
+      vpsDeploySteps(ctxOf(ex), "/tmp/a.tar.gz"),
+      "/srv/agentcms/sites/example-staging/releases/20250101000000",
+    );
+    expect(run.ok).toBe(false);
+    expect(run.switched).toBe(false);
+    expect(
+      ex.history.some(
+        (c) => c.includes("AGENTCMS_CADDY") || c.includes("caddy reload"),
+      ),
+    ).toBe(false);
+    expect(ex.history.some((c) => c.includes("docker compose"))).toBe(false);
   });
 });

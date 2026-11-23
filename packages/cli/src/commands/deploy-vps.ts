@@ -136,7 +136,39 @@ export async function vpsDeploySetup(
 }
 
 /** ステップを順に流し、落ちたらそこで止める。current を切り替えたかを返す */
-async function runSteps(
+/**
+ * deploy の工程（この順で流し、落ちたらそこで止まる）。
+ *
+ * **Caddy の行は、サイトの web が起きて設定が通ってから差し替える。** 先に差し替えると、
+ * そのあとの送信や展開で落ちたとき、current は前の版のままなのに入口だけが
+ * まだ無い web を向き、サイトが止まる（前の形から移るときに起きる）。
+ * DB に触る前に差し替えるので、ここで落ちても DB はそのまま。
+ */
+export function vpsDeploySteps(
+  ctx: DeployContext,
+  artifactPath: string,
+): Array<[string, () => Promise<StepResult>]> {
+  const n = vpsNames(ctx.cfg);
+  const rel = `${n.appDir}/releases/${ctx.releaseId}`;
+  return [
+    ["release の番号が空いているか", () => releaseIdIsFree(ctx)],
+    ["レイアウト作成 + shared/.env 検査", () => ensureLayout(ctx)],
+    ["artifact アップロード + 展開", () => uploadAndExtract(ctx, artifactPath)],
+    ["shared リンク（storage / .env）", () => linkShared(ctx)],
+    [
+      "サイトのコンテナ（PHP-FPM / web / scheduler）",
+      () => siteContainers(ctx),
+    ],
+    ["Caddy のサイトの行（確かめてから差し替え）", () => siteRoute(ctx)],
+    ["DB バックアップ", () => backupDatabaseVps(ctx)],
+    ["DB migration", () => migrate(ctx)],
+    ["分類定義の同期（taxonomy-sync）", () => taxonomySync(ctx)],
+    ["config / view キャッシュ", () => optimize(ctx)],
+    ["current 切り替え", () => switchCurrent(ctx, rel)],
+  ];
+}
+
+export async function runSteps(
   steps: Array<[string, () => Promise<StepResult>]>,
   previous: string | null,
 ): Promise<{ ok: boolean; switched: boolean }> {
@@ -247,21 +279,7 @@ async function deployLocked(
     return 1;
   }
   const previous = live.target;
-  const rel = `${n.appDir}/releases/${releaseId}`;
-  const steps: Array<[string, () => Promise<StepResult>]> = [
-    ["release の番号が空いているか", () => releaseIdIsFree(ctx)],
-    ["レイアウト作成 + shared/.env 検査", () => ensureLayout(ctx)],
-    ["Caddy のサイトの行（確かめてから差し替え）", () => siteRoute(ctx)],
-    ["artifact アップロード + 展開", () => uploadAndExtract(ctx, artifactPath)],
-    ["shared リンク（storage / .env）", () => linkShared(ctx)],
-    ["サイトのコンテナ（PHP-FPM / scheduler）", () => siteContainers(ctx)],
-    ["DB バックアップ", () => backupDatabaseVps(ctx)],
-    ["DB migration", () => migrate(ctx)],
-    ["分類定義の同期（taxonomy-sync）", () => taxonomySync(ctx)],
-    ["config / view キャッシュ", () => optimize(ctx)],
-    ["current 切り替え", () => switchCurrent(ctx, rel)],
-  ];
-  const run = await runSteps(steps, previous);
+  const run = await runSteps(vpsDeploySteps(ctx, artifactPath), previous);
   if (!run.ok) return 1;
 
   info("▶ health check");

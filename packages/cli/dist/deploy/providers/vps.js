@@ -561,7 +561,13 @@ chmod 644 ${shq(n.appDir + "/nginx.conf")}
 cat > ${shq(n.appDir + "/compose.yml")} << 'AGENTCMS_COMPOSE'
 ${compose}AGENTCMS_COMPOSE
 docker compose -f ${shq(n.appDir + "/compose.yml")} up -d --remove-orphans --quiet-pull 2>&1 | tail -20
-# nginx の設定は読み直させる（中身が変わってもコンテナは作り直されないことがある）
+# nginx の設定を確かめてから読み直させる（中身が変わってもコンテナは作り直されないことがある）。
+# 通らなければ、Caddy の行を差し替える前にここで止まる
+for i in $(seq 1 30); do
+  if [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.webContainer)} 2>/dev/null)" = true ]; then break; fi
+  sleep 1
+done
+docker exec ${shq(n.webContainer)} nginx -t 2>&1 | tail -3
 docker exec ${shq(n.webContainer)} nginx -s reload >/dev/null 2>&1 || true
 for i in $(seq 1 30); do
   if [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.appContainer)} 2>/dev/null)" = true ] && [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.webContainer)} 2>/dev/null)" = true ] && [ -S ${shq(n.appDir + "/run/php-fpm.sock")} ]; then echo containers-ok; exit 0; fi

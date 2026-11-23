@@ -198,7 +198,7 @@ for (const tool of ["ssh", "scp"]) {
   }).trim();
   writeFileSync(
     join(bin, tool),
-    `#!/bin/sh\nexec ${real} -o UserKnownHostsFile=${knownHosts} -o StrictHostKeyChecking=yes "$@"\n`,
+    `#!/bin/sh\n${tool === "scp" ? 'if [ -n "$E2E_SCP_FAIL" ]; then echo "e2e: 送信をわざと落とす" >&2; exit 1; fi\n' : ""}exec ${real} -o UserKnownHostsFile=${knownHosts} -o StrictHostKeyChecking=yes "$@"\n`,
   );
   chmodSync(join(bin, tool), 0o755);
 }
@@ -266,8 +266,12 @@ function deployConfig(target, site, host) {
     ),
   );
 }
-function agentcms(label, a) {
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+function agentcms(label, a, extraEnv = {}) {
+  const env = {
+    ...process.env,
+    ...extraEnv,
+    PATH: `${bin}:${process.env.PATH}`,
+  };
   if (existsSync(caFile)) env.NODE_EXTRA_CA_CERTS = caFile;
   const res = sh(process.execPath, [cli, ...a], {
     cwd: project,
@@ -830,25 +834,81 @@ exit 0`,
 
   // ------------------------------------------------------------ 6d. edge をそろえる
   step(
-    "6d. edge の compose が古い形なら、setup がそろえる（サイトは 200 のまま戻る）",
+    "6d. 前の形から移る（送信が落ちても止まらない・出し直してから edge をそろえる）",
   );
-  // 前の形（Caddy が直接配信する）のサイトの行が残っていれば、edge を変える前に止まる
-  remote(
-    "printf 'old.localhost {\\n\\tphp_fastcgi unix//srv/agentcms/sites/old/run/php-fpm.sock\\n\\tfile_server\\n}\\n' > /srv/agentcms/edge/sites/zz-old.caddy && printf '# 古い形のつもり\\n' >> /srv/agentcms/edge/compose.yml",
+  // 前の形（Caddy がサイトのファイルを直接配信し、PHP-FPM のソケットへつなぐ）を作る:
+  // edge の Caddy にサイトの置き場所を見せ、サイト 1 の行を前の形にして、サイト 1 の web を止める
+  const kitCompose = remote("cat /srv/agentcms/edge/compose.yml").stdout;
+  const oldCompose = kitCompose
+    .replace(/\n    labels:\n      agentcms\.root: "[^"]*"/, "")
+    .replace(
+      "      - ./sites:/etc/caddy/sites:ro\n",
+      "      - ./sites:/etc/caddy/sites:ro\n      - /srv/agentcms/sites:/srv/agentcms/sites:ro\n",
+    );
+  const oldSite = `# agentcms-domain: ${S1.host}\n${S1.host} {\n\ttls internal\n\troot * /srv/agentcms/sites/${S1.site}/current/public\n\tencode zstd gzip\n\tphp_fastcgi unix//srv/agentcms/sites/${S1.site}/run/php-fpm.sock {\n\t\tresolve_root_symlink\n\t}\n\tfile_server\n}\n`;
+  const made = remote(
+    `cd /srv/agentcms/edge && cp compose.yml compose.yml.e2e-new && cat > compose.yml << 'E2E_EOS'\n${oldCompose}E2E_EOS\n` +
+      `cat > sites/${S1.site}.caddy << 'E2E_EOS'\n${oldSite}E2E_EOS\n` +
+      `docker compose up -d --quiet-pull >/dev/null 2>&1 && sleep 2 && ` +
+      `docker exec agentcms-caddy caddy reload --adapter caddyfile --config /etc/caddy/Caddyfile >/dev/null 2>&1 && ` +
+      `docker stop agentcms-${S1.site}-web >/dev/null && echo old-ready`,
   );
+  check(
+    made.stdout.includes("old-ready") && oldCompose !== kitCompose,
+    "前の形の edge とサイト 1 の行を作った",
+  );
+  check(
+    (await waitHealthy()) === 200,
+    "前の形（Caddy が直接配信・サイト 1 の web は止めた）でサイト 1 は 200",
+  );
+
+  // 前の形の行が残っていると、setup は edge を変えずに止まる
   a = agentcms("setup-old-sites", ["deploy", "setup", "-t", S1.target, "-y"]);
   check(
-    a.code !== 0 && a.out.includes("zz-old.caddy"),
+    a.code !== 0 && a.out.includes(`${S1.site}.caddy`),
     "前の形のサイトの行があると、edge を変えずに止まる",
   );
   check(
     remote(
-      "grep -c '古い形のつもり' /srv/agentcms/edge/compose.yml",
+      "grep -c '/srv/agentcms/sites:/srv/agentcms/sites:ro' /srv/agentcms/edge/compose.yml",
     ).stdout.trim() === "1",
     "edge の compose は変わっていない",
   );
   check((await waitHealthy()) === 200, "サイト 1 は 200 のまま");
-  remote("rm -f /srv/agentcms/edge/sites/zz-old.caddy");
+
+  // 移る途中で送信が落ちても、入口は前の形のまま（サイトは止まらない）
+  await new Promise((res) => setTimeout(res, 1100));
+  a = agentcms(
+    "deploy-migrate-scp-fail",
+    ["deploy", "staging", "-t", S1.target, "-y"],
+    { E2E_SCP_FAIL: "1" },
+  );
+  check(
+    a.code !== 0 && a.out.includes("scp 失敗"),
+    "送信が落ちて deploy は止まった",
+  );
+  check(
+    remote(
+      `grep -c php_fastcgi /srv/agentcms/edge/sites/${S1.site}.caddy`,
+    ).stdout.trim() === "1",
+    "Caddy の行は前の形のまま",
+  );
+  check(
+    (await waitHealthy()) === 200,
+    "サイト 1 は 200 のまま（入口が止まっていない）",
+  );
+
+  // 今のキットで出し直すと、サイトの web 経由に移る
+  await new Promise((res) => setTimeout(res, 1100));
+  a = agentcms("deploy-migrate", ["deploy", "staging", "-t", S1.target, "-y"]);
+  check(a.code === 0, "今のキットで出し直した（exit 0）");
+  check(
+    remote(
+      `grep -c 'reverse_proxy agentcms-${S1.site}-web:8080' /srv/agentcms/edge/sites/${S1.site}.caddy`,
+    ).stdout.trim() === "1",
+    "Caddy の行はサイトの web への転送になった",
+  );
+  check((await waitHealthy()) === 200, "サイト 1 は 200");
   a = agentcms("setup-upgrade", ["deploy", "setup", "-t", S1.target, "-y"]);
   check(
     a.code === 0 && a.out.includes("edge_upgrade"),
@@ -856,7 +916,7 @@ exit 0`,
   );
   check(
     remote(
-      "test -f /srv/agentcms/edge/compose.yml.prev && ! grep -q '古い形のつもり' /srv/agentcms/edge/compose.yml && echo ok",
+      "test -f /srv/agentcms/edge/compose.yml.prev && ! grep -q '/srv/agentcms/sites:/srv/agentcms/sites' /srv/agentcms/edge/compose.yml && cmp -s /srv/agentcms/edge/compose.yml /srv/agentcms/edge/compose.yml.e2e-new && echo ok",
     ).stdout.trim() === "ok",
     "前の compose は compose.yml.prev に残り、今の compose はキットの形",
   );
