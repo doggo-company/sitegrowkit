@@ -25,4 +25,12 @@
 - Staging safety: all mail forced via `Mail::alwaysTo` (MAIL_STAGING_REDIRECT_TO), robots.txt Disallow + X-Robots-Tag noindex, HTTPS forced.
 - Control Plane = XServer API, Deployment = SSH (ADR-0009, same split as XServer's official AI skill). API client lives in `providers/xserver-api.ts`; API key comes ONLY from env `XSERVER_API_KEY` (never config/Git/logs/plans/benchmarks — config validation rejects key-like fields; error messages are redacted). `agentcms deploy setup` provisions subdomain/SSL/DB/user/grant/shared-.env/Cron/PHP — create-only, idempotent, confirmation before writes. Deletions and backup-restore are NEVER automated (API has no confirm parameter). No API key or API failure → fall back to manual server-panel instructions; doctor reports WARN, not FAIL.
 - `route:cache` is forbidden while closure routes exist (robots.txt); use config:cache + view:cache only.
-- Production auto-deploy, other providers (Lolipop/Sakura/VPS), CDN/R2 are out of scope (DO NOT BUILD until a later phase).
+- Production auto-deploy, other shared-hosting providers (Lolipop/Sakura) and CDN are out of scope (DO NOT BUILD until a later phase).
+
+## VPS — Docker (ADR-0021)
+
+- `provider: "vps"` deploys to one Linux VPS with Docker: one Caddy + one MySQL ("edge") shared by all sites, one PHP-FPM + one scheduler container per site. Provider code lives in `providers/vps.ts` / `providers/vps-assets.ts`; the release flow in `release.ts` is shared with XServer (only PHP execution via `inDir()`, publishing via the Caddy site block, and the DB dump inside the MySQL container differ).
+- Secrets (MySQL root password, DB passwords, APP_KEY) are generated ON THE SERVER by `agentcms deploy setup` and written only to 600 files. Pass values only via stdin/pipes — never in command arguments, compose `environment`, `docker exec -e`, the deploy config, plans or logs. Setup is create-only and idempotent; it never rotates an existing `shared/.env`.
+- Caddy must hand PHP the RESOLVED release path (`php_fastcgi … { resolve_root_symlink }`), same reason as the XServer entry stub's `realpath()`.
+- A site's Caddy block is validated outside the running Caddy before it replaces the live file; on reload failure the previous block is restored. Duplicate domain / site name → stop without changing anything. Never let one site's deploy take down another.
+- Removing a site, dropping a DB and restoring a DB are manual (docs/deployment/vps.md). The end-to-end check is `scripts/vps-e2e.mjs` (manual, needs privileged Docker).

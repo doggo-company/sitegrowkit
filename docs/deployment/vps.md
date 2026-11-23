@@ -1,0 +1,184 @@
+# VPS（Docker）へ出す手順
+
+Docker の入った Linux の VPS 1 台に、SiteGrowKit のサイトを出す手順。共用サーバー（XServer）へ出す手順は [xserver.md](xserver.md)。設計の理由は ADR-0021（kit の docs/adr/）。
+
+> **確かめた範囲**：この道は、手元の Docker の中に立てた「VPS の代わり」（ssh で入れる Linux の中で Docker が動くもの）で、setup → deploy → 更新 → 切り戻し → 2 つ目のサイトまで通してある（`scripts/vps-e2e.mjs`）。**本物の VPS の会社のサーバーと、Let's Encrypt の本物の証明書では、まだ試していない。** 初めて出すときは staging から始めること。
+
+## 何ができあがるか
+
+```
+                    インターネット（80 / 443）
+                              │
+ ┌──────────── VPS 1 台 ───────┼──────────────────────────────────────┐
+ │  Caddy（HTTPS の証明書を Let's Encrypt から取り、自動で更新する）    │
+ │    ├─ サイト A の行 → サイト A の PHP-FPM のコンテナ                │
+ │    └─ サイト B の行 → サイト B の PHP-FPM のコンテナ                │
+ │  MySQL 8.4（1 つ。サイトごとに DB と利用者を分ける・外へポートを出さない）│
+ │  各サイトの scheduler のコンテナ（毎分 schedule:run・cron は使わない） │
+ └─────────────────────────────────────────────────────────────────────┘
+```
+
+| 置き場所（サーバー） | 中身 |
+| --- | --- |
+| `/srv/agentcms/edge/` | Caddy と MySQL の compose・Caddyfile・`sites/<サイト名>.caddy`・`secrets/mysql-root` |
+| `/srv/agentcms/sites/<サイト名>/` | `releases/<id>`・`shared/.env`・`shared/storage`・`backups/`・`current`・`compose.yml` |
+
+**秘密（DB パスワード・APP_KEY・MySQL の root パスワード）は `agentcms deploy setup` がサーバーの上で作り、サーバーのファイル（600）にだけ置く。** 手元・Git・設定ファイル・ログ・画面には出さない。
+
+## 1. 用意するもの
+
+- Linux の VPS（Ubuntu・Debian など、Docker Engine が公式に入るもの）。メモリは 2GB 以上を勧める。試験（アクセスの無い状態）では MySQL が約 500MB、Caddy が約 35MB、サイト 1 つの PHP-FPM が 40〜90MB を使った。何サイト置けるかは測っていない
+- ドメイン（またはサブドメイン）。DNS の A レコードを VPS の IP へ向けられること
+- 手元に SiteGrowKit のプロジェクト（`agentcms dev` で動いている状態。サーバーへ出す物は手元の Docker で作る）
+
+## 2. サーバーの準備（一度だけ・root で）
+
+VPS に root で入って、次の 4 つを済ませる。
+
+1. **Docker Engine と compose プラグインを入れる**：Docker の公式手順（https://docs.docker.com/engine/install/ ）に沿う
+2. **出す人の利用者を作り、docker グループに入れる**（例：`deploy`）
+   ```bash
+   adduser --disabled-password --gecos "" deploy
+   usermod -aG docker deploy
+   install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
+   # 手元で作った公開鍵（例 ~/.ssh/vps_staging.pub）を /home/deploy/.ssh/authorized_keys に貼り、600 にする
+   ```
+   > docker グループに入った利用者は、実質 root と同じことができる。この利用者の鍵は大切に扱う。
+3. **置き場所を作る**
+   ```bash
+   install -d -o deploy -g deploy /srv/agentcms
+   ```
+4. **ファイアウォール**：22（ssh）・80・443 を開ける。80 は証明書を取るのに使うので閉じない
+
+手元から `ssh -i ~/.ssh/vps_staging deploy@<VPS の IP> docker version` が通れば準備はできている（このとき一度だけホスト鍵を受け入れる。`agentcms` は鍵を聞き返さない設定で ssh するため）。
+
+## 3. DNS
+
+出すドメインの A レコード（IPv6 があれば AAAA も）を VPS へ向ける。`agentcms deploy staging` の最後の確かめ（health check）は、そのドメインへ手元から HTTPS でつなぐので、**DNS が向いてから**出す。
+
+## 4. デプロイ設定（手元）
+
+```bash
+cp .agentcms/deploy/vps.example.json .agentcms/deploy/staging.json
+```
+
+| 項目 | 書くこと |
+| --- | --- |
+| `provider` | `"vps"` |
+| `target` | ファイル名と同じ（`staging.json` なら `"staging"`。本番は `production.json` に `"production"`） |
+| `ssh` | VPS の IP（またはホスト名）・ポート・利用者（`deploy`）・秘密鍵の場所 |
+| `app.url` | `https://ドメイン`（パスは付けない） |
+| `vps.site` | サイト名。英小文字で始まる英小文字・数字・ハイフン 2〜32 文字。**1 台の中で重ならない名前**（DB・コンテナ・置き場所の名前になる） |
+| `vps.root` | 置き場所を変えるときだけ（既定 `/srv/agentcms`） |
+| `vps.tls` | 既定 `"auto"`（Let's Encrypt）。`"internal"` は Caddy の自前の認証局（試験用。ブラウザは警告を出す） |
+
+このファイルは Git に入らない（`.gitignore` 済み）。**パスワードや鍵の値は書かない**（書くと読み込みで止まる）。`remote` は書かない（`vps.site` から決まる）。
+
+## 5. サーバーの中身を作る：`agentcms deploy setup`
+
+```bash
+agentcms deploy setup -t staging
+```
+
+足りないものだけを作る（**作るだけ・何度流しても同じ・既にあるものは上書きしない**）。実行の前に、何をするかを並べて確認を取る。
+
+1. edge の設定を置く（compose・Caddyfile・MySQL の root パスワードをサーバーで生成）
+2. Caddy と MySQL を起動する
+3. サイトの PHP のイメージを build する（初回は数分かかる）
+4. このサイトの DB・利用者・`shared/.env` を作る。DB パスワードと APP_KEY はサーバーで生成し、表示しない
+
+`shared/.env` は `APP_ENV`（= target）・`APP_DEBUG=false`・`APP_TIMEZONE=Asia/Tokyo`・DB の接続まで埋まった状態でできる。**メール・Turnstile・Web Push の値は、ssh で入って書き足す**（手元へは持ってこない）:
+
+```bash
+ssh -i ~/.ssh/vps_staging deploy@<VPS>
+vi /srv/agentcms/sites/<サイト名>/shared/.env
+```
+
+本番（staging 以外の target）は `MAIL_MAILER=smtp` で作られる。メールの設定を埋めるまで、問い合わせの通知は送れない（送れなかったことは管理画面に残る）。
+
+## 6. 出す
+
+```bash
+agentcms deploy doctor -t staging    # Docker・edge・PHP のイメージ・.env・ドメインの重なりを確かめる（何も変えない）
+agentcms deploy plan -t staging      # 何が起きるかを見る（何も変えない・秘密なし）
+agentcms deploy staging -t staging   # 出す
+```
+
+`deploy staging` の流れ：手元で artifact を作る（vite build と composer install --no-dev）→ doctor → **Caddy の行**（別の場所で `caddy validate` してから差し替える。同じドメインを別のサイトが使っていれば何も変えずに止まる）→ 送って展開 → **サイトのコンテナ**（PHP-FPM と scheduler）→ **DB バックアップ** → migration → キャッシュ → `current` の切り替え → health check。
+
+- health check が落ちたら、**自動で前の release へ戻す**（DB は戻さない。戻すなら §8）
+- 途中で落ちたら、`current` は切り替わっていないので前の版のまま動く。**同じコマンドをもう一度流してよい**
+- 本番は `--confirm-target production` を付けないと押せない（打ち間違い防止・xserver と同じ）
+
+初めて出したあと、管理者を作る:
+
+```bash
+ssh -i ~/.ssh/vps_staging deploy@<VPS> \
+  docker exec -w /srv/agentcms/sites/<サイト名>/current agentcms-<サイト名>-app php artisan db:seed --class=AdminUserSeeder --force
+```
+
+## 7. 更新と切り戻し
+
+```bash
+agentcms deploy staging -t staging    # 更新（毎回 DB バックアップ → 新しい release → 切り替え → health check）
+agentcms deploy rollback -t staging   # 1 つ前の release へ（DB は触らない）
+```
+
+古い release は `keepReleases`（既定 3）まで残る。PHP は `current` の symlink を Caddy が実際のパスへ解いてから受け取るので、切り替えた直後から新しい（戻したら古い）コードが動く。
+
+## 8. DB を戻す（手で）
+
+deploy のたびに `backups/<release id>-db.sql.gz` を取っている。戻すのは人が判断する（自動ではやらない）。パスワードは標準入力で渡す:
+
+```bash
+cd /srv/agentcms/sites/<サイト名>
+# 1 行目にパスワード、2 行目から SQL を流す（パスワードをコマンドの引数に載せない）
+{ grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2-; gunzip -c backups/<release id>-db.sql.gz; } \
+  | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysql -h 127.0.0.1 -u "$1" "$2"' sh <DB の利用者> <DB 名>
+```
+
+DB の利用者と DB 名は、サイト名のハイフンを `_` にしたもの（`shared/.env` の `DB_USERNAME`・`DB_DATABASE`）。
+
+## 9. 毎日のバックアップ
+
+scheduler のコンテナが毎分 `schedule:run` を流すので、`shared/.env` に `AGENTCMS_BACKUP_SCHEDULE=03:00` を入れれば毎日取る。別の置き場所へ写す設定は [MAINTENANCE.md](../MAINTENANCE.md) の「毎日のバックアップを別の置き場所へ」。`.env` を変えたら `agentcms deploy staging` を流し直す（設定のキャッシュを作り直すため）。
+
+## 10. 2 つ目のサイトを足す
+
+別のプロジェクト（または別の target）で、**別の `vps.site` と別のドメイン**の設定を作り、§5・§6 を流す。edge（Caddy・MySQL・PHP のイメージ）は共有し、サイトごとに分かれるのは次のもの:
+
+- 置き場所（`/srv/agentcms/sites/<サイト名>/`）・コンテナ（`agentcms-<サイト名>-app` / `-scheduler`）
+- DB と DB の利用者（自分の DB にしか権限がない）
+- Caddy の行（`edge/sites/<サイト名>.caddy`）
+
+**同じドメインや同じサイト名の設定で出そうとすると、何も変えずに止まる。** Caddy の行は、動いている Caddy の外で確かめてから差し替え、reload が落ちたら元の行に戻すので、ほかのサイトは止まらない。
+
+## 11. サイトを外す（手で）
+
+自動ではやらない（消したものは戻せない）。DB を残すかどうかを決めてから:
+
+```bash
+cd /srv/agentcms
+docker compose -f sites/<サイト名>/compose.yml down
+mv edge/sites/<サイト名>.caddy edge/sites/<サイト名>.caddy.removed
+docker exec agentcms-caddy caddy reload --adapter caddyfile --config /etc/caddy/Caddyfile
+# DB も消すなら: docker exec -it agentcms-mysql sh -c 'mysql -uroot -p"$(cat /run/agentcms/mysql-root)"' で DROP DATABASE / DROP USER
+```
+
+## 12. うまくいかないとき
+
+| 症状 | 見るところ |
+| --- | --- |
+| doctor で Docker が FAIL | 出す利用者が docker グループに入っているか（入れたあと ssh を入り直す） |
+| doctor で置き場所が FAIL | §2-3 の `install -d -o deploy -g deploy /srv/agentcms` |
+| health check が「接続できませんでした」 | DNS が VPS を向いているか・80/443 が開いているか。`docker logs agentcms-caddy` に証明書の取得の失敗が出る |
+| 500 が出る | `/srv/agentcms/sites/<サイト名>/shared/storage/logs/` と `docker logs agentcms-<サイト名>-app` |
+| setup の PHP のイメージで止まる | 時間切れ（30 分）か、VPS から Docker Hub へつながらない。もう一度流せば続きから |
+
+## 試験（kit を直す人向け）
+
+```bash
+node scripts/vps-e2e.mjs --project <agentcms dev で動いているプロジェクト>
+```
+
+手元の Docker に「VPS の代わり」を立て、setup・deploy・更新・切り戻し・自動の切り戻し・2 つ目のサイト・ぶつかる設定・秘密が出力やコンテナ設定に出ていないこと、を確かめてから、立てたものを消す。初回は PHP のイメージの build で 10 分ほどかかる。

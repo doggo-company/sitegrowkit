@@ -28,4 +28,5 @@ export const CUSTOMER_DOCS = [
   "UPGRADING.md",
   "MIGRATE_FROM_WORDPRESS.md",
   "deployment/xserver.md",
+  "deployment/vps.md",
 ];

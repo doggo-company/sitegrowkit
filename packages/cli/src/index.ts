@@ -108,7 +108,7 @@ program
 const deploy = program
   .command("deploy")
   .description(
-    "XServer デプロイ（doctor / plan / staging / rollback。既定の target は staging）",
+    "デプロイ（XServer の共用サーバー / Docker の入った VPS。doctor / setup / plan / staging / rollback。既定の target は staging）",
   );
 deploy
   .command("doctor")
@@ -124,7 +124,7 @@ deploy
   .option("-t, --target <target>", "デプロイ先", "staging")
   .option("-y, --yes", "確認プロンプトを省略")
   .description(
-    "XServer API でサーバー前提条件を整える（subdomain / SSL / DB / Cron / PHP。要 XSERVER_API_KEY。作成のみ・冪等）",
+    "サーバーの前提を整える（XServer: API で subdomain / SSL / DB / Cron / PHP・要 XSERVER_API_KEY ／ VPS: Caddy・MySQL・PHP のイメージ・サイトの DB と .env。作成のみ・冪等）",
   )
   .action(async (opts: { target: string; yes?: boolean }) =>
     process.exit(await deploySetup(opts.target, { yes: opts.yes })),

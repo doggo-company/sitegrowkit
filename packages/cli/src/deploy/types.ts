@@ -5,7 +5,7 @@
 
 /** デプロイ先 1 件の設定（.agentcms/deploy/<target>.json）。秘密情報は含めない */
 export interface DeployTargetConfig {
-  /** Provider Adapter 名。Phase 4 は "xserver" のみ */
+  /** Provider Adapter 名。"xserver"（共用サーバー）か "vps"（Docker の入った Linux VPS・ADR-0021） */
   provider: string;
   /** "staging" | "production" 等。Phase 4 で deploy 可能なのは staging のみ */
   target: string;
@@ -29,6 +29,11 @@ export interface DeployTargetConfig {
      * サーバーパネル > MySQL設定 に表示）が必要（実測知見・ADR-0009）
      */
     dbHost?: string;
+    /**
+     * PHP（artisan）を流すコンテナの名前。provider "vps" が設定から決める（書かない）。
+     * 無ければ ssh の先のシェルで直接流す
+     */
+    container?: string;
   };
   app: {
     /** 公開 URL（https://...）。health check / verify staging の基点 */
@@ -56,6 +61,22 @@ export interface DeployTargetConfig {
      * 違っていたらそこで止めて、この値を書く。
      */
     parentDomain?: string;
+  };
+  /**
+   * provider "vps" の設定（ADR-0021）。`remote` は書かなくてよい（ここから決まる）。
+   * 秘密はここにも書かない — DB パスワード・APP_KEY はサーバーの上で生成し、
+   * サーバーの `shared/.env` にだけ置く。
+   */
+  vps?: {
+    /** サイト名（英小文字・数字・ハイフン 2〜32 文字）。コンテナ・DB・置き場所の名前になる */
+    site: string;
+    /** サーバーの置き場所。既定 /srv/agentcms */
+    root?: string;
+    /**
+     * 証明書。"auto"（既定）は Caddy が Let's Encrypt から取って自動で更新する。
+     * "internal" は Caddy の自前の認証局（試験・社内向け。ブラウザは警告を出す）
+     */
+    tls?: "auto" | "internal";
   };
 }
 
@@ -96,7 +117,8 @@ export function worstStatus(checks: CapabilityCheck[]): CheckStatus {
 /** 公開ディレクトリ戦略。symlink 可否の capability detection で決まる */
 export type PublicStrategy =
   | "docroot_symlink" // docroot 自体を current/public への symlink に置換
-  | "entry_stub"; // docroot は実ディレクトリのまま、index.php スタブ + 公開アセット同期
+  | "entry_stub" // docroot は実ディレクトリのまま、index.php スタブ + 公開アセット同期
+  | "caddy_root"; // VPS: Caddy が current/public を直接配信し、PHP は symlink を解いてから渡す
 
 export interface DeployPlan {
   target: string;

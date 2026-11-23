@@ -17,6 +17,24 @@ import type { DeployTargetConfig, StepResult } from "./types.js";
  * docroot 自体の symlink 化は XServer 公式見解がないため既定では行わない。
  */
 
+/**
+ * `dir` に入ってコマンドを流すリモートのコマンド行。
+ *
+ * - `remote.container` が無い（xserver）：ssh の先で `cd dir && cmd`
+ * - ある（vps）：ホストに PHP は無い。そのコンテナの中で同じパスに入って流す
+ *   （コンテナにはサイトのディレクトリが**同じ絶対パス**で入っている・ADR-0021）
+ */
+export function inDir(
+  cfg: DeployTargetConfig,
+  dir: string,
+  cmd: string,
+): string {
+  const container = cfg.remote.container;
+  if (container)
+    return `docker exec -w ${shq(dir)} ${shq(container)} sh -c ${shq(cmd)}`;
+  return `cd ${shq(dir)} && ${cmd}`;
+}
+
 export interface DeployContext {
   cfg: DeployTargetConfig;
   exec: RemoteExecutor;
@@ -126,7 +144,9 @@ export async function ensureLayout(ctx: DeployContext): Promise<StepResult> {
   if (env.stdout.includes("missing") || env.code !== 0)
     return ng(
       "layout",
-      `shared/.env が未配置か APP_KEY が未設定です（${a}/shared/.env）。docs/deployment/xserver.md の「環境設定」手順を先に実施してください`,
+      cfg.provider === "vps"
+        ? `shared/.env が未配置か APP_KEY が未設定です（${a}/shared/.env）。先に \`agentcms deploy setup -t ${cfg.target}\` を流してください（DB と .env をサーバーの上で作ります）`
+        : `shared/.env が未配置か APP_KEY が未設定です（${a}/shared/.env）。docs/deployment/xserver.md の「環境設定」手順を先に実施してください`,
     );
 
   for (const [key, expected] of [
@@ -207,7 +227,11 @@ export async function pendingMigrations(ctx: DeployContext): Promise<string[]> {
   const { cfg, exec, phpBin, releaseId } = ctx;
   const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
   const r = await exec.exec(
-    `cd ${shq(rel)} && ${shq(phpBin)} artisan migrate:status --pending 2>/dev/null`,
+    inDir(
+      cfg,
+      rel,
+      `${shq(phpBin)} artisan migrate:status --pending 2>/dev/null`,
+    ),
   );
   if (r.code !== 0) return [];
   return r.stdout
@@ -222,7 +246,11 @@ export async function migrate(ctx: DeployContext): Promise<StepResult> {
   const { cfg, exec, phpBin, releaseId } = ctx;
   const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
   const r = await exec.exec(
-    `cd ${shq(rel)} && ${shq(phpBin)} artisan migrate --force --no-interaction 2>&1`,
+    inDir(
+      cfg,
+      rel,
+      `${shq(phpBin)} artisan migrate --force --no-interaction 2>&1`,
+    ),
     { timeoutMs: 300_000 },
   );
   if (r.code !== 0)
@@ -243,7 +271,7 @@ export async function taxonomySync(ctx: DeployContext): Promise<StepResult> {
   const { cfg, exec, phpBin, releaseId } = ctx;
   const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
   const r = await exec.exec(
-    `cd ${shq(rel)} && ${shq(phpBin)} artisan agentcms:taxonomy-sync 2>&1`,
+    inDir(cfg, rel, `${shq(phpBin)} artisan agentcms:taxonomy-sync 2>&1`),
     { timeoutMs: 120_000 },
   );
   if (r.code !== 0)
@@ -259,7 +287,11 @@ export async function optimize(ctx: DeployContext): Promise<StepResult> {
   const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
   // route:cache は closure ルートで失敗するため対象外（ADR-0008）
   const r = await exec.exec(
-    `cd ${shq(rel)} && ${shq(phpBin)} artisan config:cache && ${shq(phpBin)} artisan view:cache 2>&1`,
+    inDir(
+      cfg,
+      rel,
+      `${shq(phpBin)} artisan config:cache && ${shq(phpBin)} artisan view:cache 2>&1`,
+    ),
   );
   if (r.code !== 0) return ng("optimize", (r.stdout + r.stderr).slice(-300));
   return ok("optimize");

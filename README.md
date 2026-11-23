@@ -55,7 +55,7 @@ agentcms dev           # Docker の起動から依存・build・DB・health chec
 
 ### 3. サーバーに出す
 
-いま用意しているのは XServer へ出す手順です: [docs/deployment/xserver.md](docs/deployment/xserver.md)
+共用サーバーの XServer へ出す手順は [docs/deployment/xserver.md](docs/deployment/xserver.md)、Docker の入った Linux の VPS へ出す手順は [docs/deployment/vps.md](docs/deployment/vps.md) です。
 
 ### 動作を確かめた環境
 

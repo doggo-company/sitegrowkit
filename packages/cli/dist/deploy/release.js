@@ -1,4 +1,31 @@
 import { shq } from "./executor.js";
+/**
+ * release directory 方式のデプロイ工程（ADR-0008）。
+ *
+ * appDir/
+ *   releases/<id>/   … 展開済み artifact（自己完結: vendor / public/build 同梱）
+ *   shared/.env      … 人間がサーバー上で管理する唯一の秘密情報置き場
+ *   shared/storage/  … 永続 storage（release 間で共有）
+ *   backups/         … DB バックアップ（rollback point）
+ *   current -> releases/<id>
+ *
+ * docroot（public_html）は entry_stub 方式:
+ * 実ディレクトリのまま index.php スタブ + 公開アセット同期。
+ * docroot 自体の symlink 化は XServer 公式見解がないため既定では行わない。
+ */
+/**
+ * `dir` に入ってコマンドを流すリモートのコマンド行。
+ *
+ * - `remote.container` が無い（xserver）：ssh の先で `cd dir && cmd`
+ * - ある（vps）：ホストに PHP は無い。そのコンテナの中で同じパスに入って流す
+ *   （コンテナにはサイトのディレクトリが**同じ絶対パス**で入っている・ADR-0021）
+ */
+export function inDir(cfg, dir, cmd) {
+    const container = cfg.remote.container;
+    if (container)
+        return `docker exec -w ${shq(dir)} ${shq(container)} sh -c ${shq(cmd)}`;
+    return `cd ${shq(dir)} && ${cmd}`;
+}
 const ok = (step, detail) => ({
     step,
     ok: true,
@@ -90,7 +117,9 @@ export async function ensureLayout(ctx) {
     const env = await exec.exec(`test -f ${shq(a + "/shared/.env")} && chmod 600 ${shq(a + "/shared/.env")} && ` +
         `grep -c '^APP_KEY=base64:' ${shq(a + "/shared/.env")} || echo missing`);
     if (env.stdout.includes("missing") || env.code !== 0)
-        return ng("layout", `shared/.env が未配置か APP_KEY が未設定です（${a}/shared/.env）。docs/deployment/xserver.md の「環境設定」手順を先に実施してください`);
+        return ng("layout", cfg.provider === "vps"
+            ? `shared/.env が未配置か APP_KEY が未設定です（${a}/shared/.env）。先に \`agentcms deploy setup -t ${cfg.target}\` を流してください（DB と .env をサーバーの上で作ります）`
+            : `shared/.env が未配置か APP_KEY が未設定です（${a}/shared/.env）。docs/deployment/xserver.md の「環境設定」手順を先に実施してください`);
     for (const [key, expected] of [
         ["APP_ENV", cfg.target],
         ["APP_DEBUG", "false"],
@@ -145,7 +174,7 @@ export async function backupDatabase(ctx) {
 export async function pendingMigrations(ctx) {
     const { cfg, exec, phpBin, releaseId } = ctx;
     const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
-    const r = await exec.exec(`cd ${shq(rel)} && ${shq(phpBin)} artisan migrate:status --pending 2>/dev/null`);
+    const r = await exec.exec(inDir(cfg, rel, `${shq(phpBin)} artisan migrate:status --pending 2>/dev/null`));
     if (r.code !== 0)
         return [];
     return r.stdout
@@ -158,7 +187,7 @@ export async function pendingMigrations(ctx) {
 export async function migrate(ctx) {
     const { cfg, exec, phpBin, releaseId } = ctx;
     const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
-    const r = await exec.exec(`cd ${shq(rel)} && ${shq(phpBin)} artisan migrate --force --no-interaction 2>&1`, { timeoutMs: 300_000 });
+    const r = await exec.exec(inDir(cfg, rel, `${shq(phpBin)} artisan migrate --force --no-interaction 2>&1`), { timeoutMs: 300_000 });
     if (r.code !== 0)
         return ng("migrate", `migration 失敗: ${(r.stdout + r.stderr).slice(-500)}。current は切り替えていないため旧 release が稼働中です。DB 復元が必要な場合は backups/${releaseId}-db.sql.gz を使用してください（自動復元はしません）`);
     return ok("migrate");
@@ -172,7 +201,7 @@ export async function migrate(ctx) {
 export async function taxonomySync(ctx) {
     const { cfg, exec, phpBin, releaseId } = ctx;
     const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
-    const r = await exec.exec(`cd ${shq(rel)} && ${shq(phpBin)} artisan agentcms:taxonomy-sync 2>&1`, { timeoutMs: 120_000 });
+    const r = await exec.exec(inDir(cfg, rel, `${shq(phpBin)} artisan agentcms:taxonomy-sync 2>&1`), { timeoutMs: 120_000 });
     if (r.code !== 0)
         return ng("taxonomy-sync", `分類の同期に失敗しました: ${(r.stdout + r.stderr).slice(-500)}。分類は変更していません。current は切り替えていないため旧 release が稼働中です`);
     return ok("taxonomy-sync");
@@ -181,7 +210,7 @@ export async function optimize(ctx) {
     const { cfg, exec, phpBin, releaseId } = ctx;
     const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
     // route:cache は closure ルートで失敗するため対象外（ADR-0008）
-    const r = await exec.exec(`cd ${shq(rel)} && ${shq(phpBin)} artisan config:cache && ${shq(phpBin)} artisan view:cache 2>&1`);
+    const r = await exec.exec(inDir(cfg, rel, `${shq(phpBin)} artisan config:cache && ${shq(phpBin)} artisan view:cache 2>&1`));
     if (r.code !== 0)
         return ng("optimize", (r.stdout + r.stderr).slice(-300));
     return ok("optimize");

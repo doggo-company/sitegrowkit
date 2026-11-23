@@ -1,0 +1,19 @@
+{
+    "provider": "vps",
+    "target": "staging",
+    "ssh": {
+        "host": "VPS の IP アドレスかホスト名",
+        "port": 22,
+        "user": "deploy",
+        "identityFile": "~/.ssh/vps_staging"
+    },
+    "app": {
+        "url": "https://ドメイン名",
+        "healthPath": "/healthz"
+    },
+    "keepReleases": 3,
+    "vps": {
+        "site": "example-staging",
+        "tls": "auto"
+    }
+}

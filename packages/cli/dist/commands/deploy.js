@@ -12,6 +12,8 @@ import { worstStatus } from "../deploy/types.js";
 import { approveTarget, DEFAULT_TARGET } from "../deploy/target.js";
 import { kitTemplateRefusal } from "../kit-template.js";
 import { requireProject } from "./dev.js";
+import { vpsDeploy, vpsDeployDoctor, vpsDeploySetup, vpsRollback, } from "./deploy-vps.js";
+import { vpsDoctor } from "../deploy/providers/vps.js";
 import { fail, heading, info, ok, warn } from "../ui.js";
 /** doctor / health の検査結果を PASS/WARN/FAIL で表示する */
 function printChecks(checks) {
@@ -66,6 +68,8 @@ export async function deployDoctor(target) {
     const s = setup(target);
     if (!s)
         return 1;
+    if (s.cfg.provider === "vps")
+        return vpsDeployDoctor(s.cfg, s.exec, { printChecks, confirm });
     heading(`agentcms deploy doctor — ${s.cfg.provider} / ${target} (${s.exec.label()})`);
     const { capabilities } = await xserverDoctor(s.exec, s.cfg, resolveApi(s.cfg));
     printChecks(capabilities.checks);
@@ -95,7 +99,10 @@ export async function deployPlan(target, opts = {}) {
     if (!opts.offline) {
         exec = s.exec;
         info(`リモート状態を取得中… (${s.exec.label()})`);
-        caps = (await xserverDoctor(s.exec, s.cfg, resolveApi(s.cfg))).capabilities;
+        caps =
+            s.cfg.provider === "vps"
+                ? (await vpsDoctor(s.exec, s.cfg)).capabilities
+                : (await xserverDoctor(s.exec, s.cfg, resolveApi(s.cfg))).capabilities;
     }
     else {
         info("オフライン plan（リモート未接続。接続時は --offline を外してください）");
@@ -126,8 +133,10 @@ ${plan.database.pendingMigrations.map((m) => `    - ${m}`).join("\n") || "    �
 
 [strategy]
   storage:     ${plan.storageStrategy}
-  public:      ${plan.publicStrategy}（docroot は実ディレクトリ + index.php スタブ）
-  docroot 競合（DirectoryIndex: index.html > htm > shtml > cgi > php）:
+  public:      ${plan.publicStrategy === "caddy_root"
+        ? "caddy_root（Caddy が current/public を直接配信・PHP はサイトのコンテナ）"
+        : `${plan.publicStrategy}（docroot は実ディレクトリ + index.php スタブ）`}
+  docroot${plan.publicStrategy === "caddy_root" ? " / Caddy" : " 競合（DirectoryIndex: index.html > htm > shtml > cgi > php）"}:
 ${plan.docrootActions.map((a) => `    - ${a}`).join("\n")}
   symlink:
 ${plan.symlinkChanges.map((c) => `    - ${c}`).join("\n")}
@@ -182,6 +191,8 @@ export async function deployStaging(target, opts) {
     if (!s)
         return 1;
     const { root, cfg, exec } = s;
+    if (cfg.provider === "vps")
+        return vpsDeploy(root, cfg, exec, { printChecks, confirm }, approval, opts);
     heading(`agentcms deploy ${target}${opts.dryRun ? "（dry-run）" : ""}`);
     // 1. artifact をローカルで構築（dry-run はここまで。外部書き込みなし）
     const releaseId = newReleaseId();
@@ -336,6 +347,8 @@ export async function deployRollback(target, opts) {
     if (!s)
         return 1;
     const { cfg, exec } = s;
+    if (cfg.provider === "vps")
+        return vpsRollback(cfg, exec, { printChecks, confirm }, approval);
     heading(`agentcms deploy rollback — ${target}`);
     const { capabilities } = await xserverDoctor(exec, cfg);
     if (!capabilities.phpBin) {
@@ -462,6 +475,8 @@ export async function deploySetup(target, opts) {
     const s = setup(target);
     if (!s)
         return 1;
+    if (s.cfg.provider === "vps")
+        return vpsDeploySetup(s.cfg, s.exec, { printChecks, confirm }, opts);
     const api = resolveApi(s.cfg);
     heading(`agentcms deploy setup — ${target}`);
     if (!api) {

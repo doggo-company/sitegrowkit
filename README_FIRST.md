@@ -114,7 +114,7 @@ agentcms dev             # 起動(初回は Docker イメージ取得で数分�
 用意するものは、XServer の契約（全プラン可・PHP 8.3 以上）、公開に使うドメイン（初期ドメイン「サーバーID.xsrv.jp」でも可）、SSH の鍵（サーバーパネルで公開鍵を登録）です。
 XServer の API キーがあると、DB・SSL・Cron などを `agentcms deploy setup` で準備できます。無ければサーバーパネルで手作業で準備します。
 
-手順書は、zip を展開したフォルダの [docs/deployment/xserver.md](docs/deployment/xserver.md) です。管理画面からは開けません。
+手順書は、zip を展開したフォルダの [docs/deployment/xserver.md](docs/deployment/xserver.md) です。管理画面からは開けません。Docker の入った Linux の VPS へ出すときは [docs/deployment/vps.md](docs/deployment/vps.md) を使います（設定のひな形は `.agentcms/deploy/vps.example.json`）。
 
 進める順番:
 
@@ -124,7 +124,7 @@ XServer の API キーがあると、DB・SSL・Cron などを `agentcms deploy 
 
 ## 7. 次はどこへ
 
-- **インターネットに公開する（サーバーに出す）** → [XServer の手順書](docs/deployment/xserver.md)
+- **インターネットに公開する（サーバーに出す）** → [XServer の手順書](docs/deployment/xserver.md)・[VPS（Docker）の手順書](docs/deployment/vps.md)
 - **AI エージェントと開発を始める** → [docs/AI_AGENTS.md](docs/AI_AGENTS.md)(最初のプロンプト例、Claude Code / Codex 系 / Cursor での使い方)
 - **WordPress から記事を持ち込む** → [docs/MIGRATE_FROM_WORDPRESS.md](docs/MIGRATE_FROM_WORDPRESS.md)(下見 → backup → 取り込み → 戻す。対応するページも取り込めます。メニューの自動移行は対象外)
 - **うまくいかないとき** → [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)(`agentcms doctor` の出力が最初の手がかりです)

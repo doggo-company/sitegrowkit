@@ -6,6 +6,13 @@ SiteGrowKit の変更履歴です。
 > そこに書かれた販売・購入・返金・ライセンスの条件・入手方法（Polar）・アップデートの期間などは、
 > GPL-3.0-or-later のこの版には**適用されません**。いまの条件は [LICENSE](LICENSE) と [COPYRIGHT](COPYRIGHT) を見てください。
 
+## 未リリース — Docker の入った VPS へ出せるようにしました
+
+- `.agentcms/deploy/<target>.json` に `"provider": "vps"` を書くと、`agentcms deploy setup / doctor / plan / staging / rollback` が Docker の入った Linux の VPS 1 台へ出します。Caddy（証明書を Let's Encrypt から自動で取得・更新）と MySQL を 1 つずつ置き、サイトごとに PHP-FPM と scheduler のコンテナ・DB・DB の利用者を分けます。手順は [docs/deployment/vps.md](docs/deployment/vps.md)、設計は ADR-0021
+- `agentcms deploy setup` が DB パスワード・APP_KEY・MySQL の root パスワードをサーバーの上で作り、サーバーの `shared/.env` などにだけ置きます（手元・設定ファイル・ログ・コマンドの引数には出しません）。作るだけで、既にあるものは上書きしません
+- 出す流れ（DB バックアップ → migration → 切り替え → health check、落ちたら自動で前の release へ）は XServer と同じです。Caddy のサイトの行は、動いている Caddy の外で確かめてから差し替え、同じドメイン・同じサイト名の設定は何も変えずに止めます。2 つ目のサイトを足しても 1 つ目は止まりません
+- 通しの試験 `scripts/vps-e2e.mjs` を足しました（手元の Docker に「VPS の代わり」を立てて流す・手で実行）
+
 ## 未リリース — 毎日のバックアップを別の置き場所へ写せるようにしました
 
 - `AGENTCMS_BACKUP_SCHEDULE=HH:MM` を設定すると、毎日その時刻にバックアップを取ります（`agentcms:backup-auto`。空なら今までどおり自動では取りません）
