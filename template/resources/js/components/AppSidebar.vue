@@ -83,6 +83,14 @@ const undelivered = computed<number>(() => {
     return typeof value === 'number' && value > 0 ? value : 0;
 });
 
+/** 最後の自動バックアップが失敗した・止まっている（1 か 0） */
+const backupAlert = computed<number>(() => {
+    const value = (page.props.nav as { backupAlert?: unknown } | undefined)
+        ?.backupAlert;
+
+    return typeof value === 'number' && value > 0 ? 1 : 0;
+});
+
 const navGroups = computed(() =>
     buildAdminNav({
         contentTypes: contentTypes.value,
@@ -94,6 +102,7 @@ const navGroups = computed(() =>
         )?.navigation,
         features: features.value,
         undelivered: undelivered.value,
+        backupAlert: backupAlert.value,
     }),
 );
 

@@ -48,7 +48,7 @@ final class RestoreBackupCommand extends Command
                 $this->info('外の置き場所から取ってきました（checksum 一致）: '.$id);
             }
         } catch (BackupFailed $e) {
-            $this->error($e->getMessage());
+            $this->error($offsite->redact($e->getMessage()));
 
             return self::FAILURE;
         }
@@ -81,7 +81,7 @@ final class RestoreBackupCommand extends Command
         try {
             $result = $restorer->restore($id);
         } catch (BackupFailed $e) {
-            $this->error('戻せませんでした: '.$e->getMessage());
+            $this->error('戻せませんでした: '.$offsite->redact($e->getMessage()));
 
             return self::FAILURE;
         }

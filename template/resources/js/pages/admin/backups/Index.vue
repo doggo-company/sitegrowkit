@@ -58,6 +58,28 @@ interface Stage {
     label: string;
 }
 
+/** サーバーの `AutoBackupStatus::read()` と同じ形（日時は ISO8601） */
+interface AutoBackup {
+    state:
+        | 'off'
+        | 'never'
+        | 'running'
+        | 'ok'
+        | 'local-only'
+        | 'failed'
+        | 'interrupted'
+        | 'stale'
+        | 'unknown';
+    attention: boolean;
+    message: string;
+    schedule: string | null;
+    startedAt: string | null;
+    finishedAt: string | null;
+    lastSuccessAt: string | null;
+    backup: string | null;
+    reason: string | null;
+}
+
 const props = defineProps<{
     backups: Backup[];
     command: string;
@@ -67,7 +89,15 @@ const props = defineProps<{
     stages?: Stage[];
     canRestore?: boolean;
     canDelete?: boolean;
+    autoBackup?: AutoBackup | null;
 }>();
+
+/** 最後の自動バックアップ。使っていない（off）なら何も出さない */
+const autoBackup = computed<AutoBackup | null>(() =>
+    props.autoBackup && props.autoBackup.state !== 'off'
+        ? props.autoBackup
+        : null,
+);
 
 const restorable = props.canRestore === true;
 const removable = props.canDelete === true;
@@ -360,6 +390,46 @@ const timezone = useAdminTimezone();
                 キーなどの 秘密情報は含まれません。
             </p>
         </div>
+
+        <!--
+            最後の自動バックアップ。cron の schedule:run は失敗しても成功で終わるので、
+            夜中の失敗はここ（とサイドバーの印）でしか分からない。
+        -->
+        <section
+            v-if="autoBackup && autoBackup.attention"
+            class="rounded-lg border border-destructive bg-destructive/5 p-4"
+            role="alert"
+            data-testid="auto-backup-alert"
+            :data-state="autoBackup.state"
+        >
+            <h2 class="text-sm font-semibold text-destructive">
+                自動バックアップを確かめてください
+            </h2>
+            <p class="mt-1 text-sm">{{ autoBackup.message }}</p>
+            <p class="mt-2 text-xs text-muted-foreground">
+                <template v-if="autoBackup.lastSuccessAt">
+                    最後に取れたのは
+                    {{ formatDateTime(autoBackup.lastSuccessAt, timezone) }}
+                    です。
+                </template>
+                <template v-else>自動ではまだ一度も取れていません。</template>
+                サーバーで
+                <code class="font-mono"
+                    >php artisan agentcms:backup-offsite --list</code
+                >
+                を実行して置き場所と設定を確かめ、直したら
+                <code class="font-mono">php artisan agentcms:backup-auto</code>
+                で取り直してください。成功すると、この表示とサイドバーの印は消えます。
+            </p>
+        </section>
+        <p
+            v-else-if="autoBackup"
+            class="text-xs text-muted-foreground"
+            data-testid="auto-backup-status"
+            :data-state="autoBackup.state"
+        >
+            {{ autoBackup.message }}
+        </p>
 
         <!-- サイト全体の復元と、投稿内容だけを移す用途を選べるようにする。 -->
         <a

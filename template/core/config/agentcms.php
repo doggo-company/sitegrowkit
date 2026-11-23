@@ -122,6 +122,12 @@ return [
          * 1 つの置き場所を複数サイトで使うときは、`prefix` をサイトごとに変える
          * （空なら APP_URL の host から作る）。`keep` は外に残す世代で、手元の `keep` とは別に数える。
          */
+        /*
+         * 自動 backup が失敗したときに知らせるメールの宛先（カンマ区切りで複数）。空なら送らない。
+         * 送るのはサイトのメール設定（MAIL_*）で。失敗は宛先が空でも、状態の表示
+         * （`agentcms:backup-offsite --list` が exit 1）と管理画面のバックアップ画面に出る。
+         */
+        'alert_mail' => (string) env('AGENTCMS_BACKUP_ALERT_MAIL', ''),
         'offsite' => [
             'disk' => (string) env('AGENTCMS_BACKUP_OFFSITE_DISK', ''),
             'prefix' => (string) env('AGENTCMS_BACKUP_OFFSITE_PREFIX', ''),

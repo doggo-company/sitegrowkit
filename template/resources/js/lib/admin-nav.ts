@@ -113,6 +113,13 @@ export interface AdminNavInput {
      * 0 のときは付けない（鳴りっぱなしの印は、そのうち見られなくなる）。
      */
     undelivered?: number;
+    /**
+     * 最後の自動バックアップが失敗した・止まっている（1 か 0）。
+     *
+     * cron の `schedule:run` は失敗しても成功で終わり、理由はサーバーのログにしか出ない。
+     * バックアップ画面は開く理由が無いので、届かなかった通知と同じく赤い印で出す。
+     */
+    backupAlert?: number;
 }
 
 /**
@@ -320,6 +327,8 @@ export function adminNavEntries(input: AdminNavInput): AdminNavEntry[] {
                       href: '/admin/backups',
                       icon: DatabaseBackup,
                       group: 'admin' as const,
+                      // 自動バックアップの失敗（0 のときは付けない）
+                      badge: input.backupAlert || undefined,
                   },
               ]
             : []),

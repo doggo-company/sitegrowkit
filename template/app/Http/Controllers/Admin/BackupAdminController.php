@@ -13,6 +13,7 @@ use AgentCms\Core\Application\Backups\VerifyBackup;
 use AgentCms\Core\Application\OperationContext;
 use AgentCms\Core\Application\OperationStatus;
 use AgentCms\Core\Application\Result;
+use AgentCms\Core\Backups\AutoBackupStatus;
 use AgentCms\Core\Backups\BackupCatalog;
 use AgentCms\Core\Backups\BackupFailed;
 use AgentCms\Core\Backups\BackupPaths;
@@ -61,6 +62,7 @@ final class BackupAdminController
         ListBackups $list,
         BackupRunStatus $status,
         BackupRunLauncher $launcher,
+        AutoBackupStatus $auto,
     ): Response {
         $result = $list->execute($this->context($request));
 
@@ -89,6 +91,12 @@ final class BackupAdminController
             ),
             'canRestore' => $this->can($request, Capability::BackupRestore),
             'canDelete' => $this->can($request, Capability::SettingsManage),
+            /*
+             * 最後の自動 backup の結果。cron の `schedule:run` は失敗しても exit 0 で終わるので、
+             * 夜中の失敗はここ（とサイドバーの印・`--list`・設定していればメール）でしか分からない。
+             * 理由の文は記録の時点で鍵を伏せてある。
+             */
+            'autoBackup' => $auto->read(),
         ]);
     }
 

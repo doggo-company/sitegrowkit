@@ -4,24 +4,33 @@ declare(strict_types=1);
 
 namespace AgentCms\Core\Backups\Console;
 
+use AgentCms\Core\Backups\AutoBackupAlert;
+use AgentCms\Core\Backups\AutoBackupStatus;
 use AgentCms\Core\Backups\BackupBuilder;
 use AgentCms\Core\Backups\BackupCatalog;
-use AgentCms\Core\Backups\BackupFailed;
 use AgentCms\Core\Backups\OffsiteBackups;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * 自動の backup（schedule から毎日呼ばれる。手で打ってもよい）。
  *
  * 順序を固定する:
  *
- *   1. 取る（`agentcms:backup` と同じ `BackupBuilder`）
- *   2. 外の置き場所が設定されていれば写す。大きさと checksum まで確かめる
- *   3. 写せたときだけ、外の古い世代を整理する
- *   4. 手元の世代を整理する（今までと同じ 5 世代）
+ *   1. 始めたことを記録する（`AutoBackupStatus`）
+ *   2. 取る（`agentcms:backup` と同じ `BackupBuilder`）
+ *   3. 外の置き場所が設定されていれば写す。大きさと checksum まで確かめる
+ *   4. 写せたときだけ、外の古い世代を整理する
+ *   5. 手元の世代を整理する（今までと同じ 5 世代）
+ *   6. 結果を記録する
  *
- * **外へ写せなかったら exit 1 で終わり、ログ（error）にも残す。** 手元の backup は残す。
+ * **失敗したら exit 1。** ただし cron が叩く `schedule:run` はそれでも exit 0（DONE）で終わり、
+ * 出力も捨てる。だから失敗は次の 3 つにも残す — ログ（error）・結果の記録（状態の表示
+ * `agentcms:backup-offsite --list` が exit 1、管理画面のバックアップ画面とサイドバーに出る）・
+ * 知らせのメール（`AGENTCMS_BACKUP_ALERT_MAIL` を決めたときだけ）。手元の backup は残す。
+ * 理由の文は鍵を伏せてから出す（`OffsiteBackups::redact()`）。
+ *
  * 外の置き場所が未設定なら、取ったうえで「このサーバーの中にしか無い」と出す（exit 0）。
  */
 final class AutoBackupCommand extends Command
@@ -30,23 +39,25 @@ final class AutoBackupCommand extends Command
 
     protected $description = 'backup を取り、設定した外の置き場所へ写して、古い世代を整理します（毎日の自動実行用）';
 
-    public function handle(BackupBuilder $builder, BackupCatalog $catalog, OffsiteBackups $offsite): int
-    {
+    public function handle(
+        BackupBuilder $builder,
+        BackupCatalog $catalog,
+        OffsiteBackups $offsite,
+        AutoBackupStatus $status,
+        AutoBackupAlert $alert,
+    ): int {
+        $status->started();
+
         try {
             $manifest = $builder->create();
-        } catch (BackupFailed $e) {
-            $this->error('backup を作れませんでした: '.$e->getMessage());
-            Log::error('agentcms:backup-auto: backup を作れませんでした: '.$e->getMessage());
-
-            return self::FAILURE;
+        } catch (Throwable $e) {
+            return $this->recordFailure('backup', 'backup を作れませんでした: '.$e->getMessage(), null, $offsite, $status, $alert);
         }
 
         $this->info('backup を作りました: '.$manifest->id);
 
-        $failed = false;
-
-        if ($offsite->configured()) {
-            try {
+        try {
+            if ($offsite->configured()) {
                 $sent = $offsite->push($manifest->id);
                 $this->info(sprintf('外の置き場所へ送りました: %s%s.zip（%d bytes・sha256 一致）', $offsite->describe(), $sent['id'], $sent['bytes']));
 
@@ -55,29 +66,69 @@ final class AutoBackupCommand extends Command
                 if ($removed !== []) {
                     $this->line('外の古い世代を '.count($removed).' 件片付けました');
                 }
-            } catch (BackupFailed $e) {
-                $reason = $e->getMessage();
-
-                if (! str_starts_with($reason, '外の置き場所へ送れませんでした')) {
-                    $reason = '外の置き場所へ送れませんでした: '.$reason;
-                }
-
-                $this->error($reason.'（手元の backup は残しています）');
-
-                // schedule:run は出力を捨てる。夜中の失敗をログにも残す（鍵などの秘密は理由に含まれない）
-                Log::error('agentcms:backup-auto: '.$reason, ['backup' => $manifest->id]);
-                $failed = true;
+            } else {
+                $this->warn('外の置き場所が未設定です。backup はこのサーバーの中にしかありません（AGENTCMS_BACKUP_OFFSITE_DISK）');
             }
-        } else {
-            $this->warn('外の置き場所が未設定です。backup はこのサーバーの中にしかありません（AGENTCMS_BACKUP_OFFSITE_DISK）');
+        } catch (Throwable $e) {
+            $reason = $e->getMessage();
+
+            if (! str_starts_with($reason, '外の置き場所へ送れませんでした')) {
+                $reason = '外の置き場所へ送れませんでした: '.$reason;
+            }
+
+            try {
+                $this->pruneLocal($catalog);
+            } catch (Throwable) {
+                // 知らせるのは送れなかったこと。手元の整理は次の回にやり直す
+            }
+
+            return $this->recordFailure('offsite', $reason, $manifest->id, $offsite, $status, $alert);
         }
 
-        $removedLocal = $catalog->prune();
-
-        if ($removedLocal !== []) {
-            $this->line('手元の古い世代を '.count($removedLocal).' 件片付けました');
+        try {
+            $this->pruneLocal($catalog);
+        } catch (Throwable $e) {
+            return $this->recordFailure('backup', '手元の古い世代を片付けられませんでした: '.$e->getMessage(), $manifest->id, $offsite, $status, $alert);
         }
 
-        return $failed ? self::FAILURE : self::SUCCESS;
+        $status->succeeded($manifest->id, $offsite->configured());
+
+        return self::SUCCESS;
+    }
+
+    private function pruneLocal(BackupCatalog $catalog): void
+    {
+        $removed = $catalog->prune();
+
+        if ($removed !== []) {
+            $this->line('手元の古い世代を '.count($removed).' 件片付けました');
+        }
+    }
+
+    /** @param  'backup'|'offsite'  $stage */
+    private function recordFailure(
+        string $stage,
+        string $reason,
+        ?string $backupId,
+        OffsiteBackups $offsite,
+        AutoBackupStatus $status,
+        AutoBackupAlert $alert,
+    ): int {
+        $reason = $offsite->redact($reason);
+
+        $this->error($reason.($backupId === null ? '' : '（手元の backup は残しています）'));
+
+        // schedule:run は出力を捨て、exit 0 で終わる。ログ・記録・知らせの 3 つに残す
+        Log::error('agentcms:backup-auto: '.$reason, ['backup' => $backupId]);
+        $status->failed($stage, $reason, $backupId);
+
+        // 記録が書けなかったときも、知らせには今回の理由を載せる
+        $view = $status->read();
+
+        if ($alert->send($view['state'] === 'failed' ? $view['message'] : $reason, $backupId)) {
+            $this->line('知らせのメールを送りました（AGENTCMS_BACKUP_ALERT_MAIL）');
+        }
+
+        return self::FAILURE;
     }
 }

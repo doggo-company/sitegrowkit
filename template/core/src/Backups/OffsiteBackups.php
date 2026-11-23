@@ -90,6 +90,45 @@ final class OffsiteBackups
     }
 
     /**
+     * 人に見せる・書き残す文から、置き場所の鍵を伏せる。
+     *
+     * S3 互換の SDK は拒んだ理由に応答の一部（`<AWSAccessKeyId>` など）をそのまま積むことがある。
+     * その文は端末・ログ・状態のファイル・管理画面・知らせのメールへ流れるので、ここを通してから出す。
+     * 伏せるのは、この置き場所の disk に書かれた鍵の値そのものと、署名に使う既知の欄。
+     */
+    public function redact(string $text): string
+    {
+        $config = $this->configured() ? config('filesystems.disks.'.$this->diskName()) : null;
+        $secrets = [];
+
+        if (is_array($config)) {
+            foreach (['key', 'secret', 'token', 'password', 'passphrase'] as $field) {
+                $value = $config[$field] ?? null;
+
+                if (is_string($value) && strlen($value) >= 4) {
+                    $secrets[] = $value;
+                }
+            }
+        }
+
+        // 長いものから伏せる（短い鍵が長い鍵の一部だったときに、残りを出さない）
+        usort($secrets, static fn (string $a, string $b): int => strlen($b) <=> strlen($a));
+
+        foreach ($secrets as $secret) {
+            $text = str_replace($secret, '[伏せ字]', $text);
+        }
+
+        return (string) preg_replace(
+            [
+                '#<(AWSAccessKeyId|StringToSign|StringToSignBytes|CanonicalRequest|SignatureProvided)>.*?(</\1>|$)#s',
+                '#(X-Amz-(?:Credential|Signature|Security-Token)=)[^&\s"\']+#i',
+            ],
+            ['<$1>[伏せ字]</$1>', '$1[伏せ字]'],
+            $text,
+        );
+    }
+
+    /**
      * 写す。送った大きさを読み直し、checksum を横に置くまでが 1 回。
      *
      * @return array{id: string, path: string, bytes: int, sha256: string}

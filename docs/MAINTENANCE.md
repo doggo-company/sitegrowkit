@@ -40,18 +40,32 @@ AGENTCMS_BACKUP_SCHEDULE=03:40          # 毎日この時刻（アプリのタ�
 AGENTCMS_BACKUP_OFFSITE_DISK=s3         # 写しを置く場所（config/filesystems.php の disk 名）
 AGENTCMS_BACKUP_OFFSITE_PREFIX=example-com   # 1 つの置き場所を複数サイトで使うときの、このサイトの場所
 AGENTCMS_BACKUP_OFFSITE_KEEP=14         # 置き場所に残す世代（手元は AGENTCMS_BACKUP_KEEP の 5 世代のまま）
+AGENTCMS_BACKUP_ALERT_MAIL=ops@example.com   # 失敗したら知らせる宛先（空なら送らない）
 ```
 
 - 自動の取得は、毎分の `php artisan schedule:run`（上の Cron）が動かします。Cron が無いと時刻を入れても取得しません
 - 置き場所は 2 種類から選べます
   - **S3 互換**（Cloudflare R2・Backblaze B2・MinIO など）：`config/filesystems.php` の `s3` disk に `AWS_ACCESS_KEY_ID`・`AWS_SECRET_ACCESS_KEY`・`AWS_DEFAULT_REGION`・`AWS_BUCKET`・`AWS_ENDPOINT`（必要なら `AWS_USE_PATH_STYLE_ENDPOINT=true`）を設定し、プロジェクトで `composer require league/flysystem-aws-s3-v3` を実行します。キットにはこのパッケージを同梱していません
   - **別のディレクトリ**（別のディスク・ネットワークのマウント）：`AGENTCMS_BACKUP_OFFSITE_DISK=backup-offsite` と `AGENTCMS_BACKUP_OFFSITE_ROOT=<絶対パス>`。手元のバックアップと同じ場所の中、または公開ディレクトリの中を指すと送信を止めます
-- 送った後に大きさを読み直し、`<id>.zip.sha256` を横に置きます。送れなかったときは `agentcms:backup-auto` が終了コード 1 で終わり、理由をアプリのログ（error）にも残します。手元のバックアップは残します。自動実行（schedule:run）は画面に何も出さないので、失敗に気づくにはログか、置き場所の最新の日時を外から見てください
+- 送った後に大きさを読み直し、`<id>.zip.sha256` を横に置きます。送れなかったときは `agentcms:backup-auto` が終了コード 1 で終わります。手元のバックアップは残します
 - 世代の整理は、このサイトの prefix の中だけで行います
+
+### 失敗に気づく
+
+Cron が動かす `php artisan schedule:run` は、中の `agentcms:backup-auto` が失敗しても **終了コード 0 で終わり、画面にも何も出しません**。そのため失敗は次の場所に残します。
+
+- **管理画面**：サイドバーの「バックアップ」に赤い印が付き、バックアップ画面の上に理由が出ます（バックアップ画面を開ける Owner だけ）
+- **状態の表示**：`php artisan agentcms:backup-offsite --list` が理由を出して終了コード 1 で終わります。Cron や外の見張りから叩けます
+- **メール**：`AGENTCMS_BACKUP_ALERT_MAIL=ops@example.com`（カンマ区切りで複数）を設定したときだけ、サイトのメール設定（`MAIL_*`）で知らせます。空なら送りません。メールが送れなくても、上の 2 つは変わりません
+- **ログ**：アプリのログ（error）にも 1 行残します
+
+「失敗」に数えるのは、バックアップを作れなかった・置き場所へ送れなかった・始めた記録だけが残り 4 時間たっても終わっていない・時刻を決めているのに最後の成功から 30 時間を超えた（Cron が止まった）・記録が読めない、のどれかです。次に成功すると印は消えます。記録は `storage/app/private/backup-status/auto.json` に置き、バックアップの中には入れません。理由の文は、置き場所の disk に書かれた鍵（`key`・`secret` など）と署名の欄を伏せてから残します。
+
+**Cron そのものが止まった・サーバーごと落ちた**ときは、サーバーの中からは知らせを出せません（メールも送れません）。管理画面と `--list` は次に開いたときに「止まっています」と出しますが、確実に気づくには、サーバーの外から置き場所の最新のバックアップの日時（または `--list` の終了コード）を見張ってください。
 
 ```sh
 php artisan agentcms:backup-auto                 # 取得 → 写す → 古い世代の整理（自動実行と同じ処理）
-php artisan agentcms:backup-offsite --list       # 設定と、置き場所にある世代。未設定・読めない時刻・読めない置き場所は終了コード 1
+php artisan agentcms:backup-offsite --list       # 設定・最後の自動実行の結果・置き場所にある世代。未設定・読めない時刻・読めない置き場所・最後の自動実行の失敗は終了コード 1
 php artisan agentcms:backup-offsite [<id>]       # 手元のバックアップを写す（省略時はいちばん新しいもの）
 ```
 

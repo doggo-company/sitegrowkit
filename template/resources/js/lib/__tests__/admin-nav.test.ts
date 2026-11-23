@@ -294,3 +294,33 @@ describe('権限の無い設定への入口', () => {
         },
     );
 });
+
+describe('自動バックアップの失敗の印', () => {
+    const backupItem = (input: AdminNavInput) =>
+        buildAdminNav(input)
+            .flatMap((group) => group.items)
+            .find((item) => String(item.href) === '/admin/backups');
+
+    /**
+     * cron の `schedule:run` は中の失敗を成功として終える。夜中の失敗は、
+     * サイドバーの「バックアップ」の赤い印でしか目に入らない。
+     */
+    it('失敗していれば「バックアップ」に印が付く', () => {
+        expect(
+            backupItem({ ...inputFor('owner'), backupAlert: 1 })?.badge,
+        ).toBe(1);
+    });
+
+    it('失敗していなければ印は付かない', () => {
+        expect(
+            backupItem({ ...inputFor('owner'), backupAlert: 0 })?.badge,
+        ).toBeUndefined();
+        expect(backupItem(inputFor('owner'))?.badge).toBeUndefined();
+    });
+
+    it('バックアップを開けない役割には項目も印も出ない', () => {
+        expect(
+            backupItem({ ...inputFor('administrator'), backupAlert: 1 }),
+        ).toBeUndefined();
+    });
+});

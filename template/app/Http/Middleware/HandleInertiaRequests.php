@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use AgentCms\Core\Application\Content\ContentTypeResolver;
+use AgentCms\Core\Backups\AutoBackupStatus;
 use AgentCms\Core\ContentTypes\Registration\ContentTypeLifecyclePolicy;
 use AgentCms\Core\ContentTypes\Registration\PublishingQuickStart;
 use AgentCms\Core\Schema\SchemaRegistry;
@@ -132,6 +133,14 @@ class HandleInertiaRequests extends Middleware
                  * サイドバーの「フォーム」に赤い数で出す。
                  */
                 'undelivered' => $this->undelivered($request),
+                /*
+                 * **最後の自動 backup が失敗した・止まっている**（1 か 0）。
+                 *
+                 * cron の `schedule:run` は中のコマンドが失敗しても exit 0 で終わり、理由はログにしか
+                 * 出ない。バックアップ画面は開く理由が無い — 届かなかった通知と同じ形なので、
+                 * 同じくサイドバーの「バックアップ」に赤い印で出す。バックアップ画面を開ける人にだけ。
+                 */
+                'backupAlert' => $this->backupAlert($request),
             ],
         ];
     }
@@ -141,6 +150,20 @@ class HandleInertiaRequests extends Middleware
      *
      * @return array<string, bool>
      */
+    /** 最後の自動 backup を見てほしいか（バックアップ画面を開けない人には 0） */
+    private function backupAlert(Request $request): int
+    {
+        if ($request->user() === null || ! in_array(
+            Capability::BackupRestore->value,
+            app(RoleOperationPolicy::class)->capabilitiesFor($request->user()),
+            true,
+        )) {
+            return 0;
+        }
+
+        return app(AutoBackupStatus::class)->read()['attention'] ? 1 : 0;
+    }
+
     /**
      * 通知メールが届かなかった受信の数。
      *
