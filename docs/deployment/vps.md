@@ -109,7 +109,7 @@ agentcms deploy plan -t staging      # 何が起きるかを見る（何も変�
 agentcms deploy staging -t staging   # 出す
 ```
 
-`deploy staging` の流れ：手元で artifact を作る（vite build と composer install --no-dev）→ doctor → **Caddy の行**（別の場所で `caddy validate` してから差し替える。同じドメインを別のサイトが使っていれば何も変えずに止まる）→ 送って展開 → **サイトのコンテナ**（PHP-FPM・web・scheduler）→ **DB バックアップ** → migration → キャッシュ → `current` の切り替え → health check。
+`deploy staging` の流れ：手元で artifact を作る（vite build と composer install --no-dev）→ doctor → サイトの鍵を取る → 送って展開 → **サイトのコンテナ**（PHP-FPM・web・scheduler。web の設定を確かめる）→ **Caddy の行**（サイトの web が起きてから、別の場所で `caddy validate` して差し替える。同じドメインを別のサイトが使っていれば何も変えずに止まる）→ **DB バックアップ** → migration → キャッシュ → `current` の切り替え → health check。Caddy の行を変えるのはサイトの web が起きたあとなので、それより前（送信・展開など）で落ちても入口は前のまま。
 
 - health check が落ちたら、**自動で前の release へ戻す**（DB は戻さない。戻すなら §8）
 - 途中で落ちたら、`current` は切り替わっていないので前の版のまま動く。**同じコマンドをもう一度流してよい**
