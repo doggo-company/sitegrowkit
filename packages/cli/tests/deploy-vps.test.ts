@@ -111,7 +111,8 @@ describe("vps の設定", () => {
     ["ハイフン始まり", "-ab"],
     ["ハイフン終わり", "ab-"],
     ["空白", "a b"],
-    ["33 文字", "a".repeat(33)],
+    ["29 文字（DB の利用者名が 32 文字を超える）", "a".repeat(29)],
+    ["_（GRANT のワイルドカード）", "shop_a"],
   ])("サイト名が %s なら止める", (_label, site) => {
     const { error } = load({ ...base, vps: { site } });
     expect(error?.why).toContain("vps.site");
@@ -119,6 +120,9 @@ describe("vps の設定", () => {
 
   it.each([
     ["パス付き", "https://example.com/blog"],
+    ["利用者名とパスワード付き", "https://user:pass@example.com"],
+    ["# 付き", "https://example.com/#x"],
+    ["クエリ付き", "https://example.com/?a=1"],
     ["http", "http://example.com"],
     ["記号", "https://exa_mple.com"],
     ["ドット無し", "https://intranet"],
@@ -177,6 +181,24 @@ describe("vps の設定", () => {
   });
 });
 
+describe("DB の名前", () => {
+  it("頭に sgk- を付け、GRANT のワイルドカード（_ %）を含まず、利用者名は 32 文字以内", () => {
+    const longest = vpsNames(cfgOf({ vps: { site: "a".repeat(28) } }));
+    expect(longest.dbUser.length).toBeLessThanOrEqual(32);
+    for (const site of ["mysql", "sys", "information-schema", "shop-a"]) {
+      const n = vpsNames(cfgOf({ vps: { site } }));
+      expect(n.dbName).toBe(`sgk-${site}`);
+      expect(n.dbName).not.toMatch(/[_%]/);
+      expect([
+        "mysql",
+        "sys",
+        "information_schema",
+        "performance_schema",
+      ]).not.toContain(n.dbName);
+    }
+  });
+});
+
 describe("サーバーへ置く中身", () => {
   const n = () => vpsNames(cfgOf());
 
@@ -231,7 +253,8 @@ describe("サーバーへ置く中身", () => {
     expect(t).toContain(`APP_KEY=${APP_KEY_PLACEHOLDER}`);
     expect(t).toContain(`DB_PASSWORD=${DB_PASSWORD_PLACEHOLDER}`);
     expect(t).toContain("DB_HOST=agentcms-mysql");
-    expect(t).toContain("DB_DATABASE=example_staging");
+    expect(t).toContain("DB_DATABASE=sgk-example-staging");
+    expect(t).toContain("DB_USERNAME=sgk-example-staging");
     expect(t).toContain("APP_ENV=staging");
     expect(t).toContain("APP_DEBUG=false");
     expect(t).toContain("APP_TIMEZONE=Asia/Tokyo");
@@ -286,8 +309,11 @@ describe("サーバーの上の台本", () => {
     expect(env).toContain("head -c 32 /dev/urandom");
     // 新しいパスワードは標準入力で MySQL へ（コマンドの引数に載せない）
     expect(env).toMatch(
-      /\| docker exec -i agentcms-mysql sh -c 'MYSQL_PWD="\$\(cat \/run\/agentcms\/mysql-root\)" exec mysql -uroot'/,
+      /root_sql\(\) \{ docker exec -i agentcms-mysql sh -c 'MYSQL_PWD="\$\(cat \/run\/agentcms\/mysql-root\)" exec mysql -uroot -N'; \}/,
     );
+    // 既にある利用者のパスワードを変えない
+    expect(env).not.toContain("ALTER USER");
+    expect(env).toContain("| root_sql");
     expect(env).not.toMatch(/mysql[^\n]*-p\S/);
     // 置き換えは builtin の printf（sed の引数に値が載らない）
     expect(env).toContain(
@@ -360,6 +386,20 @@ describe("Caddy の行を入れる（2 つ目のサイトが 1 つ目を壊さ�
     expect(r.detail).toContain("other.example.com");
   });
 
+  it("成功の印があっても終了コードが 0 でなければ成功にしない", async () => {
+    const ex = new FakeExecutor([["", { stdout: "route-ok", code: 1 }]]);
+    expect((await siteRoute(ctxOf(ex))).ok).toBe(false);
+  });
+
+  it("元の行へ戻せなかったら、手で直す場所を言う", async () => {
+    const ex = new FakeExecutor([
+      ["", { stdout: "route-restore-failed", code: 10 }],
+    ]);
+    const r = await siteRoute(ctxOf(ex));
+    expect(r.ok).toBe(false);
+    expect(r.detail).toContain("手で直さないと");
+  });
+
   it("設定が通らなければ、動いている設定はそのまま", async () => {
     const ex = new FakeExecutor([
       [
@@ -380,7 +420,7 @@ describe("Caddy の行を入れる（2 つ目のサイトが 1 つ目を壊さ�
     expect(s.indexOf("caddy validate")).toBeLessThan(s.indexOf("caddy reload"));
     expect(s).toContain("grep -qxF '# agentcms-domain: staging.example.com'");
     expect(s).toMatch(
-      /if \[ -f '[^']+\.caddy\.prev' \]; then mv '[^']+\.caddy\.prev' '[^']+\.caddy'; else rm -f '[^']+\.caddy'; fi/,
+      /mv '[^']+\.caddy\.prev' '[^']+\.caddy' \|\| \{ echo route-restore-failed; exit 10; \}/,
     );
   });
 });

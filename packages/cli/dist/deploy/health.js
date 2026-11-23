@@ -272,5 +272,7 @@ export function postHealthAction(checks, previous) {
         return { kind: "stop" };
     if (!checks.some((c) => c.status === "FAIL"))
         return { kind: "continue" };
-    return previous === null ? { kind: "stop" } : { kind: "rollback", to: previous };
+    return previous === null
+        ? { kind: "stop" }
+        : { kind: "rollback", to: previous };
 }

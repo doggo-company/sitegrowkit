@@ -68,7 +68,7 @@ export interface DeployTargetConfig {
    * サーバーの `shared/.env` にだけ置く。
    */
   vps?: {
-    /** サイト名（英小文字・数字・ハイフン 2〜32 文字）。コンテナ・DB・置き場所の名前になる */
+    /** サイト名（英小文字・数字・ハイフン 2〜28 文字）。コンテナ・DB・置き場所の名前になる */
     site: string;
     /** サーバーの置き場所。既定 /srv/agentcms */
     root?: string;

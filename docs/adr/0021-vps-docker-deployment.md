@@ -18,7 +18,8 @@ ADR-0008 は XServer の共用サーバーへ出す道を決め、「VPS など�
 
 ### 1. 構成：Caddy 1 つ・MySQL 1 つ・サイトごとの PHP-FPM
 
-- **edge**（サーバーに 1 つ）：Caddy（Let's Encrypt の証明書を自動で取得・更新）と MySQL 8.4。MySQL はホストへポートを出さない。サイトごとに DB と利用者を分け、利用者は自分の DB にしか権限を持たない
+- **edge**（サーバーに 1 つ）：Caddy（Let's Encrypt の証明書を自動で取得・更新）と MySQL 8.4。MySQL はホストへポートを出さない。サイトごとに DB と利用者を分け、利用者は自分の DB にしか権限を持たない。名前は `sgk-<サイト名>`（`mysql`・`sys` と重ならない）。サイト名に `_`・`%` を許さない — MySQL の DB 単位の GRANT では `_`・`%` がワイルドカードになり、`shop_a` の権限が `shopxa` にも効くため
+- 1 台の置き場所（`vps.root`）は 1 つ。違う値の設定は doctor と setup が止める（edge は 1 つなので、別の置き場所の同じ名前の DB を「無い」と読み違えないため）
 - **サイト**：PHP-FPM のコンテナと scheduler のコンテナ（毎分 `current` に入り直して `schedule:run`。`schedule:work` のように入ったまま動き続けると、切り替えたあとも古い release で動くため）。どちらも ssh の利用者と同じ uid:gid で動く（`shared/.env` は 600）
 - Caddy が `current/public` を直接配信し、PHP へは `php_fastcgi … { resolve_root_symlink }` で**symlink を実際の release のパスへ解いてから**渡す。ADR-0008 の entry stub が `realpath()` しているのと同じ理由（同じパスに見えると OPcache が古い release のコードを返す）
 - サイトのディレクトリはコンテナへ**同じ絶対パス**で入れる。`current`・`storage`・`.env` の symlink がそのまま解ける
@@ -45,10 +46,20 @@ ADR-0008 は XServer の共用サーバーへ出す道を決め、「VPS など�
 
 - MySQL の root パスワード・各サイトの DB パスワード・APP_KEY は、サーバーの `/dev/urandom` から作り、ファイル（600）にだけ書く
 - 値はパイプ（標準入力）でだけ渡す。MySQL の root パスワードはコンテナにファイルで渡し（`MYSQL_ROOT_PASSWORD_FILE`）、`docker inspect` に値が出ない。新しいパスワードは SQL ごと標準入力で `mysql` へ渡す。`.env` の差し替えは builtin の `printf` で行い、`sed` などの引数に値を載せない
-- 作るだけ・何度流しても同じ。既にある `shared/.env`・edge の設定・root パスワードは上書きしない（パスワードを回さない）
+- 作るだけ・何度流しても同じ。既にある `shared/.env`・edge の設定・root パスワードは上書きしない（パスワードを回さない）。`.env` が無いのに同じ名前の DB か利用者があれば、作らずに止める（ALTER USER しない — 別のサイトのパスワードを変えない）
+- MySQL のデータがあるのに root パスワードのファイルが無いときは、作り直さずに止める
+- 値はコマンドの引数・`docker inspect` に出ない。動いているプロセスの環境と読んだファイルの中には値がある（PHP・mysql クライアント・MySQL の entrypoint）。サーバーの root と docker グループの利用者は読める
 - 設定ファイル（`.agentcms/deploy/<target>.json`）に `remote` と鍵・パスワードらしい名前は書かせない。`vps.site` と `app.url` のホスト名は形を絞る（シェル・Caddy・MySQL の名前にそのまま入るため）
 
-### 5. 試験
+### 5. 失敗したときと、同時に流したとき
+
+- health まで通った release に印（`.agentcms-healthy`）を付け、rollback と掃除は印で選ぶ。途中で落ちた release へは戻らず、掃除で消す
+- 手での rollback で戻した先の health が通らなければ、元の release に戻して止める
+- サイトごとの鍵（`mkdir` で取る `.agentcms-deploy.lock`）を、current を読む前から health・掃除が終わるまで持つ。edge の変更（Caddy の行・DB の作成）は flock で順番に流す
+- Caddy の行の退避・差し替え・戻しは、それぞれ結果を確かめる。戻せなかったときは手で直す場所を出す
+- DB を戻すのは手で、アプリを止め → いまの状態を取り → DB を空にしてから戻す（docs/deployment/vps.md §8。通し試験はこの節の手順をそのまま流す）
+
+### 6. 試験
 
 - 単体：`packages/cli/tests/deploy-vps.test.ts`（偽の ssh。設定の検査・置くファイルの中身・台本の形）
 - 通し：`scripts/vps-e2e.mjs`（手で流す）。手元の Docker に「VPS の代わり」（docker:dind に sshd と一般の利用者を足したもの）を立て、本物の CLI で setup → deploy → 更新 → rollback → 自動の切り戻し → 2 つ目のサイト → ぶつかる設定 → 秘密が出力・`docker inspect`・置いたファイル・`ps` に出ていないこと、を確かめる。kit-verify には入れない（特権コンテナと数分の build が要るため）

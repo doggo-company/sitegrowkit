@@ -215,6 +215,33 @@ function remote(command) {
   ]);
 }
 
+/** 台本を標準入力で流す（秘密を引数に載せない） */
+function remoteIn(script, input = "") {
+  return sh(
+    join(bin, "ssh"),
+    [
+      "-p",
+      String(ports.ssh),
+      "-i",
+      key,
+      "-o",
+      "BatchMode=yes",
+      "deploy@127.0.0.1",
+      "bash -s",
+    ],
+    { input: input ? `${script}\n${input}` : script },
+  );
+}
+// 試験の間ずっと、サーバーの全プロセスの引数を 0.2 秒ごとに書き残す（終わってから秘密が無いかを見る）
+sh("docker", [
+  "exec",
+  "-d",
+  NAME,
+  "sh",
+  "-c",
+  "while :; do ps -eo args >> /tmp/ps-sample.log; sleep 0.2; done",
+]);
+
 // ---------------------------------------------------------------- 設定と CLI
 const caFile = join(work, "caddy-root.crt");
 function deployConfig(target, site, host) {
@@ -332,6 +359,66 @@ try {
     "PHP が v1",
   );
 
+  // ------------------------------------------------------------ 1b. 管理者
+  step("1b. 管理者を作ってログインできる（docs/deployment/vps.md §6 の手順）");
+  const adminEmail = "admin@example.test";
+  const adminPassword = `A${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}9!`;
+  // 1 行目でパスワードを読み、2 行目がそのパスワード（bash -s は台本を 1 行ずつ読む）
+  const seed = remoteIn(
+    `IFS= read -r ADMIN_PASSWORD; export ADMIN_PASSWORD
+${adminPassword}
+docker exec -e ADMIN_EMAIL=${adminEmail} -e ADMIN_PASSWORD -e APP_CONFIG_CACHE=/tmp/agentcms-seed-config.php -w /srv/agentcms/sites/${S1.site}/current agentcms-${S1.site}-app php artisan db:seed --class=AdminUserSeeder --force 2>&1
+echo "rc=$?"
+exit 0`,
+  );
+  check(
+    seed.stdout.includes("rc=0"),
+    `AdminUserSeeder が exit 0（${seed.stdout.trim().split("\n")[0]}）`,
+  );
+  const login = sh(
+    process.execPath,
+    [
+      "-e",
+      `
+      const base = ${JSON.stringify(`https://${S1.host}:${ports.https}`)};
+      (async () => {
+        const r1 = await fetch(base + "/login", { redirect: "manual" });
+        const jar = r1.headers.getSetCookie().map((c) => c.split(";")[0]);
+        const xsrf = decodeURIComponent((jar.find((c) => c.startsWith("XSRF-TOKEN=")) ?? "=").split("=").slice(1).join("="));
+        const post = (password) => fetch(base + "/login", {
+          method: "POST", redirect: "manual",
+          headers: { cookie: jar.join("; "), "x-xsrf-token": xsrf, "content-type": "application/x-www-form-urlencoded", accept: "text/html" },
+          body: new URLSearchParams({ email: process.env.E2E_EMAIL, password }),
+        });
+        const bad = await post("wrong-password");
+        const good = await post(process.env.E2E_PASSWORD);
+        console.log(JSON.stringify({ bad: [bad.status, bad.headers.get("location")], good: [good.status, good.headers.get("location")] }));
+      })().catch((e) => console.log(JSON.stringify({ error: String(e) })));
+    `,
+    ],
+    {
+      env: {
+        ...process.env,
+        NODE_EXTRA_CA_CERTS: caFile,
+        E2E_EMAIL: adminEmail,
+        E2E_PASSWORD: adminPassword,
+      },
+    },
+  );
+  let lr = {};
+  try {
+    lr = JSON.parse(login.stdout.trim().split("\n").pop());
+  } catch {
+    lr = { error: login.stderr };
+  }
+  check(
+    lr.bad?.[0] === 302 &&
+      /\/login$/.test(lr.bad?.[1] ?? "") &&
+      lr.good?.[0] === 302 &&
+      !/\/login$/.test(lr.good?.[1] ?? "/login"),
+    `違うパスワードは /login へ戻され、正しいパスワードでは先へ進む（${JSON.stringify(lr)}）`,
+  );
+
   // ------------------------------------------------------------ 2. 更新 → rollback
   step("2. 更新 → rollback");
   await new Promise((res) => setTimeout(res, 1100)); // release id は秒単位
@@ -392,6 +479,53 @@ try {
   );
   writeFileSync(healthCtl, orig);
 
+  step(
+    "3b. migration が落ちる版 → 切り替えず、その版は rollback の候補にも残らない",
+  );
+  await new Promise((res) => setTimeout(res, 1100));
+  release("v3b-migfail");
+  const failMig = join(
+    project,
+    "database",
+    "migrations",
+    "2099_01_01_000000_vps_e2e_fail.php",
+  );
+  writeTouched(
+    failMig,
+    "<?php\n\nuse Illuminate\\Database\\Migrations\\Migration;\n\nreturn new class extends Migration {\n    public function up(): void { throw new RuntimeException('vps-e2e: わざと落とす'); }\n    public function down(): void {}\n};\n",
+  );
+  a = agentcms("deploy-migfail", ["deploy", "staging", "-t", S1.target, "-y"]);
+  check(
+    a.code !== 0 && a.out.includes("migration 失敗"),
+    "migration で止まった（exit≠0）",
+  );
+  check(
+    (await get(S1.host, "/e2e-version.php")).body.trim() === "php-v1",
+    "切り替えていない（v1 のまま）",
+  );
+  rmSync(failMig, { force: true });
+  await new Promise((res) => setTimeout(res, 1100));
+  release("v4");
+  a = agentcms("deploy-4", ["deploy", "staging", "-t", S1.target, "-y"]);
+  check(a.code === 0, "直した版（v4）の deploy が exit 0");
+  check(
+    (await get(S1.host, "/e2e-version.php")).body.trim() === "php-v4",
+    "v4 が出た",
+  );
+  const unmarked = remote(
+    `cd /srv/agentcms/sites/${S1.site}/releases && for d in *; do [ -f "$d/.agentcms-healthy" ] || echo "$d"; done`,
+  ).stdout.trim();
+  check(
+    unmarked === "",
+    `health まで通らなかった release（v3・v3b）は片付けられた（残り: ${unmarked || "なし"}）`,
+  );
+  a = agentcms("rollback-2", ["deploy", "rollback", "-t", S1.target, "-y"]);
+  const afterRb = (await get(S1.host, "/e2e-version.php")).body.trim();
+  check(
+    a.code === 0 && afterRb === "php-v2",
+    `rollback は health まで通った 1 つ前（v2）へ戻る（${afterRb}）`,
+  );
+
   // ------------------------------------------------------------ 4. 2 つ目のサイト
   step("4. サイト 2 を足す（1 つ目は壊れない・DB は分かれている）");
   deployConfig(S2.target, S2.site, S2.host);
@@ -413,22 +547,22 @@ try {
     "サイト 2 が自分の版を返す",
   );
   check(
-    (await get(S1.host, "/e2e-version.php")).body.trim() === "php-v1",
-    "サイト 1 は自分の版のまま",
+    (await get(S1.host, "/e2e-version.php")).body.trim() === "php-v2",
+    "サイト 1 は自分の版（v2）のまま",
   );
   check(
     (await get(S1.host, "/healthz")).status === 200,
     "サイト 1 の /healthz は 200 のまま",
   );
   const cross = remote(
-    `cd /srv/agentcms/sites/${S2.site} && grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2- | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" mysql -h 127.0.0.1 -u e2e_two -e "SELECT COUNT(*) FROM e2e_one.users"' 2>&1; echo "rc=$?"`,
+    `cd /srv/agentcms/sites/${S2.site} && grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2- | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" mysql -h 127.0.0.1 -u sgk-e2e-two -D sgk-e2e-one -e "SELECT COUNT(*) FROM users"' 2>&1; echo "rc=$?"`,
   );
   check(
     /denied/i.test(cross.stdout) && !cross.stdout.includes("rc=0"),
     `サイト 2 の DB 利用者はサイト 1 の DB を読めない（${cross.stdout.trim().split("\n")[0]}）`,
   );
   const own = remote(
-    `cd /srv/agentcms/sites/${S2.site} && grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2- | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" mysql -h 127.0.0.1 -u e2e_two -N -e "SELECT COUNT(*) FROM e2e_two.migrations"' 2>&1; echo "rc=$?"`,
+    `cd /srv/agentcms/sites/${S2.site} && grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2- | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" mysql -h 127.0.0.1 -u sgk-e2e-two -D sgk-e2e-two -N -e "SELECT COUNT(*) FROM migrations"' 2>&1; echo "rc=$?"`,
   );
   check(
     own.stdout.includes("rc=0"),
@@ -495,30 +629,55 @@ try {
   check(sched.stdout.trim() === "true", "scheduler のコンテナが動いている");
 
   step(
-    "6b. deploy のときの DB バックアップから戻せる（docs/deployment/vps.md §8 の手順）",
+    "6b. DB をバックアップから戻せる（docs/deployment/vps.md §8 の手順そのまま）",
   );
   const sql = (q) =>
     remote(
-      `cd /srv/agentcms/sites/${S1.site} && grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2- | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysql -h 127.0.0.1 -u e2e_one -N e2e_one -e "$1"' sh ${JSON.stringify(q)} 2>&1`,
+      `cd /srv/agentcms/sites/${S1.site} && grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2- | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysql -h 127.0.0.1 -u sgk-e2e-one -D sgk-e2e-one -N -e "$1"' sh ${JSON.stringify(q)} 2>&1`,
     ).stdout.trim();
   const rows = Number(sql("SELECT COUNT(*) FROM migrations"));
+  sql("CREATE TABLE e2e_after_backup (id INT)");
   sql("DELETE FROM migrations");
   check(
-    Number(sql("SELECT COUNT(*) FROM migrations")) === 0,
-    `わざと migrations を空にした（${rows} → 0 行）`,
+    Number(sql("SELECT COUNT(*) FROM migrations")) === 0 &&
+      sql("SHOW TABLES LIKE 'e2e_after_backup'") === "e2e_after_backup",
+    `バックアップの後に表を足し、migrations を空にした（${rows} → 0 行）`,
   );
+  const docs = readFileSync(
+    join(here, "..", "docs", "deployment", "vps.md"),
+    "utf8",
+  );
+  const sec = docs.slice(docs.indexOf("## 8."), docs.indexOf("## 9."));
+  const restore = (/```bash\n([\s\S]*?)```/.exec(sec)?.[1] ?? "")
+    .replaceAll("<サイト名>", S1.site)
+    .replace(
+      "<release id>-db.sql.gz",
+      // 置き換えは関数で渡す（文字列だと中の $' が「一致の後ろ」と読まれる）
+      () => "$(ls backups | grep -E '^[0-9]{14}-db.sql.gz$' | tail -1)",
+    );
+  check(restore.includes("DROP DATABASE"), "§8 の手順を手順書から取り出せた");
+  // 台本は一時ファイルに置いて流す（標準入力で流すと、中の docker compose が残りの台本を読んでしまう）
   const rs = remote(
-    `cd /srv/agentcms/sites/${S1.site} && b=$(ls backups | tail -1) && { grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2-; gunzip -c "backups/$b"; } | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysql -h 127.0.0.1 -u "$1" "$2"' sh e2e_one e2e_one; echo "rc=$?"`,
+    `f=$(mktemp) && cat > "$f" << 'E2E_EOS'\nset -euo pipefail\n${restore}\necho restore-rc=0\nE2E_EOS\nbash "$f"; rc=$?; rm -f "$f"; exit $rc`,
   );
-  check(rs.stdout.includes("rc=0"), "§8 の手順で戻した（exit 0）");
+  check(
+    rs.stdout.includes("restore-rc=0"),
+    `§8 の手順が最後まで通った（${(rs.stderr || "").trim().split("\n").pop() ?? ""}）`,
+  );
   check(
     rows > 0 && Number(sql("SELECT COUNT(*) FROM migrations")) === rows,
     `migrations が ${rows} 行に戻った`,
   );
   check(
-    (await get(S1.host, "/healthz")).status === 200,
-    "戻したあとも /healthz は 200",
+    sql("SHOW TABLES LIKE 'e2e_after_backup'") === "",
+    "バックアップの後に足した表は消えた",
   );
+  let hz = 0;
+  for (let i = 0; i < 20 && hz !== 200; i++) {
+    hz = (await get(S1.host, "/healthz")).status;
+    if (hz !== 200) await new Promise((res) => setTimeout(res, 1000));
+  }
+  check(hz === 200, "戻してアプリを起こしたあと /healthz は 200");
 
   // ------------------------------------------------------------ 7. 秘密が漏れていない
   step("7. サーバーで生成した秘密が、出力・コンテナ設定・ファイルに出ていない");
@@ -532,13 +691,14 @@ try {
       if (v.length >= 16) secrets.push(v);
     }
   }
+  secrets.push(adminPassword);
   const rootPw = remote(
     "cat /srv/agentcms/edge/secrets/mysql-root",
   ).stdout.trim();
   if (rootPw) secrets.push(rootPw);
   check(
-    secrets.length === 5,
-    `秘密を 5 つ読めた（APP_KEY×2・DB パスワード×2・MySQL root）: ${secrets.length}`,
+    secrets.length === 6,
+    `秘密を 6 つ読めた（APP_KEY×2・DB パスワード×2・管理者・MySQL root）: ${secrets.length}`,
   );
   const envMode = remote(
     `stat -c '%a' /srv/agentcms/sites/${S1.site}/shared/.env /srv/agentcms/edge/secrets/mysql-root`,
@@ -556,7 +716,12 @@ try {
     "compose・Caddy のファイル": remote(
       "cat /srv/agentcms/edge/compose.yml /srv/agentcms/edge/Caddyfile /srv/agentcms/edge/sites/*.caddy /srv/agentcms/sites/*/compose.yml",
     ).stdout,
-    "サーバーの ps": remote("ps -eo args").stdout,
+    "サーバーの ps（試験の間ずっと 0.2 秒ごと）": sh("docker", [
+      "exec",
+      NAME,
+      "cat",
+      "/tmp/ps-sample.log",
+    ]).stdout,
   };
   for (const [name, text] of Object.entries(surfaces)) {
     const hits = secrets.filter((s) => text.includes(s)).length;

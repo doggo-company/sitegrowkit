@@ -16,7 +16,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ExecResult, RemoteExecutor } from "../src/deploy/executor.js";
 import {
+  acquireSiteLock,
   backupDatabaseVps,
+  cleanupReleasesVps,
+  edgeFilesScript,
+  healthyReleases,
+  releaseSiteLock,
   siteEnvScript,
   siteRoute,
   envTemplate,
@@ -76,6 +81,8 @@ esac
 case "$*" in
   *"caddy validate"*) [ "\${FAKE_VALIDATE:-ok}" = ok ] || { echo "Error: ambiguous site definition"; exit 1; } ;;
   *"caddy reload"*) [ "\${FAKE_RELOAD:-ok}" = ok ] || { echo "Error: reload failed"; exit 1; } ;;
+  *"mysql -uroot -N"*) if grep -q "SELECT (SELECT COUNT" "$FAKE_LOG.stdin.$n"; then echo "\${FAKE_EXISTS:-0}"; fi ;;
+  *"volume inspect"*) [ "\${FAKE_VOLUME:-none}" = exists ] || exit 1 ;;
   *mysqldump*) [ "\${FAKE_DUMP:-ok}" = ok ] || exit 2; for i in $(seq 1 400); do echo "INSERT INTO t VALUES ($i, 'row-$i-$RANDOM');"; done ;;
 esac
 exit 0
@@ -228,10 +235,10 @@ run("DB と shared/.env を作る台本", () => {
     expect(dbPass).toMatch(/^[A-Za-z0-9]{32}$/);
     expect(env).not.toContain("__AGENTCMS_");
     // MySQL には標準入力で（SQL の中に）渡り、どの docker の引数にも載らない
-    const sqlIn = readFileSync(`${log}.stdin.0`, "utf8");
+    const sqlIn = readFileSync(`${log}.stdin.1`, "utf8");
     expect(sqlIn).toContain(`IDENTIFIED BY '${dbPass}'`);
     expect(sqlIn).toContain(
-      "GRANT ALL PRIVILEGES ON `shop_a`.* TO 'shop_a'@'%'",
+      "GRANT ALL PRIVILEGES ON `sgk-shop-a`.* TO 'sgk-shop-a'@'%'",
     );
     const argv = readFileSync(log, "utf8");
     expect(argv).not.toContain(dbPass);
@@ -259,7 +266,7 @@ run("DB バックアップの台本", () => {
     mkdirSync(join(c.remote.appDir, "shared"), { recursive: true });
     writeFileSync(
       join(c.remote.appDir, "shared/.env"),
-      "DB_DATABASE=shop_a\nDB_USERNAME=shop_a\nDB_PASSWORD=Sekret0123456789abcdefABCDEF0123\n",
+      "DB_DATABASE=sgk-shop-a\nDB_USERNAME=sgk-shop-a\nDB_PASSWORD=Sekret0123456789abcdefABCDEF0123\n",
     );
   }
 
@@ -282,5 +289,129 @@ run("DB バックアップの台本", () => {
     withEnv(c);
     const r = await backupDatabaseVps(ctx(c, { FAKE_DUMP: "fail" }));
     expect(r.ok).toBe(false);
+  });
+});
+
+run("DB と利用者が既にあるときは作らない", () => {
+  it("別の置き場所の同じサイト名などで DB か利用者が既にあれば、何も変えずに止める", async () => {
+    const c = cfg();
+    const r = await runScript(
+      new LocalExecutor({ FAKE_EXISTS: "1" }),
+      siteEnvScript(vpsNames(c), envTemplate(c)),
+    );
+    expect(r.code).not.toBe(0);
+    expect(r.stdout).toContain("db-exists");
+    expect(existsSync(join(c.remote.appDir, "shared/.env"))).toBe(false);
+    // CREATE も ALTER も流していない（呼ばれたのは在るかどうかの問い合わせ 1 回だけ）
+    expect(dockerCalls()).toHaveLength(1);
+    expect(readFileSync(`${log}.stdin.0`, "utf8")).not.toMatch(
+      /CREATE|ALTER|GRANT/,
+    );
+  });
+});
+
+run("edge の設定を置く台本", () => {
+  it("途中で止まっていても、足りないファイルだけを足す（あるものは変えない）", async () => {
+    const n = vpsNames(cfg());
+    const edge = join(n.root, "edge");
+    mkdirSync(edge, { recursive: true });
+    writeFileSync(join(edge, "compose.yml"), "# 手で変えた compose\n");
+    const r = await runScript(new LocalExecutor(), edgeFilesScript(n));
+    expect(r.stdout).toContain("edge-files-ok");
+    expect(readFileSync(join(edge, "compose.yml"), "utf8")).toBe(
+      "# 手で変えた compose\n",
+    );
+    expect(readFileSync(join(edge, "Caddyfile"), "utf8")).toContain(
+      "import sites/*.caddy",
+    );
+    const pw = readFileSync(join(edge, "secrets/mysql-root"), "utf8");
+    expect(pw).toMatch(/^[A-Za-z0-9]{40}$/);
+    expect(statSync(join(edge, "secrets/mysql-root")).mode & 0o777).toBe(0o600);
+    expect(r.stdout + r.stderr).not.toContain(pw);
+    // 2 回目は root パスワードを作り直さない
+    await runScript(new LocalExecutor(), edgeFilesScript(n));
+    expect(readFileSync(join(edge, "secrets/mysql-root"), "utf8")).toBe(pw);
+  });
+
+  it("MySQL のデータがあるのに root パスワードのファイルが無ければ、作り直さずに止める", async () => {
+    const n = vpsNames(cfg());
+    const r = await runScript(
+      new LocalExecutor({ FAKE_VOLUME: "exists" }),
+      edgeFilesScript(n),
+    );
+    expect(r.code).not.toBe(0);
+    expect(r.stdout).toContain("入れなくなるので止めます");
+    expect(existsSync(join(n.root, "edge/secrets/mysql-root"))).toBe(false);
+  });
+});
+
+run("release の印・掃除・鍵", () => {
+  function releases(
+    c: DeployTargetConfig,
+    ids: Array<[string, boolean]>,
+    current: string,
+  ) {
+    for (const [id, healthy] of ids) {
+      mkdirSync(join(c.remote.appDir, "releases", id), { recursive: true });
+      if (healthy)
+        writeFileSync(
+          join(c.remote.appDir, "releases", id, ".agentcms-healthy"),
+          "",
+        );
+    }
+    mkdirSync(join(c.remote.appDir, "tmp"), { recursive: true });
+    spawnSync("ln", [
+      "-sfn",
+      join(c.remote.appDir, "releases", current),
+      join(c.remote.appDir, "current"),
+    ]);
+  }
+
+  it("rollback の候補は health まで通った release だけ", async () => {
+    const c = cfg();
+    releases(
+      c,
+      [
+        ["20260101000001", true],
+        ["20260101000002", false],
+        ["20260101000003", true],
+      ],
+      "20260101000003",
+    );
+    expect(await healthyReleases(new LocalExecutor(), c)).toEqual([
+      "20260101000003",
+      "20260101000001",
+    ]);
+  });
+
+  it("掃除は current と印のある新しい順 keep 個を残し、途中で落ちた release を消す", async () => {
+    const c = { ...cfg(), keepReleases: 1 };
+    releases(
+      c,
+      [
+        ["20260101000001", true],
+        ["20260101000002", true],
+        ["20260101000003", false],
+        ["20260101000004", true],
+      ],
+      "20260101000004",
+    );
+    const r = await cleanupReleasesVps(ctx(c));
+    expect(r.ok).toBe(true);
+    expect(readdirSync(join(c.remote.appDir, "releases")).sort()).toEqual([
+      "20260101000002",
+      "20260101000004",
+    ]);
+  });
+
+  it("同じサイトの 2 つ目の deploy は鍵が取れずに止まり、外したら取れる", async () => {
+    const c = cfg();
+    mkdirSync(c.remote.appDir, { recursive: true });
+    expect((await acquireSiteLock(ctx(c), "deploy 1")).ok).toBe(true);
+    const second = await acquireSiteLock(ctx(c), "deploy 2");
+    expect(second.ok).toBe(false);
+    expect(second.detail).toContain("deploy 1");
+    await releaseSiteLock(ctx(c));
+    expect((await acquireSiteLock(ctx(c), "deploy 3")).ok).toBe(true);
   });
 });

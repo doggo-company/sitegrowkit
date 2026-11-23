@@ -2,7 +2,6 @@ import { buildArtifact, cleanupBuilds, newReleaseId } from "../deploy/build.js";
 import type { RemoteExecutor } from "../deploy/executor.js";
 import { postHealthAction, runHealthChecks } from "../deploy/health.js";
 import {
-  cleanupReleases,
   currentTarget,
   ensureLayout,
   linkShared,
@@ -15,7 +14,12 @@ import {
   type DeployContext,
 } from "../deploy/release.js";
 import {
+  acquireSiteLock,
   backupDatabaseVps,
+  cleanupReleasesVps,
+  healthyReleases,
+  markHealthy,
+  releaseSiteLock,
   runScript,
   siteContainers,
   siteRoute,
@@ -208,15 +212,36 @@ export async function vpsDeploy(
   }
 
   const ctx: DeployContext = { cfg, exec, phpBin: "php", releaseId, log: info };
+  const lock = await acquireSiteLock(ctx, `deploy ${releaseId}`);
+  if (!lock.ok) {
+    fail({
+      what: "deploy を始められません",
+      why: lock.detail ?? "-",
+      fix: "しばらく待ってからもう一度流してください",
+    });
+    return 1;
+  }
+  try {
+    return await deployLocked(ctx, root, built.artifactPath!, io);
+  } finally {
+    await releaseSiteLock(ctx);
+  }
+}
+
+async function deployLocked(
+  ctx: DeployContext,
+  root: string,
+  artifactPath: string,
+  io: Io,
+): Promise<number> {
+  const { cfg, releaseId } = ctx;
+  const n = vpsNames(cfg);
   const previous = await currentTarget(ctx);
   const rel = `${n.appDir}/releases/${releaseId}`;
   const steps: Array<[string, () => Promise<StepResult>]> = [
     ["レイアウト作成 + shared/.env 検査", () => ensureLayout(ctx)],
     ["Caddy のサイトの行（確かめてから差し替え）", () => siteRoute(ctx)],
-    [
-      "artifact アップロード + 展開",
-      () => uploadAndExtract(ctx, built.artifactPath!),
-    ],
+    ["artifact アップロード + 展開", () => uploadAndExtract(ctx, artifactPath)],
     ["shared リンク（storage / .env）", () => linkShared(ctx)],
     ["サイトのコンテナ（PHP-FPM / scheduler）", () => siteContainers(ctx)],
     ["DB バックアップ", () => backupDatabaseVps(ctx)],
@@ -263,7 +288,14 @@ export async function vpsDeploy(
     return 1;
   }
 
-  await cleanupReleases(ctx);
+  // health まで通った印。rollback はこの印のある release にだけ戻る
+  const mark = await markHealthy(ctx);
+  if (!mark.ok)
+    warn(
+      `release に印を付けられませんでした（rollback の候補に入りません）: ${mark.detail}`,
+    );
+  const clean = await cleanupReleasesVps(ctx);
+  if (!clean.ok) warn(`古い release を片付けられませんでした: ${clean.detail}`);
   cleanupBuilds(root);
   console.log("");
   ok(`deploy 完了: release ${releaseId} が ${cfg.app.url} で稼働中です`);
@@ -285,6 +317,29 @@ export async function vpsRollback(
     releaseId: "rollback",
     log: info,
   };
+  const lock = await acquireSiteLock(ctx, "rollback");
+  if (!lock.ok) {
+    fail({
+      what: "rollback を始められません",
+      why: lock.detail ?? "-",
+      fix: "しばらく待ってからもう一度流してください",
+    });
+    return 1;
+  }
+  try {
+    return await rollbackLocked(ctx, io, approval);
+  } finally {
+    await releaseSiteLock(ctx);
+  }
+}
+
+async function rollbackLocked(
+  ctx: DeployContext,
+  io: Io,
+  approval: TargetApproval,
+): Promise<number> {
+  const { cfg, exec } = ctx;
+  const n = vpsNames(cfg);
   const cur = await currentTarget(ctx);
   if (!cur) {
     fail({
@@ -294,19 +349,19 @@ export async function vpsRollback(
     });
     return 1;
   }
-  const list = await exec.exec(
-    `ls -1 ${n.appDir}/releases | sort -r | head -50`,
-  );
+  // health まで通った release だけを候補にする（途中で落ちた版へ戻らない）
   const curId = cur.split("/").pop() ?? null;
-  const prev = pickRollbackTarget(
-    list.stdout.split("\n").filter(Boolean),
-    curId,
+  const healthy = (await healthyReleases(exec, cfg)).filter(
+    (id) => curId === null || id <= curId,
   );
+  const candidates =
+    curId !== null && !healthy.includes(curId) ? [curId, ...healthy] : healthy;
+  const prev = pickRollbackTarget(candidates, curId);
   if (!prev) {
     fail({
       what: "rollback 先がありません",
-      why: `releases に ${curId} より古い release がありません`,
-      fix: "旧 release が cleanup 済みです。再デプロイで復旧してください",
+      why: `${curId} より古く、health まで通った release がありません`,
+      fix: "再デプロイで復旧してください",
     });
     return 1;
   }
@@ -332,7 +387,20 @@ export async function vpsRollback(
     cfg.target,
   );
   io.printChecks(checks);
-  if (checks.some((c) => c.status === "FAIL")) return 1;
+  if (checks.length === 0 || checks.some((c) => c.status === "FAIL")) {
+    // 戻した先も通らないなら、分からない状態を増やさない — 元の release へ戻す
+    const back = await switchCurrent(ctx, cur);
+    fail({
+      what: `戻した先（${prev}）も health が通りませんでした`,
+      why: back.ok
+        ? `元の release（${curId}）へ戻しました`
+        : `元の release へも戻せませんでした: ${back.detail ?? "-"}`,
+      fix: back.ok
+        ? `${n.appDir}/shared/storage/logs/ を見て原因を直し、もう一度 deploy してください`
+        : `ssh で ln -sfn ${cur} ${n.appDir}/current を流してください`,
+    });
+    return 1;
+  }
   ok(`rollback 完了: ${prev} が稼働中です`);
   return 0;
 }

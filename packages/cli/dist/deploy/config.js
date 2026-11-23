@@ -121,7 +121,7 @@ function validateVps(raw, target) {
         problems.push("vps がありません");
     else {
         if (typeof vps.site !== "string" || !SITE_NAME_RE.test(vps.site))
-            problems.push(`vps.site は英小文字で始まる英小文字・数字・ハイフンの 2〜32 文字です（指定: ${String(vps.site)}）`);
+            problems.push(`vps.site は英小文字で始まる英小文字・数字・ハイフンの 2〜28 文字です（指定: ${String(vps.site)}）`);
         if (vps.root !== undefined &&
             (typeof vps.root !== "string" ||
                 !/^\/[A-Za-z0-9._/-]*[A-Za-z0-9]$/.test(vps.root) ||
@@ -140,14 +140,19 @@ function validateVps(raw, target) {
         let host = null;
         try {
             const u = new URL(String(app.url));
-            if (u.protocol === "https:" && u.pathname === "/" && !u.search)
+            // 「https://ホスト[:ポート]」そのものだけを受け取る。パス・クエリ・#・
+            // 利用者名やパスワード付き（https://user:pass@...）は、秘密が設定と画面に載るので断る
+            const raw = String(app.url);
+            const canonical = `https://${u.host}`;
+            if (u.protocol === "https:" &&
+                (raw === canonical || raw === `${canonical}/`))
                 host = u.hostname;
         }
         catch {
             host = null;
         }
         if (host === null)
-            problems.push("app.url は https://ドメイン の形です（パス・クエリは付けない）");
+            problems.push("app.url は https://ドメイン の形です（パス・クエリ・利用者名やパスワードは付けない）");
         else if (!HOSTNAME_RE.test(host))
             problems.push(`app.url のホスト名が使えない形です（英小文字・数字・ハイフン・ドット。指定: ${host}）`);
         if (typeof app.healthPath !== "string" ||

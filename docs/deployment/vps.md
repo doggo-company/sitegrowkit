@@ -23,7 +23,7 @@ Docker の入った Linux の VPS 1 台に、SiteGrowKit のサイトを出す�
 | `/srv/agentcms/edge/` | Caddy と MySQL の compose・Caddyfile・`sites/<サイト名>.caddy`・`secrets/mysql-root` |
 | `/srv/agentcms/sites/<サイト名>/` | `releases/<id>`・`shared/.env`・`shared/storage`・`backups/`・`current`・`compose.yml` |
 
-**秘密（DB パスワード・APP_KEY・MySQL の root パスワード）は `agentcms deploy setup` がサーバーの上で作り、サーバーのファイル（600）にだけ置く。** 手元・Git・設定ファイル・ログ・画面には出さない。
+**秘密（DB パスワード・APP_KEY・MySQL の root パスワード）は `agentcms deploy setup` がサーバーの上で作り、サーバーのファイル（600）にだけ置く。** 手元・Git・設定ファイル・ログ・画面・コマンドの引数・`docker inspect` には出さない。ただし動いているプロセスの中には値がある（PHP は `.env` を読み、MySQL は root パスワードを読んで起動する）。サーバーの root と docker グループの利用者は、それを読める。
 
 ## 1. 用意するもの
 
@@ -41,7 +41,10 @@ VPS に root で入って、次の 4 つを済ませる。
    adduser --disabled-password --gecos "" deploy
    usermod -aG docker deploy
    install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
-   # 手元で作った公開鍵（例 ~/.ssh/vps_staging.pub）を /home/deploy/.ssh/authorized_keys に貼り、600 にする
+   # 手元で作った公開鍵（例 ~/.ssh/vps_staging.pub の 1 行）を貼る。持ち主を deploy にし、600 にする
+   echo 'ssh-ed25519 AAAA…（公開鍵の 1 行）' > /home/deploy/.ssh/authorized_keys
+   chown deploy:deploy /home/deploy/.ssh/authorized_keys
+   chmod 600 /home/deploy/.ssh/authorized_keys
    ```
    > docker グループに入った利用者は、実質 root と同じことができる。この利用者の鍵は大切に扱う。
 3. **置き場所を作る**
@@ -68,8 +71,8 @@ cp .agentcms/deploy/vps.example.json .agentcms/deploy/staging.json
 | `target` | ファイル名と同じ（`staging.json` なら `"staging"`。本番は `production.json` に `"production"`） |
 | `ssh` | VPS の IP（またはホスト名）・ポート・利用者（`deploy`）・秘密鍵の場所 |
 | `app.url` | `https://ドメイン`（パスは付けない） |
-| `vps.site` | サイト名。英小文字で始まる英小文字・数字・ハイフン 2〜32 文字。**1 台の中で重ならない名前**（DB・コンテナ・置き場所の名前になる） |
-| `vps.root` | 置き場所を変えるときだけ（既定 `/srv/agentcms`） |
+| `vps.site` | サイト名。英小文字で始まる英小文字・数字・ハイフン 2〜28 文字（`_` は使えない）。**1 台の中で重ならない名前**（コンテナ・置き場所の名前になり、DB と DB の利用者は `sgk-<サイト名>`） |
+| `vps.root` | 置き場所を変えるときだけ（既定 `/srv/agentcms`）。**1 台の中のサイトはみな同じ値にする**（Caddy と MySQL は 1 台に 1 つなので、違う値の設定は doctor と setup が止める） |
 | `vps.tls` | 既定 `"auto"`（Let's Encrypt）。`"internal"` は Caddy の自前の認証局（試験用。ブラウザは警告を出す） |
 
 このファイルは Git に入らない（`.gitignore` 済み）。**パスワードや鍵の値は書かない**（書くと読み込みで止まる）。`remote` は書かない（`vps.site` から決まる）。
@@ -110,34 +113,49 @@ agentcms deploy staging -t staging   # 出す
 - 途中で落ちたら、`current` は切り替わっていないので前の版のまま動く。**同じコマンドをもう一度流してよい**
 - 本番は `--confirm-target production` を付けないと押せない（打ち間違い防止・xserver と同じ）
 
-初めて出したあと、管理者を作る:
+初めて出したあと、管理者を作る。パスワードは `.env` にもコマンドの引数にも残さず、その場で打つ:
 
 ```bash
-ssh -i ~/.ssh/vps_staging deploy@<VPS> \
-  docker exec -w /srv/agentcms/sites/<サイト名>/current agentcms-<サイト名>-app php artisan db:seed --class=AdminUserSeeder --force
+ssh -i ~/.ssh/vps_staging deploy@<VPS>
+read -rs ADMIN_PASSWORD; export ADMIN_PASSWORD     # 管理者のパスワードを打つ（画面に出ない）
+docker exec -e ADMIN_EMAIL=you@example.com -e ADMIN_PASSWORD -e APP_CONFIG_CACHE=/tmp/agentcms-seed-config.php \
+  -w /srv/agentcms/sites/<サイト名>/current agentcms-<サイト名>-app php artisan db:seed --class=AdminUserSeeder --force
+unset ADMIN_PASSWORD
 ```
+
+`-e ADMIN_PASSWORD` のように値を書かないと、docker はいまのシェルの値を渡す（引数に値が載らない）。`APP_CONFIG_CACHE` は、deploy が作った設定のキャッシュを使わずに、この 1 回だけ渡した値を読ませるため。できたら `https://ドメイン/login` からログインする。
 
 ## 7. 更新と切り戻し
 
 ```bash
 agentcms deploy staging -t staging    # 更新（毎回 DB バックアップ → 新しい release → 切り替え → health check）
-agentcms deploy rollback -t staging   # 1 つ前の release へ（DB は触らない）
+agentcms deploy rollback -t staging   # health まで通った 1 つ前の release へ（DB は触らない）
 ```
 
-古い release は `keepReleases`（既定 3）まで残る。PHP は `current` の symlink を Caddy が実際のパスへ解いてから受け取るので、切り替えた直後から新しい（戻したら古い）コードが動く。
+health まで通った release には印が付き、rollback はその印のある release にだけ戻る（migration などで途中で落ちた release には戻らない）。戻した先の health が通らなければ、元の release に戻して止まる。古い release は、印のあるものを `keepReleases`（既定 3）まで残し、途中で落ちたものは片付ける。同じサイトへの deploy と rollback は同時に 1 つしか動かない（2 つ目は「別の deploy / rollback が動いています」で止まる）。PHP は `current` の symlink を Caddy が実際のパスへ解いてから受け取るので、切り替えた直後から新しい（戻したら古い）コードが動く。
 
 ## 8. DB を戻す（手で）
 
-deploy のたびに `backups/<release id>-db.sql.gz` を取っている。戻すのは人が判断する（自動ではやらない）。パスワードは標準入力で渡す:
+deploy のたびに `backups/<release id>-db.sql.gz` を取っている。戻すのは人が判断する（自動ではやらない）。次の順で、**アプリを止め → いまの状態も取っておき → DB を空にしてから → 戻し → アプリを起こす**。空にしてから戻すので、バックアップの後に migration で増えた表も残らない。パスワードは標準入力の 1 行目で渡す（コマンドの引数に載せない）:
 
 ```bash
 cd /srv/agentcms/sites/<サイト名>
-# 1 行目にパスワード、2 行目から SQL を流す（パスワードをコマンドの引数に載せない）
-{ grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2-; gunzip -c backups/<release id>-db.sql.gz; } \
-  | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysql -h 127.0.0.1 -u "$1" "$2"' sh <DB の利用者> <DB 名>
+docker compose -f compose.yml stop
+pw() { grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2-; }
+db=$(grep -E '^DB_DATABASE=' shared/.env | cut -d= -f2-)
+user=$(grep -E '^DB_USERNAME=' shared/.env | cut -d= -f2-)
+{ pw; } | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysqldump --single-transaction --no-tablespaces -h 127.0.0.1 -u "$1" "$2"' sh "$user" "$db" \
+  | gzip > "backups/before-restore-$(date +%Y%m%d%H%M%S).sql.gz"
+{ pw; printf 'DROP DATABASE `%s`;\nCREATE DATABASE `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n' "$db" "$db"; } \
+  | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysql -h 127.0.0.1 -u "$1"' sh "$user"
+{ pw; gunzip -c backups/<release id>-db.sql.gz; } \
+  | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysql -h 127.0.0.1 -u "$1" "$2"' sh "$user" "$db"
+docker compose -f compose.yml start
 ```
 
-DB の利用者と DB 名は、サイト名のハイフンを `_` にしたもの（`shared/.env` の `DB_USERNAME`・`DB_DATABASE`）。
+- `<release id>` は戻したい時点の deploy の番号（`ls backups`）。そのバックアップは、その番号の release を出す**直前**の DB
+- DB を古い形に戻したら、コードも合わせる（`agentcms deploy rollback`）。新しいコードのまま古い DB で動かさない
+- 途中で失敗したら、`backups/before-restore-*.sql.gz`（戻す前の状態）で同じ手順をやり直せる
 
 ## 9. 毎日のバックアップ
 
@@ -162,7 +180,9 @@ cd /srv/agentcms
 docker compose -f sites/<サイト名>/compose.yml down
 mv edge/sites/<サイト名>.caddy edge/sites/<サイト名>.caddy.removed
 docker exec agentcms-caddy caddy reload --adapter caddyfile --config /etc/caddy/Caddyfile
-# DB も消すなら: docker exec -it agentcms-mysql sh -c 'mysql -uroot -p"$(cat /run/agentcms/mysql-root)"' で DROP DATABASE / DROP USER
+# DB も消すなら（root のパスワードはコンテナの中のファイルから読む。引数に載せない）:
+docker exec -it agentcms-mysql sh -c 'MYSQL_PWD="$(cat /run/agentcms/mysql-root)" exec mysql -uroot'
+#   mysql> DROP DATABASE `sgk-<サイト名>`; DROP USER 'sgk-<サイト名>'@'%';
 ```
 
 ## 12. うまくいかないとき
@@ -173,6 +193,8 @@ docker exec agentcms-caddy caddy reload --adapter caddyfile --config /etc/caddy/
 | doctor で置き場所が FAIL | §2-3 の `install -d -o deploy -g deploy /srv/agentcms` |
 | health check が「接続できませんでした」 | DNS が VPS を向いているか・80/443 が開いているか。`docker logs agentcms-caddy` に証明書の取得の失敗が出る |
 | 500 が出る | `/srv/agentcms/sites/<サイト名>/shared/storage/logs/` と `docker logs agentcms-<サイト名>-app` |
+| setup が「DB か利用者 … が既にある」で止まる | 同じサイト名の DB が、別の置き場所か前の setup の途中で作られている。自分のものなら §11 の手順で DB と利用者を消してから setup をもう一度。他人のものならサイト名を変える |
+| deploy が「別の deploy / rollback が動いています」で止まる | 終わるのを待つ。止まったまま残っているなら、ほかに動いていないことを確かめてから `/srv/agentcms/sites/<サイト名>/.agentcms-deploy.lock` を消す |
 | setup の PHP のイメージで止まる | 時間切れ（30 分）か、VPS から Docker Hub へつながらない。もう一度流せば続きから |
 
 ## 試験（kit を直す人向け）

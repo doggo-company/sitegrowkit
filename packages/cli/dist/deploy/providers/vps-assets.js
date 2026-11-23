@@ -28,12 +28,17 @@ export const CADDY_IMAGE = "caddy:2.10-alpine";
 export const MYSQL_IMAGE = "mysql:8.4";
 /**
  * サイト名。シェル・Caddy・MySQL の名前にそのまま入るので、**ここで形を絞る**。
- * 英小文字で始まり、英小文字・数字・ハイフン、2〜32 文字、ハイフンで終わらない。
- * （MySQL のユーザー名は 32 文字まで）
+ * 英小文字で始まり、英小文字・数字・ハイフン、2〜28 文字、ハイフンで終わらない。
+ * （MySQL の利用者名は 32 文字まで。頭に `sgk-` を付けるので 28 文字）
+ *
+ * `_` と `%` を許さないのは、MySQL の GRANT で DB 名の `_`・`%` が
+ * **ワイルドカードになる**ため（`shop_a` の権限が `shopxa` にも効く）。
  */
-export const SITE_NAME_RE = /^[a-z][a-z0-9-]{0,30}[a-z0-9]$/;
+export const SITE_NAME_RE = /^[a-z][a-z0-9-]{0,26}[a-z0-9]$/;
 /** Caddy のサイトのアドレスに入るホスト名。英小文字・数字・ハイフン・ドット、ドットを 1 つ以上 */
 export const HOSTNAME_RE = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+/** サイトの DB 名・利用者名の頭 */
+export const DB_PREFIX = "sgk-";
 /** 1 行の印。ほかのサイトが同じドメインを使っていないかを grep で見るのに使う */
 export const DOMAIN_MARK = "# agentcms-domain:";
 export function vpsNames(cfg) {
@@ -42,7 +47,7 @@ export function vpsNames(cfg) {
         throw new Error("vps の設定がありません（provider: vps のときだけ呼ぶ）");
     const root = vps.root ?? VPS_DEFAULT_ROOT;
     const site = vps.site;
-    const db = site.replaceAll("-", "_");
+    const db = `${DB_PREFIX}${site}`;
     return {
         root,
         site,

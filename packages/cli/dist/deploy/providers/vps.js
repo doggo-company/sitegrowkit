@@ -117,6 +117,15 @@ export async function vpsDoctor(exec, cfg) {
             why: fact("root_writable") || "未確認",
             fix: `一度だけ root で: sudo install -d -o ${cfg.ssh.user} -g ${cfg.ssh.user} ${n.root}`,
         });
+    if (fact("edge_root") === "other")
+        add({
+            key: "edge_root",
+            name: `置き場所（vps.root）が edge と同じ`,
+            status: "FAIL",
+            what: "このサーバーの Caddy は別の置き場所のサイトを見ています",
+            why: edgeRootMismatch(n),
+            fix: "vps.root をすでにあるサイトと同じにしてください",
+        });
     const edgeUp = fact("caddy") === "true" && fact("mysql") === "true";
     add(edgeUp
         ? { key: "edge", name: "Caddy と MySQL（edge）", status: "PASS" }
@@ -192,6 +201,7 @@ for g in ${shq(n.root + "/edge/sites")}/*.caddy; do
 done
 [ -f ${shq(n.appDir + "/.agentcms-site")} ] && echo "site_owner=$(head -1 ${shq(n.appDir + "/.agentcms-site")})"
 echo "current=$(readlink ${shq(n.appDir + "/current")} 2>/dev/null)"
+${edgeRootProbe(n)}
 exit 0`;
 }
 /**
@@ -201,8 +211,27 @@ exit 0`;
 function edgeLock(n) {
     return `if command -v flock >/dev/null 2>&1 && [ -d ${shq(n.root + "/edge")} ]; then
   exec 9>${shq(n.root + "/edge/.agentcms.lock")}
-  flock -w 300 9 || { echo "lock-timeout: 別の deploy / setup が 5 分以上終わりません"; exit 7; }
+  # BusyBox の flock には -w が無い。-n（取れなければすぐ戻る）を 1 秒ごとに 300 回
+  i=0
+  until flock -n 9; do
+    i=$((i + 1))
+    if [ "$i" -ge 300 ]; then echo "lock-timeout: 別の deploy / setup が 5 分以上終わりません"; exit 7; fi
+    sleep 1
+  done
 fi`;
+}
+/**
+ * 動いている Caddy が**この設定と同じ置き場所**のサイトを見ているか。
+ * edge（Caddy・MySQL）はサーバーに 1 つなので、`vps.root` が違う設定から触ると、
+ * 別の置き場所の同じ名前の DB を「無い」と読み違える。
+ */
+function edgeRootProbe(n) {
+    return `if docker inspect ${CADDY_CONTAINER} >/dev/null 2>&1; then
+  if docker inspect -f '{{range .Mounts}}{{println .Destination}}{{end}}' ${CADDY_CONTAINER} | grep -qxF ${shq(n.root + "/sites")}; then echo edge_root=same; else echo edge_root=other; fi
+fi`;
+}
+function edgeRootMismatch(n) {
+    return `このサーバーの Caddy と MySQL は、別の置き場所（vps.root）のために動いています。1 台の置き場所は 1 つです。設定の vps.root を、すでにあるサイトと同じにしてください（この設定: ${n.root}）`;
 }
 /**
  * `agentcms deploy setup`（vps）でやること。**作るだけ・何度流しても同じ**。
@@ -213,7 +242,8 @@ export async function vpsSetupActions(exec, cfg) {
     const n = vpsNames(cfg);
     const probe = await runScript(exec, `set -u
 [ -d ${shq(n.root)} ] && [ -w ${shq(n.root)} ] && echo root=yes
-[ -f ${shq(n.root + "/edge/compose.yml")} ] && echo edge_files=yes
+[ -f ${shq(n.root + "/edge/compose.yml")} ] && [ -f ${shq(n.root + "/edge/Caddyfile")} ] && [ -s ${shq(n.root + "/edge/secrets/mysql-root")} ] && echo edge_files=yes
+${edgeRootProbe(n)}
 [ "$(docker inspect -f '{{.State.Running}}' ${CADDY_CONTAINER} 2>/dev/null)" = true ] && [ "$(docker inspect -f '{{.State.Health.Status}}' ${MYSQL_CONTAINER} 2>/dev/null)" = healthy ] && echo edge_up=yes
 docker image inspect ${shq(PHP_IMAGE)} >/dev/null 2>&1 && echo php_image=yes
 [ -f ${shq(n.appDir + "/shared/.env")} ] && echo env=yes
@@ -226,6 +256,8 @@ exit 0`);
             actions: [],
             error: `${n.root} が無いか書き込めません。一度だけ root で: sudo install -d -o ${cfg.ssh.user} -g ${cfg.ssh.user} ${n.root}`,
         };
+    if (probe.stdout.includes("edge_root=other"))
+        return { actions: [], error: edgeRootMismatch(n) };
     const actions = [
         {
             key: "edge_files",
@@ -271,7 +303,7 @@ export function envTemplate(cfg) {
         dbPassword: DB_PASSWORD_PLACEHOLDER,
     });
 }
-function edgeFilesScript(n) {
+export function edgeFilesScript(n) {
     const edge = `${n.root}/edge`;
     return `set -euo pipefail
 umask 077
@@ -287,6 +319,11 @@ ${edgeCaddyfile()}AGENTCMS_EDGE
 chmod 644 ${shq(edge + "/Caddyfile")}
 fi
 if [ ! -s ${shq(edge + "/secrets/mysql-root")} ]; then
+  # MySQL のデータが既にあるのに作り直すと、誰も root で入れなくなる
+  if docker volume inspect agentcms-edge_mysql-data >/dev/null 2>&1; then
+    echo "MySQL のデータ（agentcms-edge_mysql-data）はあるのに root パスワードのファイルがありません。新しく作ると入れなくなるので止めます。${edge}/secrets/mysql-root を元に戻してください"
+    exit 1
+  fi
   # 値はパイプでだけ流す（引数に載せない）。表示しない
   head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 40 > ${shq(edge + "/secrets/mysql-root")}
 fi
@@ -317,7 +354,8 @@ docker image inspect ${shq(PHP_IMAGE)} >/dev/null && echo php-image-ok`;
  * - MySQL の root パスワードはコンテナの中のファイルから読む（ホストの引数に出ない）
  * - 新しいパスワードは SQL ごと標準入力で渡す
  * - .env は印の行だけを builtin の printf で差し替える（sed の引数に値が載らない）
- * - DB を作り終えてから .env を置く。途中で落ちても、次の setup が作り直す
+ * - 同じ名前の DB か利用者が既にあれば止める（パスワードを変えない・他人の DB に権限を足さない）
+ * - DB を作り終えてから .env を置く
  */
 export function siteEnvScript(n, template) {
     const env = `${n.appDir}/shared/.env`;
@@ -334,9 +372,18 @@ AGENTCMS_ENV
 gen() { head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32; }
 db_pass=$(gen)
 app_key="base64:$(head -c 32 /dev/urandom | base64 | tr -d '\\n')"
-printf "CREATE DATABASE IF NOT EXISTS \\\`%s\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\\nCREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s';\\nALTER USER '%s'@'%%' IDENTIFIED BY '%s';\\nGRANT ALL PRIVILEGES ON \\\`%s\\\`.* TO '%s'@'%%';\\n" \\
-  ${shq(n.dbName)} ${shq(n.dbUser)} "$db_pass" ${shq(n.dbUser)} "$db_pass" ${shq(n.dbName)} ${shq(n.dbUser)} \\
-  | docker exec -i ${MYSQL_CONTAINER} sh -c 'MYSQL_PWD="$(cat /run/agentcms/mysql-root)" exec mysql -uroot'
+# 同じ名前の DB か利用者が既にあれば作らない（別の置き場所のサイトか、前の setup の残り）。
+# 既にある利用者のパスワードを変えると、そのサイトが DB に入れなくなる
+root_sql() { docker exec -i ${MYSQL_CONTAINER} sh -c 'MYSQL_PWD="$(cat /run/agentcms/mysql-root)" exec mysql -uroot -N'; }
+exists=$(printf "SELECT (SELECT COUNT(*) FROM mysql.user WHERE user='%s') + (SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='%s');\n" ${shq(n.dbUser)} ${shq(n.dbName)} | root_sql)
+if [ "$exists" != "0" ]; then
+  rm -f "$tmpl"
+  echo "db-exists: DB か利用者「${n.dbName}」が既にあるのに、このサイトの shared/.env がありません。別の置き場所の同じサイト名か、前の setup が途中で止まった残りです。何も変えずに止めました"
+  exit 1
+fi
+printf "CREATE DATABASE \\\`%s\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\nCREATE USER '%s'@'%%' IDENTIFIED BY '%s';\nGRANT ALL PRIVILEGES ON \\\`%s\\\`.* TO '%s'@'%%';\n" \\
+  ${shq(n.dbName)} ${shq(n.dbUser)} "$db_pass" ${shq(n.dbName)} ${shq(n.dbUser)} \\
+  | root_sql
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     "APP_KEY=${APP_KEY_PLACEHOLDER}") printf 'APP_KEY=%s\\n' "$app_key" ;;
@@ -363,7 +410,8 @@ echo site-env-ok`;
 export async function siteRoute(ctx) {
     const n = vpsNames(ctx.cfg);
     const r = await runScript(ctx.exec, siteRouteScript(n), TIMEOUTS.default);
-    if (r.stdout.includes("route-ok") || r.stdout.includes("route-unchanged"))
+    if (r.code === 0 &&
+        (r.stdout.includes("route-ok") || r.stdout.includes("route-unchanged")))
         return ok("caddy-route", r.stdout.includes("route-ok")
             ? `Caddy に ${n.domain} を入れました`
             : "Caddy の行は変わっていません");
@@ -373,6 +421,8 @@ export async function siteRoute(ctx) {
     const owner = /site-taken:(\S+)/.exec(r.stdout)?.[1];
     if (owner)
         return ng("caddy-route", `サイト名「${n.site}」は別のドメイン ${owner} のサイトが使っています。vps.site を別の名前にしてください。何も変えずに止めました`);
+    if (r.stdout.includes("route-restore-failed"))
+        return ng("caddy-route", `🔴 Caddy の行を元に戻せませんでした。動いている Caddy は前の設定のままですが、${n.root}/edge/sites/${n.site}.caddy を手で直さないと、次の reload・再起動で止まります: ${tail(r)}`);
     return ng("caddy-route", `Caddy の設定が通りませんでした（動いている設定はそのまま）: ${tail(r)}`);
 }
 export function siteRouteScript(n) {
@@ -398,13 +448,25 @@ if [ -f ${shq(f)} ] && cmp -s ${shq(f)} "$new"; then rm -f "$new"; echo route-un
 if ! out=$(docker exec ${CADDY_CONTAINER} sh -c 'rm -rf /tmp/agentcms-validate && cp -r /etc/caddy /tmp/agentcms-validate && cp "/etc/caddy/sites/$1.caddy.new" "/tmp/agentcms-validate/sites/$1.caddy" && rm -f /tmp/agentcms-validate/sites/*.new && caddy validate --adapter caddyfile --config /tmp/agentcms-validate/Caddyfile' sh ${shq(n.site)} 2>&1); then
   rm -f "$new"; printf '%s\\n' "$out" | tail -5; echo route-invalid; exit 5
 fi
-[ -f ${shq(f)} ] && cp -p ${shq(f)} ${shq(f + ".prev")}
-mv "$new" ${shq(f)}
+rm -f ${shq(f + ".prev")}
+if [ -f ${shq(f)} ]; then
+  if ! cp -p ${shq(f)} ${shq(f + ".prev")} || ! cmp -s ${shq(f)} ${shq(f + ".prev")}; then
+    rm -f "$new" ${shq(f + ".prev")}; echo route-backup-failed; exit 8
+  fi
+fi
+if ! mv "$new" ${shq(f)}; then
+  rm -f "$new" ${shq(f + ".prev")}; echo route-replace-failed; exit 9
+fi
 if out=$(docker exec ${CADDY_CONTAINER} caddy reload --adapter caddyfile --config /etc/caddy/Caddyfile 2>&1); then
   rm -f ${shq(f + ".prev")}; echo route-ok; exit 0
 fi
-if [ -f ${shq(f + ".prev")} ]; then mv ${shq(f + ".prev")} ${shq(f)}; else rm -f ${shq(f)}; fi
-printf '%s\\n' "$out" | tail -5; echo route-reload-failed; exit 6`;
+printf '%s\\n' "$out" | tail -5
+if [ -f ${shq(f + ".prev")} ]; then
+  mv ${shq(f + ".prev")} ${shq(f)} || { echo route-restore-failed; exit 10; }
+else
+  rm -f ${shq(f)} || { echo route-restore-failed; exit 10; }
+fi
+echo route-reload-failed; exit 6`;
 }
 /** サイトの PHP-FPM と scheduler のコンテナを（作り直しが要れば作り直して）起動する */
 export async function siteContainers(ctx) {
@@ -424,7 +486,7 @@ for i in $(seq 1 30); do
 done
 docker logs --tail 20 ${shq(n.appContainer)} 2>&1
 exit 1`, TIMEOUTS.composeUp);
-    if (!r.stdout.includes("containers-ok"))
+    if (r.code !== 0 || !r.stdout.includes("containers-ok"))
         return ng("containers", `サイトのコンテナが起動しません: ${tail(r)}。\`agentcms deploy doctor\` で PHP のイメージと edge を確かめてください`);
     return ok("containers", `${n.appContainer} / ${n.schedulerContainer}`);
 }
@@ -450,7 +512,69 @@ echo "backup-ok:$size"`;
 export async function backupDatabaseVps(ctx) {
     const n = vpsNames(ctx.cfg);
     const r = await runScript(ctx.exec, vpsBackupScript(n, ctx.releaseId), 300_000);
-    if (!r.stdout.includes("backup-ok"))
+    if (r.code !== 0 || !r.stdout.includes("backup-ok"))
         return ng("db-backup", `DB バックアップ失敗（安全のため deploy を中止）: ${tail(r, 300)}`);
     return ok("db-backup", `${n.appDir}/backups/${ctx.releaseId}-db.sql.gz (${r.stdout.trim().split("\n").pop()})`);
+}
+// ---------------------------------------------------------------- release の記録・掃除・鍵
+/** health まで通った release に付ける印。rollback はこの印のある release にだけ戻る */
+export const HEALTHY_MARK = ".agentcms-healthy";
+export async function markHealthy(ctx) {
+    const n = vpsNames(ctx.cfg);
+    const r = await ctx.exec.exec(`touch ${shq(`${n.appDir}/releases/${ctx.releaseId}/${HEALTHY_MARK}`)} && echo mark-ok`);
+    return r.code === 0 && r.stdout.includes("mark-ok")
+        ? ok("mark-healthy")
+        : ng("mark-healthy", tail(r));
+}
+/**
+ * health まで通った release の id（新しい順）。
+ * 途中で落ちた release（migration の失敗など）は印が無いので入らない —
+ * **一度も公開できなかった版へ rollback しない**。
+ */
+export async function healthyReleases(exec, cfg) {
+    const n = vpsNames(cfg);
+    const r = await exec.exec(`cd ${shq(n.appDir + "/releases")} 2>/dev/null && for d in *; do [ -f "$d/${HEALTHY_MARK}" ] && echo "$d"; done | sort -r | head -50`);
+    return r.stdout
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => /^\d{14}$/.test(l));
+}
+/**
+ * 古い release の掃除。current と、印のある新しい順 keep 個を残し、ほかは消す
+ * （途中で落ちた release も消す。残しておくと rollback 先と取り違える元になる）。
+ */
+export async function cleanupReleasesVps(ctx) {
+    const n = vpsNames(ctx.cfg);
+    const r = await runScript(ctx.exec, `set -uo pipefail
+cd ${shq(n.appDir + "/releases")} || exit 1
+cur=$(basename "$(readlink ${shq(n.appDir + "/current")})")
+kept=0
+for d in $(ls -1 | grep -E '^[0-9]{14}$' | sort -r); do
+  [ "$d" = "$cur" ] && continue
+  if [ -f "$d/${HEALTHY_MARK}" ] && [ "$kept" -lt ${ctx.cfg.keepReleases} ]; then kept=$((kept + 1)); continue; fi
+  rm -rf "$d"
+done
+rm -f ${shq(n.appDir + "/tmp")}/*.tar.gz
+echo cleanup-ok`);
+    return r.code === 0 && r.stdout.includes("cleanup-ok")
+        ? ok("cleanup")
+        : ng("cleanup", tail(r));
+}
+const LOCK = ".agentcms-deploy.lock";
+/**
+ * サイトごとの鍵。deploy と rollback は、current を読む前から health・掃除が
+ * 終わるまでこれを持つ（同じサイトへの 2 つの deploy が切り替えと切り戻しを
+ * 取り合わない）。`mkdir` の成否で取るので、どの Linux でも動く。
+ */
+export async function acquireSiteLock(ctx, what) {
+    const n = vpsNames(ctx.cfg);
+    const lock = `${n.appDir}/${LOCK}`;
+    const r = await ctx.exec.exec(`if mkdir ${shq(lock)} 2>/dev/null; then printf '%s %s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" ${shq(what)} > ${shq(lock + "/info")}; echo lock-ok; else echo "lock-busy: $(cat ${shq(lock + "/info")} 2>/dev/null)"; fi`);
+    if (r.code === 0 && r.stdout.includes("lock-ok"))
+        return ok("lock");
+    return ng("lock", `このサイトでは別の deploy / rollback が動いています（${r.stdout.replace("lock-busy:", "").trim() || "始めた時刻は不明"}）。終わるのを待ってください。止まったまま残っているなら、ほかに動いていないことを確かめてから ${lock} を消してください`);
+}
+export async function releaseSiteLock(ctx) {
+    const n = vpsNames(ctx.cfg);
+    await ctx.exec.exec(`rm -rf ${shq(`${n.appDir}/${LOCK}`)}`);
 }

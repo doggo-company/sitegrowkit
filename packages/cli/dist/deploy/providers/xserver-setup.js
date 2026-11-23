@@ -535,7 +535,8 @@ export function inspectMailEnv(target, envText) {
         const line = envText
             .split("\n")
             .find((l) => l.trim().startsWith(`${key}=`));
-        return (line ?? "").slice(`${key}=`.length + (line ?? "").indexOf(key))
+        return (line ?? "")
+            .slice(`${key}=`.length + (line ?? "").indexOf(key))
             .replace(/^["']|["']$/g, "")
             .trim();
     };

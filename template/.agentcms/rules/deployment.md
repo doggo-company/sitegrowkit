@@ -33,4 +33,6 @@
 - Secrets (MySQL root password, DB passwords, APP_KEY) are generated ON THE SERVER by `agentcms deploy setup` and written only to 600 files. Pass values only via stdin/pipes — never in command arguments, compose `environment`, `docker exec -e`, the deploy config, plans or logs. Setup is create-only and idempotent; it never rotates an existing `shared/.env`.
 - Caddy must hand PHP the RESOLVED release path (`php_fastcgi … { resolve_root_symlink }`), same reason as the XServer entry stub's `realpath()`.
 - A site's Caddy block is validated outside the running Caddy before it replaces the live file; on reload failure the previous block is restored. Duplicate domain / site name → stop without changing anything. Never let one site's deploy take down another.
+- Site DB/user names are `sgk-<site>`; site names never contain `_`/`%` (MySQL GRANT wildcards). Setup never ALTERs an existing DB user. One `vps.root` per server.
+- Only releases that passed health get `.agentcms-healthy`; rollback and cleanup choose by that mark. Deploy/rollback hold a per-site lock from reading `current` until cleanup.
 - Removing a site, dropping a DB and restoring a DB are manual (docs/deployment/vps.md). The end-to-end check is `scripts/vps-e2e.mjs` (manual, needs privileged Docker).
