@@ -11,7 +11,8 @@ SiteGrowKit の変更履歴です。
 - `AGENTCMS_BACKUP_SCHEDULE=HH:MM` を設定すると、毎日その時刻にバックアップを取ります（`agentcms:backup-auto`。空なら今までどおり自動では取りません）
 - `AGENTCMS_BACKUP_OFFSITE_DISK` を設定すると、取ったバックアップの写しを S3 互換の置き場所か別のディレクトリへ送ります。大きさと checksum を確かめ、送れなければ終了コード 1 で終わり、理由をアプリのログにも残します。置き場所に残す世代は `AGENTCMS_BACKUP_OFFSITE_KEEP`（既定 14）
 - `agentcms:backup-restore --from-offsite --latest` で、置き場所から取り込んで戻せます。checksum が合わないものは取り込みません
-- 自動の取得が失敗したことに気づけるようにしました。Cron の `schedule:run` は失敗しても終了コード 0 で終わるため、最後の結果を記録し、管理画面（サイドバーの「バックアップ」の赤い印とバックアップ画面）と `agentcms:backup-offsite --list`（終了コード 1）に出します。`AGENTCMS_BACKUP_ALERT_MAIL` を設定したときだけメールでも知らせます。毎日の時刻を決めているのに 30 時間取れていないときも同じように出します。理由の文は置き場所の鍵を伏せてから残します
+- 自動の取得が失敗したことに気づけるようにしました。Cron の `schedule:run` は失敗しても終了コード 0 で終わるため、最後の結果を記録し、管理画面（サイドバーの「バックアップ」の赤い印とバックアップ画面）と `agentcms:backup-offsite --list`（終了コード 1）に出します。`AGENTCMS_BACKUP_ALERT_MAIL` を設定したときだけメールでも知らせます。毎日の時刻を決めているのに 30 時間取れていないとき（一度も走っていないときを含む）・外の古い世代を片付けられないときも出します。理由の文は置き場所の鍵と署名の欄を伏せてから残します
+- 置き場所では、checksum まで置き終えたものだけを世代・戻す候補に数えます。`APP_URL` が localhost のままで `AGENTCMS_BACKUP_OFFSITE_PREFIX` が空なら送りません（同じ場所を共有して互いの世代を消し合わないため）。別のディレクトリの置き場所は、シンボリックリンクをたどった先が手元の private 領域の中なら送りません
 - 手元の置き場所（`storage/app/private/backups`）と 5 世代の整理は変えていません
 
 ## 0.9.4-rc33 — ダッシュボードと権限の案内を揃えました（未配布）

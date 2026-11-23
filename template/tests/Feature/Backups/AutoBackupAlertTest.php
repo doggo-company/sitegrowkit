@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Backups;
 
 use AgentCms\Core\Backups\AutoBackupStatus;
+use AgentCms\Core\Backups\OffsiteBackups;
 use App\Models\User;
 use App\Support\Role;
 use Illuminate\Contracts\Filesystem\Filesystem;
@@ -144,6 +145,19 @@ final class AutoBackupAlertTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page->where('nav.backupAlert', 1));
     }
 
+    public function test_毎晩途中で落ちていても前回の成功が古ければ止まっていると知らせる(): void
+    {
+        $this->artisan('agentcms:backup-auto')->assertExitCode(0);
+        $this->travel(AutoBackupStatus::STALE_AFTER_HOURS + 1)->hours();
+
+        // 今夜の回は始まったまま（メモリ切れで落ちた直後・まだ 4 時間たっていない）
+        app(AutoBackupStatus::class)->started();
+
+        $this->artisan('agentcms:backup-offsite', ['--list' => true])
+            ->expectsOutputToContain('自動バックアップが止まっています')
+            ->assertExitCode(1);
+    }
+
     public function test_記録が読めなければ見てほしいと出す(): void
     {
         $this->artisan('agentcms:backup-auto')->assertExitCode(0);
@@ -177,6 +191,69 @@ final class AutoBackupAlertTest extends TestCase
         // 手元の置き場所が壊れているとバックアップ画面の一覧は読めないので、別の画面の印で見る
         $this->asOwner('/admin/pages')
             ->assertInertia(fn (Assert $page) => $page->where('nav.backupAlert', 1));
+    }
+
+    public function test_時刻を決めたのに一度も走っていなければ止まっていると知らせる(): void
+    {
+        // 時刻は入れたが、サーバーの cron を置き忘れた。何も失敗しないし、何も取れない
+        $this->asOwner('/admin/pages')
+            ->assertInertia(fn (Assert $page) => $page->where('nav.backupAlert', 0));
+
+        $this->artisan('agentcms:backup-offsite', ['--list' => true])
+            ->expectsOutputToContain('記録はまだありません')
+            ->assertExitCode(0);
+
+        $this->travel(AutoBackupStatus::STALE_AFTER_HOURS + 1)->hours();
+
+        $this->artisan('agentcms:backup-offsite', ['--list' => true])
+            ->expectsOutputToContain('一度も取れていません')
+            ->assertExitCode(1);
+
+        $this->asOwner('/admin/pages')
+            ->assertInertia(fn (Assert $page) => $page->where('nav.backupAlert', 1));
+    }
+
+    public function test_結果を記録できなければそれ自体を知らせる(): void
+    {
+        // 記録の置き場所が書けない（ディレクトリであるべき所がファイル）
+        @mkdir($this->sandbox, 0777, true);
+        file_put_contents($this->sandbox.'/backup-status', 'not a directory');
+
+        $this->artisan('agentcms:backup-auto')
+            ->expectsOutputToContain('記録できませんでした')
+            ->assertExitCode(1);
+
+        $this->artisan('agentcms:backup-offsite', ['--list' => true])
+            ->expectsOutputToContain('記録できません')
+            ->assertExitCode(1);
+    }
+
+    public function test_外の古い世代を片付けられないときは送り出しの失敗と言わない(): void
+    {
+        config()->set('agentcms.backup.offsite.keep', 1);
+        $this->artisan('agentcms:backup-auto')->assertExitCode(0);
+
+        // 書けるが消せない鍵（削除の権限が無い）
+        $real = Storage::build(['driver' => 'local', 'root' => $this->elsewhere, 'throw' => true]);
+        Storage::extend('write-only-offsite', static function () use ($real): Filesystem {
+            $disk = Mockery::mock($real)->makePartial();
+            $disk->shouldReceive('delete')->andThrow(new RuntimeException('AccessDenied'));
+
+            return $disk;
+        });
+        config()->set('filesystems.disks.'.self::DISK, ['driver' => 'write-only-offsite']);
+
+        $this->artisan('agentcms:backup-auto')
+            ->expectsOutputToContain('外の古い世代を片付けられませんでした')
+            ->assertExitCode(1);
+
+        $this->artisan('agentcms:backup-offsite', ['--list' => true])
+            ->expectsOutputToContain('外へ送れましたが')
+            ->doesntExpectOutputToContain('送り出しが失敗')
+            ->assertExitCode(1);
+
+        // 送れてはいる（2 世代とも外にある）
+        $this->assertCount(2, glob($this->elsewhere.'/'.self::PREFIX.'/*.zip.sha256') ?: []);
     }
 
     // ── 管理画面 ─────────────────────────────────────────────
@@ -339,6 +416,19 @@ final class AutoBackupAlertTest extends TestCase
         });
         Log::shouldNotHaveReceived('error', [Mockery::on(static fn ($m): bool => is_string($m) && (str_contains($m, self::KEY) || str_contains($m, self::SECRET))), Mockery::any()]);
         Log::shouldNotHaveReceived('error', [Mockery::on(static fn ($m): bool => is_string($m) && (str_contains($m, self::KEY) || str_contains($m, self::SECRET)))]);
+    }
+
+    public function test_設定に無い鍵でも署名の欄と署名つき_ur_lは伏せる(): void
+    {
+        $text = app(OffsiteBackups::class)->redact(
+            '403 <AWSAccessKeyId>AKIAOTHERKEY0000</AWSAccessKeyId><StringToSign>AWS4-HMAC-SHA256 x</StringToSign>'
+            .' https://b.example/x.zip?X-Amz-Credential=AKIAOTHERKEY0000%2F2026&X-Amz-Signature=deadbeef01',
+        );
+
+        $this->assertStringNotContainsString('AKIAOTHERKEY0000', $text);
+        $this->assertStringNotContainsString('deadbeef01', $text);
+        $this->assertStringNotContainsString('AWS4-HMAC-SHA256 x', $text);
+        $this->assertStringContainsString('403', $text);
     }
 
     // ── 使わない人 ────────────────────────────────────────────

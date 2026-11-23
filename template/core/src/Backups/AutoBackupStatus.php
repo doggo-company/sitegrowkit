@@ -22,7 +22,8 @@ use Throwable;
  * 失敗だけでなく次も「見てほしい」に数える:
  *
  *   - 始めた記録だけが残り、終わった記録が無い（途中でプロセスが落ちた）
- *   - 時刻を決めているのに、最後の成功から {@see STALE_AFTER_HOURS} 時間を超えた（cron が止まった）
+ *   - 時刻を決めているのに、最後の成功から {@see STALE_AFTER_HOURS} 時間を超えた（cron が止まった）。
+ *     一度も走っていないときは、時刻の設定を最初に見た時刻から数える（cron の置き忘れ）
  *   - 記録が読めない
  *
  * ## 置き場所
@@ -50,11 +51,12 @@ final class AutoBackupStatus
         return Storage::disk('local')->path(self::FILE);
     }
 
-    public function started(): void
+    /** 書けたら true（書けなければログに残し false — 呼ぶ側が失敗として扱う） */
+    public function started(): bool
     {
         $previous = $this->raw();
 
-        $this->write([
+        return $this->write([
             'state' => 'running',
             'started_at' => now()->getTimestamp(),
             'finished_at' => null,
@@ -62,16 +64,17 @@ final class AutoBackupStatus
             'stage' => null,
             'reason' => null,
             'last_success_at' => $previous['last_success_at'] ?? null,
+            'armed_at' => $previous['armed_at'] ?? null,
         ]);
     }
 
     /** 取れた。`$offsite` は外の置き場所へ送れたか（未設定なら false） */
-    public function succeeded(string $backupId, bool $offsite): void
+    public function succeeded(string $backupId, bool $offsite): bool
     {
         $previous = $this->raw();
         $now = now()->getTimestamp();
 
-        $this->write([
+        return $this->write([
             'state' => $offsite ? 'ok' : 'local-only',
             'started_at' => $previous['started_at'] ?? $now,
             'finished_at' => $now,
@@ -79,23 +82,25 @@ final class AutoBackupStatus
             'stage' => null,
             'reason' => null,
             'last_success_at' => $now,
+            'armed_at' => $previous['armed_at'] ?? null,
         ]);
     }
 
-    /** @param  'backup'|'offsite'  $stage  どこで落ちたか */
-    public function failed(string $stage, string $reason, ?string $backupId): void
+    /** @param  'backup'|'offsite'|'prune'  $stage  どこで落ちたか */
+    public function failed(string $stage, string $reason, ?string $backupId): bool
     {
         $previous = $this->raw();
         $now = now()->getTimestamp();
 
-        $this->write([
+        return $this->write([
             'state' => 'failed',
             'started_at' => $previous['started_at'] ?? $now,
             'finished_at' => $now,
             'backup' => $backupId,
-            'stage' => $stage === 'backup' ? 'backup' : 'offsite',
+            'stage' => in_array($stage, ['backup', 'prune'], true) ? $stage : 'offsite',
             'reason' => mb_substr($reason, 0, self::MAX_REASON),
             'last_success_at' => $previous['last_success_at'] ?? null,
+            'armed_at' => $previous['armed_at'] ?? null,
         ]);
     }
 
@@ -115,9 +120,18 @@ final class AutoBackupStatus
         $path = $this->path();
 
         if (! file_exists($path) && ! is_link($path)) {
-            return $schedule === null
-                ? [...$base, 'message' => '自動バックアップは使っていません（AGENTCMS_BACKUP_SCHEDULE が空）']
-                : [...$base, 'state' => 'never', 'message' => '自動バックアップの記録はまだありません（毎日 '.$schedule.' に走ります。翌日になっても記録が無ければ、サーバーの cron で schedule:run が動いているか確かめてください）'];
+            if ($schedule === null) {
+                return [...$base, 'message' => '自動バックアップは使っていません（AGENTCMS_BACKUP_SCHEDULE が空）'];
+            }
+
+            /*
+             * 時刻は決めたが、まだ 1 回も走っていない。**いつから待っているか**を、最初に見た時刻で
+             * 覚えておく — 覚えないと、cron を置き忘れたサイトは永遠に「まだ記録がありません」のままで、
+             * 誰も気づけない。覚えられない（書けない）なら、それ自体を見てほしいこととして出す。
+             */
+            if (! $this->write(['state' => 'never', 'started_at' => null, 'finished_at' => null, 'backup' => null, 'stage' => null, 'reason' => null, 'last_success_at' => null, 'armed_at' => now()->getTimestamp()])) {
+                return [...$base, 'state' => 'unknown', 'attention' => true, 'message' => '自動バックアップの結果を記録できません（'.self::FILE.' に書けません。storage の書き込み権限を確かめてください）'];
+            }
         }
 
         $data = $this->raw();
@@ -136,10 +150,24 @@ final class AutoBackupStatus
         ];
         $now = now()->getTimestamp();
 
+        if ($data['state'] === 'never') {
+            if ($schedule === null) {
+                return [...$base, 'message' => '自動バックアップは使っていません（AGENTCMS_BACKUP_SCHEDULE が空）'];
+            }
+
+            if ($data['armed_at'] !== null && $now - $data['armed_at'] > self::STALE_AFTER_HOURS * 3600) {
+                return [...$view, 'state' => 'stale', 'attention' => true, 'message' => '自動バックアップが止まっています: 時刻を決めてから一度も取れていません（'.self::local($data['armed_at']).' から待っています。毎日 '.$schedule.' のはず。サーバーの cron で schedule:run が動いているか確かめてください）'];
+            }
+
+            return [...$view, 'state' => 'never', 'message' => '自動バックアップの記録はまだありません（毎日 '.$schedule.' に走ります。'.self::STALE_AFTER_HOURS.' 時間たっても取れなければ「止まっています」と出します）'];
+        }
+
         if ($data['state'] === 'failed') {
-            $head = $data['stage'] === 'backup'
-                ? '最後の自動バックアップが失敗しました（backup を作れませんでした）'
-                : '最後の自動バックアップの送り出しが失敗しました（手元の backup は残っています）';
+            $head = match ($data['stage']) {
+                'backup' => '最後の自動バックアップが失敗しました（backup を作れませんでした）',
+                'prune' => '最後の自動バックアップは外へ送れましたが、外の古い世代を片付けられませんでした（置き場所の鍵に削除の権限があるか確かめてください。このままでは置き場所が増え続けます）',
+                default => '最後の自動バックアップの送り出しが失敗しました（手元の backup は残っています）',
+            };
 
             return [...$view, 'state' => 'failed', 'attention' => true, 'message' => $head.'（'.self::local($data['finished_at']).'）: '.$data['reason']];
         }
@@ -147,6 +175,13 @@ final class AutoBackupStatus
         if ($data['state'] === 'running') {
             if ($now - (int) $data['started_at'] > self::RUNNING_TOO_LONG_HOURS * 3600) {
                 return [...$view, 'state' => 'interrupted', 'attention' => true, 'message' => '最後の自動バックアップが途中で止まったままです（'.self::local($data['started_at']).' に始まり、終わった記録がありません）'];
+            }
+
+            // 毎晩途中で落ちていても、前回の成功が古すぎれば「止まっている」を先に言う
+            $last = $data['last_success_at'];
+
+            if ($schedule !== null && $last !== null && $now - $last > self::STALE_AFTER_HOURS * 3600) {
+                return [...$view, 'state' => 'stale', 'attention' => true, 'message' => '自動バックアップが止まっています: 最後に取れたのは '.self::local($last).' です（いまの回は '.self::local($data['started_at']).' に始まったまま）'];
             }
 
             return [...$view, 'state' => 'running', 'message' => '自動バックアップを取っています（'.self::local($data['started_at']).' に開始）'];
@@ -164,7 +199,7 @@ final class AutoBackupStatus
     }
 
     /**
-     * @return array{state: string, started_at: ?int, finished_at: ?int, last_success_at: ?int, backup: ?string, stage: ?string, reason: ?string}|null
+     * @return array{state: string, started_at: ?int, finished_at: ?int, last_success_at: ?int, backup: ?string, stage: ?string, reason: ?string, armed_at: ?int}|null
      */
     private function raw(): ?array
     {
@@ -181,7 +216,7 @@ final class AutoBackupStatus
         }
 
         if (! is_array($data) || ($data['version'] ?? null) !== 1
-            || ! in_array($data['state'] ?? null, ['running', 'ok', 'local-only', 'failed'], true)) {
+            || ! in_array($data['state'] ?? null, ['never', 'running', 'ok', 'local-only', 'failed'], true)) {
             return null;
         }
 
@@ -196,15 +231,16 @@ final class AutoBackupStatus
             'backup' => $str($data['backup'] ?? null),
             'stage' => $str($data['stage'] ?? null),
             'reason' => $str($data['reason'] ?? null),
+            'armed_at' => $int($data['armed_at'] ?? null),
         ];
     }
 
     /**
-     * 書けなくても backup そのものは止めない（ログに残す）。原子的に置き換え、0600 にする。
+     * 原子的に置き換え、0600 にする。書けなければログに残して false。
      *
      * @param  array<string, mixed>  $data
      */
-    private function write(array $data): void
+    private function write(array $data): bool
     {
         $path = $this->path();
         $dir = dirname($path);
@@ -225,8 +261,12 @@ final class AutoBackupStatus
             if ($temp === false || @file_put_contents($temp, $json, LOCK_EX) !== strlen($json) || ! @chmod($temp, 0600) || ! @rename($temp, $path)) {
                 throw new BackupFailed('書き込めません');
             }
+
+            return true;
         } catch (Throwable $e) {
             Log::error('agentcms:backup-auto: 自動バックアップの結果を記録できませんでした（'.self::FILE.'）: '.$e->getMessage());
+
+            return false;
         } finally {
             if (is_string($temp) && is_file($temp)) {
                 @unlink($temp);

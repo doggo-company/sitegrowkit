@@ -63,12 +63,17 @@ final class OffsiteBackups
         $prefix = trim((string) config('agentcms.backup.offsite.prefix', ''));
 
         if ($prefix === '') {
-            $host = (string) parse_url((string) config('app.url', ''), PHP_URL_HOST);
-            $prefix = trim((string) preg_replace('/[^a-z0-9]+/', '-', strtolower($host)), '-');
-        }
+            $host = strtolower((string) parse_url((string) config('app.url', ''), PHP_URL_HOST));
 
-        if ($prefix === '') {
-            $prefix = 'site';
+            /*
+             * APP_URL が localhost のままのサイト同士は、同じ場所になって互いの世代を消し合う。
+             * サイトを見分けられないときは推測せずに止める。
+             */
+            if ($host === '' || in_array($host, ['localhost', '127.0.0.1', '::1', '[::1]'], true) || str_ends_with($host, '.localhost')) {
+                throw new BackupFailed('外の置き場所の中の、このサイトの場所を決めてください（AGENTCMS_BACKUP_OFFSITE_PREFIX）。APP_URL が localhost のままなので、サイトを見分けられません');
+            }
+
+            $prefix = trim((string) preg_replace('/[^a-z0-9]+/', '-', $host), '-');
         }
 
         if (preg_match('/^[a-z0-9][a-z0-9._-]{0,99}$/', $prefix) !== 1 || str_contains($prefix, '..')) {
@@ -195,6 +200,20 @@ final class OffsiteBackups
      */
     public function ids(): array
     {
+        return $this->listing()['complete'];
+    }
+
+    /**
+     * 外にあるものを、**checksum まで置き終えた id** と、zip だけが残った id に分ける。
+     *
+     * checksum は送り終えて大きさを確かめた後に置く。zip だけがあるのは送っている途中で
+     * 止まったもの — 戻す候補にも世代にも数えない（数えると `--latest` が途中の物を選び、
+     * 健全な 1 つ前へ戻れない）。
+     *
+     * @return array{complete: list<string>, partial: list<string>}
+     */
+    private function listing(): array
+    {
         $disk = $this->disk();
 
         try {
@@ -203,10 +222,17 @@ final class OffsiteBackups
             throw new BackupFailed('外の置き場所を読めません（'.$this->describe().'）: '.$e->getMessage(), 0, $e);
         }
 
-        $ids = [];
+        $names = [];
 
         foreach ($files as $file) {
-            $name = basename($file);
+            $names[basename((string) $file)] = true;
+        }
+
+        $complete = [];
+        $partial = [];
+
+        foreach (array_keys($names) as $name) {
+            $name = (string) $name;
 
             if (! str_ends_with($name, '.zip')) {
                 continue;
@@ -214,15 +240,23 @@ final class OffsiteBackups
 
             $id = substr($name, 0, -4);
 
-            if (BackupPaths::isValidId($id)) {
-                $ids[] = $id;
+            if (! BackupPaths::isValidId($id)) {
+                continue;
+            }
+
+            if (isset($names[$name.'.sha256'])) {
+                $complete[] = $id;
+            } else {
+                $partial[] = $id;
             }
         }
 
         // id は時刻順に並ぶ形（BackupPaths::newId）。復元前の印は並びに使わない
-        usort($ids, static fn (string $a, string $b): int => strcmp(self::sortKey($b), self::sortKey($a)));
+        $newestFirst = static fn (string $a, string $b): int => strcmp(self::sortKey($b), self::sortKey($a));
+        usort($complete, $newestFirst);
+        usort($partial, $newestFirst);
 
-        return $ids;
+        return ['complete' => $complete, 'partial' => $partial];
     }
 
     /** 外にある、いちばん新しい通常の backup（復元前の印のものは除く） */
@@ -246,9 +280,22 @@ final class OffsiteBackups
     {
         $keep ??= $this->keep();
         $disk = $this->disk();
+        $listing = $this->listing();
+
+        /*
+         * 送っている途中で止まった zip（checksum が無い）は、いちばん新しい完成品より古ければ捨てる。
+         * 新しいものは、いま別の回が送っている途中かもしれないので触らない。
+         */
+        $newest = $listing['complete'][0] ?? null;
+
+        foreach ($listing['partial'] as $id) {
+            if ($newest !== null && strcmp(self::sortKey($id), self::sortKey($newest)) < 0) {
+                $this->quietDelete($disk, $this->archivePath($id));
+            }
+        }
 
         $candidates = array_values(array_filter(
-            $this->ids(),
+            $listing['complete'],
             static fn (string $id): bool => ! str_starts_with($id, BackupPaths::PRE_RESTORE_PREFIX),
         ));
 
@@ -380,24 +427,59 @@ final class OffsiteBackups
             throw new BackupFailed('外の置き場所のディレクトリが空です（AGENTCMS_BACKUP_OFFSITE_ROOT）');
         }
 
-        $normalized = rtrim($root, '/').'/';
-        $local = rtrim(BackupPaths::root(), '/').'/';
-
-        if (str_starts_with($normalized, $local) || str_starts_with($local, $normalized)) {
-            throw new BackupFailed('外の置き場所が手元の backup と同じ場所です。別のディスクか S3 互換の置き場所を指定してください');
+        if (! str_starts_with($root, '/')) {
+            throw new BackupFailed('外の置き場所のディレクトリは絶対パスで書いてください（AGENTCMS_BACKUP_OFFSITE_ROOT）: '.$root);
         }
+
+        // シンボリックリンクや `..` をたどった先で比べる（まだ無いディレクトリは、在る親までたどる）
+        $normalized = self::resolved($root);
 
         /*
          * web から見える場所には置かない（BackupPaths と同じ理由 — URL を推測されただけで
          * 全データが持ち去られる）。
          */
         foreach ([public_path(), storage_path('app/public')] as $exposed) {
-            $exposed = rtrim($exposed, '/').'/';
-
-            if (str_starts_with($normalized, $exposed)) {
+            if (str_starts_with($normalized, self::resolved($exposed))) {
                 throw new BackupFailed('外の置き場所が web から見える場所の中です。公開ディレクトリの外を指定してください');
             }
         }
+
+        /*
+         * 手元の backup と同じ場所、または同じ private 領域（storage/app/private）の中は、
+         * サーバーが壊れたら一緒に消える。外に置いたつもりで実は同じ場所、を黙って通さない。
+         */
+        foreach ([BackupPaths::root(), BackupPaths::disk()->path('')] as $local) {
+            $local = self::resolved($local);
+
+            if (str_starts_with($normalized, $local) || str_starts_with($local, $normalized)) {
+                throw new BackupFailed('外の置き場所が手元の backup と同じ場所です。別のディスクか S3 互換の置き場所を指定してください');
+            }
+        }
+    }
+
+    /** 在る部分は realpath で解き、無い部分はそのまま足す。末尾は `/` */
+    private static function resolved(string $path): string
+    {
+        $path = rtrim($path, '/');
+        $rest = [];
+
+        while ($path !== '' && $path !== '/' && ! file_exists($path)) {
+            array_unshift($rest, basename($path));
+            $path = dirname($path);
+        }
+
+        $real = realpath($path === '' ? '/' : $path);
+        $base = rtrim($real === false ? $path : $real, '/');
+
+        foreach ($rest as $part) {
+            if ($part === '..') {
+                $base = dirname($base);
+            } elseif ($part !== '.' && $part !== '') {
+                $base .= '/'.$part;
+            }
+        }
+
+        return rtrim($base, '/').'/';
     }
 
     private function remoteChecksum(Filesystem $disk, string $id): string

@@ -210,6 +210,101 @@ final class OffsiteBackupTest extends TestCase
         $this->assertSame(array_slice($local, -2), array_map(static fn (string $p): string => basename($p), $remote));
     }
 
+    public function test_整理はこのサイトの場所の中だけ(): void
+    {
+        config()->set('agentcms.backup.offsite.keep', 1);
+
+        // 同じ置き場所を使う隣のサイト
+        $neighbour = $this->elsewhere.'/site-b';
+        @mkdir($neighbour, 0777, true);
+        file_put_contents($neighbour.'/20200101-000000-000-aaaaaa.zip', 'b');
+        file_put_contents($neighbour.'/20200101-000000-000-aaaaaa.zip.sha256', str_repeat('0', 64));
+
+        for ($i = 0; $i < 3; $i++) {
+            $this->artisan('agentcms:backup-auto')->assertExitCode(0);
+        }
+
+        $this->assertCount(1, glob($this->elsewhere.'/'.self::PREFIX.'/*.zip') ?: []);
+        $this->assertFileExists($neighbour.'/20200101-000000-000-aaaaaa.zip');
+        $this->assertFileExists($neighbour.'/20200101-000000-000-aaaaaa.zip.sha256');
+    }
+
+    public function test_送っている途中で止まったものは戻す候補にも世代にも数えない(): void
+    {
+        $this->entry('健全な回の記事');
+        $this->artisan('agentcms:backup-auto')->assertExitCode(0);
+
+        // 次の回が送っている途中で止まった: zip の途中までだけがあり、checksum が無い
+        $partial = '29991231-235959-999-ffffff';
+        file_put_contents($this->elsewhere.'/'.self::PREFIX.'/'.$partial.'.zip', 'PK…途中');
+
+        $this->artisan('agentcms:backup-offsite', ['--list' => true])
+            ->doesntExpectOutputToContain($partial)
+            ->assertExitCode(0);
+
+        self::removeTree(BackupPaths::root());
+        DB::table('post')->delete();
+
+        $this->artisan('agentcms:backup-restore', ['--from-offsite' => true, '--latest' => true, '--force' => true])
+            ->assertExitCode(0);
+
+        $this->assertDatabaseHas('post', ['title' => '健全な回の記事']);
+    }
+
+    public function test_途中で止まった古いものは次の整理で捨てる(): void
+    {
+        $stale = '20000101-000000-000-eeeeee';
+        @mkdir($this->elsewhere.'/'.self::PREFIX, 0777, true);
+        file_put_contents($this->elsewhere.'/'.self::PREFIX.'/'.$stale.'.zip', 'PK…途中');
+
+        $this->artisan('agentcms:backup-auto')->assertExitCode(0);
+
+        $this->assertFileDoesNotExist($this->elsewhere.'/'.self::PREFIX.'/'.$stale.'.zip');
+    }
+
+    public function test_公開アドレスがlocalhostのままで場所を決めていなければ送らない(): void
+    {
+        config()->set('agentcms.backup.offsite.prefix', '');
+        config()->set('app.url', 'http://localhost');
+
+        $this->artisan('agentcms:backup-auto')
+            ->expectsOutputToContain('AGENTCMS_BACKUP_OFFSITE_PREFIX')
+            ->assertExitCode(1);
+    }
+
+    public function test_同じprivate領域の中やそこへのリンクには送らない(): void
+    {
+        // storage/app/private の中（手元の backup の隣）
+        config()->set('filesystems.disks.'.self::DISK.'.root', $this->sandbox.'/offsite');
+
+        $this->artisan('agentcms:backup-auto')
+            ->expectsOutputToContain('手元の backup と同じ場所です')
+            ->assertExitCode(1);
+
+        // 外に見えるリンクが、実は手元を指している
+        @mkdir($this->sandbox, 0777, true);
+        $link = $this->elsewhere.'-link';
+        @unlink($link);
+        symlink($this->sandbox, $link);
+
+        try {
+            config()->set('filesystems.disks.'.self::DISK.'.root', $link.'/offsite');
+
+            $this->artisan('agentcms:backup-auto')
+                ->expectsOutputToContain('手元の backup と同じ場所です')
+                ->assertExitCode(1);
+        } finally {
+            @unlink($link);
+        }
+
+        // 相対パスは、どこを指すか実行場所で変わる
+        config()->set('filesystems.disks.'.self::DISK.'.root', 'offsite-relative');
+
+        $this->artisan('agentcms:backup-auto')
+            ->expectsOutputToContain('絶対パス')
+            ->assertExitCode(1);
+    }
+
     // ── 別の置き場所から戻す ───────────────────────────────────
 
     public function test_手元のbackupが全部消えても外から1コマンドで戻せる(): void

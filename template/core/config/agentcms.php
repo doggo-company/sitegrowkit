@@ -120,7 +120,7 @@ return [
         /*
          * 別の置き場所（offsite）。`disk` は config/filesystems.php の disk 名。空なら送らない。
          * 1 つの置き場所を複数サイトで使うときは、`prefix` をサイトごとに変える
-         * （空なら APP_URL の host から作る）。`keep` は外に残す世代で、手元の `keep` とは別に数える。
+         * （空なら APP_URL の host から作る。localhost のままなら送らない）。`keep` は外に残す世代で、手元の `keep` とは別に数える。
          */
         /*
          * 自動 backup が失敗したときに知らせるメールの宛先（カンマ区切りで複数）。空なら送らない。

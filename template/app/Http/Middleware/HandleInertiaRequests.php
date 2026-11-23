@@ -150,20 +150,6 @@ class HandleInertiaRequests extends Middleware
      *
      * @return array<string, bool>
      */
-    /** 最後の自動 backup を見てほしいか（バックアップ画面を開けない人には 0） */
-    private function backupAlert(Request $request): int
-    {
-        if ($request->user() === null || ! in_array(
-            Capability::BackupRestore->value,
-            app(RoleOperationPolicy::class)->capabilitiesFor($request->user()),
-            true,
-        )) {
-            return 0;
-        }
-
-        return app(AutoBackupStatus::class)->read()['attention'] ? 1 : 0;
-    }
-
     /**
      * 通知メールが届かなかった受信の数。
      *
@@ -200,6 +186,20 @@ class HandleInertiaRequests extends Middleware
         }
 
         return $count;
+    }
+
+    /** 最後の自動 backup を見てほしいか（バックアップ画面を開けない人には 0） */
+    private function backupAlert(Request $request): int
+    {
+        if ($request->user() === null || ! in_array(
+            Capability::BackupRestore->value,
+            app(RoleOperationPolicy::class)->capabilitiesFor($request->user()),
+            true,
+        )) {
+            return 0;
+        }
+
+        return app(AutoBackupStatus::class)->read()['attention'] ? 1 : 0;
     }
 
     /** @return array<string, bool> */

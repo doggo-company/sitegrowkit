@@ -38,7 +38,7 @@ docker compose exec app php artisan agentcms:maintenance
 # shared/.env（または .env）
 AGENTCMS_BACKUP_SCHEDULE=03:40          # 毎日この時刻（アプリのタイムゾーン）に取得する。空なら自動では取らない
 AGENTCMS_BACKUP_OFFSITE_DISK=s3         # 写しを置く場所（config/filesystems.php の disk 名）
-AGENTCMS_BACKUP_OFFSITE_PREFIX=example-com   # 1 つの置き場所を複数サイトで使うときの、このサイトの場所
+AGENTCMS_BACKUP_OFFSITE_PREFIX=example-com   # 置き場所の中のこのサイトの場所（空なら APP_URL のホスト名。localhost のままなら送らない）
 AGENTCMS_BACKUP_OFFSITE_KEEP=14         # 置き場所に残す世代（手元は AGENTCMS_BACKUP_KEEP の 5 世代のまま）
 AGENTCMS_BACKUP_ALERT_MAIL=ops@example.com   # 失敗したら知らせる宛先（空なら送らない）
 ```
@@ -47,8 +47,11 @@ AGENTCMS_BACKUP_ALERT_MAIL=ops@example.com   # 失敗したら知らせる宛先
 - 置き場所は 2 種類から選べます
   - **S3 互換**（Cloudflare R2・Backblaze B2・MinIO など）：`config/filesystems.php` の `s3` disk に `AWS_ACCESS_KEY_ID`・`AWS_SECRET_ACCESS_KEY`・`AWS_DEFAULT_REGION`・`AWS_BUCKET`・`AWS_ENDPOINT`（必要なら `AWS_USE_PATH_STYLE_ENDPOINT=true`）を設定し、プロジェクトで `composer require league/flysystem-aws-s3-v3` を実行します。キットにはこのパッケージを同梱していません
   - **別のディレクトリ**（別のディスク・ネットワークのマウント）：`AGENTCMS_BACKUP_OFFSITE_DISK=backup-offsite` と `AGENTCMS_BACKUP_OFFSITE_ROOT=<絶対パス>`。手元のバックアップと同じ場所の中、または公開ディレクトリの中を指すと送信を止めます
-- 送った後に大きさを読み直し、`<id>.zip.sha256` を横に置きます。送れなかったときは `agentcms:backup-auto` が終了コード 1 で終わります。手元のバックアップは残します
-- 世代の整理は、このサイトの prefix の中だけで行います
+- 送った後に大きさを読み直し、`<id>.zip.sha256` を横に置きます。checksum まで置き終えたものだけを世代・戻す候補に数えます（送っている途中で止まった zip は数えず、次の整理で捨てます）。送れなかったときは `agentcms:backup-auto` が終了コード 1 で終わります。手元のバックアップは残します
+- 世代の整理は、このサイトの prefix の中だけで行います。**置き場所の鍵には、一覧・読み取り・書き込み・削除の権限が要ります**（削除できないと、整理の失敗として毎回知らせます）
+- 手元のバックアップと同じ private 領域（`storage/app/private`）の中・公開ディレクトリの中・相対パスを指すと送信を止めます。シンボリックリンクはたどった先で判断します
+
+**置き場所の扱い（必ず読んでください）**：バックアップの zip には、利用者のパスワードのハッシュと問い合わせの本文が入っています。キットは zip を暗号化しません。置き場所（バケット）は**公開しない**設定にし、使えるなら置き場所側の暗号化（サーバー側暗号化）を有効にしてください。鍵はそのバケットだけを扱えるものを 1 つ作り、ほかに使い回さないでください。また `<id>.zip.sha256` は zip と同じ置き場所にあるので、途中で壊れたことは見抜けますが、置き場所に書ける人が両方を差し替えた場合は見抜けません。
 
 ### 失敗に気づく
 
@@ -59,19 +62,21 @@ Cron が動かす `php artisan schedule:run` は、中の `agentcms:backup-auto`
 - **メール**：`AGENTCMS_BACKUP_ALERT_MAIL=ops@example.com`（カンマ区切りで複数）を設定したときだけ、サイトのメール設定（`MAIL_*`）で知らせます。空なら送りません。メールが送れなくても、上の 2 つは変わりません
 - **ログ**：アプリのログ（error）にも 1 行残します
 
-「失敗」に数えるのは、バックアップを作れなかった・置き場所へ送れなかった・始めた記録だけが残り 4 時間たっても終わっていない・時刻を決めているのに最後の成功から 30 時間を超えた（Cron が止まった）・記録が読めない、のどれかです。次に成功すると印は消えます。記録は `storage/app/private/backup-status/auto.json` に置き、バックアップの中には入れません。理由の文は、置き場所の disk に書かれた鍵（`key`・`secret` など）と署名の欄を伏せてから残します。
+「見てほしいこと」に数えるのは、次のどれかです。バックアップを作れなかった。置き場所へ送れなかった。送れたが外の古い世代を片付けられなかった。始めた記録だけが残り 4 時間たっても終わっていない。時刻を決めているのに最後の成功から 30 時間を超えた（Cron が止まった）。時刻を決めてから一度も取れないまま 30 時間を超えた（Cron の置き忘れ。待ち始めは、時刻の設定を管理画面か `--list` が最初に見た時刻）。記録を書けない・読めない。次に成功すると印は消えます。記録は `storage/app/private/backup-status/auto.json` に置き、バックアップの中には入れません。理由の文は、置き場所の disk に書かれた鍵（`key`・`secret` など）と署名の欄を伏せてから残します。
+
+外の置き場所の設定を外した（`AGENTCMS_BACKUP_OFFSITE_DISK` を空にした）ときは「このサーバーの中にしかありません」と出しますが、意図して外した場合と区別できないので、印は付けません（`--list` は終了コード 1 のままです）。
 
 **Cron そのものが止まった・サーバーごと落ちた**ときは、サーバーの中からは知らせを出せません（メールも送れません）。管理画面と `--list` は次に開いたときに「止まっています」と出しますが、確実に気づくには、サーバーの外から置き場所の最新のバックアップの日時（または `--list` の終了コード）を見張ってください。
 
 ```sh
 php artisan agentcms:backup-auto                 # 取得 → 写す → 古い世代の整理（自動実行と同じ処理）
-php artisan agentcms:backup-offsite --list       # 設定・最後の自動実行の結果・置き場所にある世代。未設定・読めない時刻・読めない置き場所・最後の自動実行の失敗は終了コード 1
+php artisan agentcms:backup-offsite --list       # 設定・最後の自動実行の結果・置き場所にある世代。未設定・読めない時刻・読めない置き場所・上の「見てほしいこと」は終了コード 1
 php artisan agentcms:backup-offsite [<id>]       # 手元のバックアップを写す（省略時はいちばん新しいもの）
 ```
 
 ### 置き場所から戻す
 
-サーバーを作り直したときなど、手元にバックアップが無くても 1 コマンドで戻せます。
+同じサーバーで手元のバックアップが消えたときは、次の 1 コマンドで戻せます。
 
 ```sh
 php artisan agentcms:backup-restore --from-offsite --latest
@@ -79,7 +84,15 @@ php artisan agentcms:backup-restore --from-offsite --latest
 
 置き場所から手元へ取り込み（checksum が一致したときだけ）、管理画面の復元と同じ検証（中身の一致・DB の形の一致）を通してから戻します。戻す直前の状態は `pre-restore-…` として残り、全員のログインが切れます。確認を省くのは `--force` を付けたときだけです。`id` を指定すると、その世代を戻します。
 
-バックアップには `.env` が含まれません。`APP_KEY` などの設定は、別に保管してください。
+**サーバーごと作り直したとき**は、上のコマンドの前に次を済ませてください。バックアップに入っているのは DB とメディアだけで、コードと `.env` は入っていません。DB の形はいまの DB と照らすので、先にマイグレーションまで済ませます。
+
+1. バックアップを取ったときと**同じ版**のサイトを置き、`composer install`（S3 互換なら `league/flysystem-aws-s3-v3` も）
+2. 別に保管しておいた `.env` を置く（`APP_KEY`・DB・置き場所の鍵。`AGENTCMS_BACKUP_OFFSITE_PREFIX` は前のサーバーと**同じ値**。空にしていたなら `APP_URL` を同じにする）
+3. `php artisan migrate --force`
+4. `php artisan agentcms:backup-offsite --list` で置き場所の世代が見えることを確かめる
+5. `php artisan agentcms:backup-restore --from-offsite --latest`
+
+バックアップには `.env` が含まれません。`APP_KEY` などの設定は、サーバーの外に別に保管してください。
 
 ## 対象外と更新時の手順
 
