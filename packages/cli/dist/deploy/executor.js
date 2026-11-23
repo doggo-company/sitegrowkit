@@ -43,16 +43,31 @@ export class SshExecutor {
         return spawnCapture("scp", args, 600_000);
     }
 }
-function spawnCapture(cmd, args, timeoutMs) {
+/** 1 回のコマンドで受け取る標準出力・標準エラーそれぞれの上限（文字数） */
+export const MAX_CAPTURE_CHARS = 16 * 1024 * 1024;
+export function spawnCapture(cmd, args, timeoutMs) {
     return new Promise((resolve) => {
         const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
         let stdout = "";
         let stderr = "";
+        let overflow = false;
         const timer = setTimeout(() => {
             child.kill("SIGTERM");
         }, timeoutMs);
-        child.stdout.on("data", (d) => (stdout += d.toString()));
-        child.stderr.on("data", (d) => (stderr += d.toString()));
+        // 受け取る量に上限を付ける（サーバーの上のサイトが大量に出力しても、手元の CLI が
+        // メモリを使い切らない）。超えたら止めて失敗にする
+        const take = (cur, d) => {
+            if (overflow)
+                return cur;
+            if (cur.length + d.length > MAX_CAPTURE_CHARS) {
+                overflow = true;
+                child.kill("SIGTERM");
+                return cur;
+            }
+            return cur + d.toString();
+        };
+        child.stdout.on("data", (d) => (stdout = take(stdout, d)));
+        child.stderr.on("data", (d) => (stderr = take(stderr, d)));
         child.on("error", (err) => {
             clearTimeout(timer);
             resolve({ code: 127, stdout, stderr: String(err) });
@@ -60,9 +75,11 @@ function spawnCapture(cmd, args, timeoutMs) {
         child.on("close", (code) => {
             clearTimeout(timer);
             resolve({
-                code: code ?? 1,
+                code: overflow ? 1 : (code ?? 1),
                 stdout: stdout.trim(),
-                stderr: stderr.trim(),
+                stderr: overflow
+                    ? `${stderr.trim()}\n出力が ${MAX_CAPTURE_CHARS / 1024 / 1024}MB を超えたので止めました`.trim()
+                    : stderr.trim(),
             });
         });
     });

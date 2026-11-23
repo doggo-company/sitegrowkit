@@ -234,7 +234,7 @@ describe("サーバーへ置く中身", () => {
       "fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;",
     );
     expect(w).toContain(
-      "fastcgi_pass unix:/srv/agentcms/sites/example-staging/run/php-fpm.sock;",
+      "fastcgi_pass unix:/run/agentcms/php-fpm.sock;",
     );
     expect(w).toContain("fastcgi_param HTTPS on;");
     expect(w).toContain("real_ip_header X-Forwarded-For;");
@@ -298,9 +298,27 @@ describe("PHP-FPM はソケットでだけ待つ（別のサイトのコンテ�
     expect(d).toContain("echo 'listen = /run/agentcms/php-fpm.sock'");
     expect(d).toContain("zzz-agentcms.conf");
     const y = siteCompose(vpsNames(cfgOf()), { uid: "1000", gid: "1000" });
+    // ソケットと web の設定の mount の元は control（サイトのコンテナが書き換えられない場所）
     expect(y).toContain(
-      "- /srv/agentcms/sites/example-staging/run:/run/agentcms",
+      "- /srv/agentcms/control/example-staging/run:/run/agentcms",
     );
+    expect(y).toContain(
+      "- /srv/agentcms/control/example-staging/nginx.conf:/etc/nginx/conf.d/default.conf:ro",
+    );
+    expect(y).not.toMatch(/- \/srv\/agentcms\/sites\/example-staging\/[^:]+:/);
+    // 1 サイトがサーバーを使い切らない上限（3 つのコンテナすべて）
+    for (const line of [
+      "mem_limit: 768m",
+      "memswap_limit: 768m",
+      "cpus: 1.0",
+      "pids_limit: 256",
+      'max-size: "10m"',
+    ])
+      expect(y.split(line).length - 1).toBe(3);
+    // web はこのサイトの web 用のネットワーク（Caddy とこの web だけ・外へ出ない）にだけ入る
+    expect(y).toContain("networks: [web]");
+    expect(y).toContain("name: agentcms-site-example-staging-web\n    internal: true");
+    expect(y.split("networks: [agentcms]").length - 1).toBe(2);
     expect(y).not.toContain("9000");
     expect(siteCaddy(vpsNames(cfgOf()))).not.toContain("9000");
   });
@@ -349,18 +367,26 @@ describe("サーバーの上の台本", () => {
       "site_env",
     ]);
     const env = byKey.site_env!.script;
+    // .env があるかは、置き場所だけを入れたコンテナの中で見る（ホストでサイトの置き場所を辿らない）
     expect(env).toContain(
-      "if [ -f '/srv/agentcms/sites/example-staging/shared/.env' ]; then echo site-env-exists; exit 0; fi",
+      "has_env=$(in_site 'if [ -f shared/.env ]; then echo yes; else echo no; fi')",
     );
+    expect(env).toContain('if [ "$has_env" = yes ]; then echo site-env-exists; exit 0; fi');
+    // 途中で止まったときの値は control（サイトのコンテナから見えない）。サイトの .env.pending は読まない
+    expect(env).toContain("pending='/srv/agentcms/control/example-staging/env.pending'");
+    expect(env).not.toMatch(/< ['"]?\/srv\/agentcms\/sites\//);
     expect(env).toContain("head -c 32 /dev/urandom");
     // 新しいパスワードは標準入力で MySQL へ（コマンドの引数に載せない）
     expect(env).toMatch(
       /root_sql\(\) \{ docker exec -i agentcms-mysql sh -c 'MYSQL_PWD="\$\(cat \/run\/agentcms\/mysql-root\)" exec mysql -uroot -N'; \}/,
     );
     // 既にある利用者のパスワードを変えない
-    // ALTER USER は自分の途中の setup（.env.pending がある）のときだけ
+    // パスワードを変える ALTER USER は流さない（接続の上限だけを付ける）
     expect(env).toContain('if [ "$exists" != "0" ]; then');
-    expect(env).not.toContain("ALTER USER");
+    expect(env).not.toMatch(/ALTER USER[^\n]*IDENTIFIED/);
+    // 1 サイトの利用者が共有の MySQL の接続枠を使い切らない
+    expect(env).toContain("IDENTIFIED BY '%s' WITH MAX_USER_CONNECTIONS 30;");
+    expect(env).toContain("ALTER USER '%s'@'%%' WITH MAX_USER_CONNECTIONS 30;");
     expect(env).toContain("| root_sql");
     expect(env).not.toMatch(/mysql[^\n]*-p\S/);
     // 置き換えは builtin の printf（sed の引数に値が載らない）
@@ -387,12 +413,16 @@ describe("サーバーの上の台本", () => {
     );
   });
 
-  it("DB バックアップのパスワードは標準入力で MySQL のコンテナへ渡す", () => {
+  it("DB バックアップは設定から作った DB 名だけを使い、サイトの .env を読まない", () => {
     const s = vpsBackupScript(vpsNames(cfgOf()), "20260101000000");
-    expect(s).toContain("envval DB_PASSWORD | docker exec -i agentcms-mysql");
-    expect(s).not.toContain('MYSQL_PWD="$DB_PASSWORD"');
-    expect(s).toContain('gzip -t "$out"');
+    expect(s).toContain(
+      `exec mysqldump --single-transaction --no-tablespaces -uroot "$1"' sh 'sgk-example-staging'`,
+    );
+    expect(s).not.toContain("shared/.env");
+    expect(s).not.toContain("DB_PASSWORD");
+    expect(s).toContain('gzip -t "$t"');
     expect(s).toContain('if [ "$size" -lt 200 ]');
+    expect(() => vpsBackupScript(vpsNames(cfgOf()), "1; rm -rf /")).toThrow();
   });
 
   it("バックアップが小さすぎたら deploy を止める", async () => {

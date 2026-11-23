@@ -22,7 +22,7 @@ ADR-0008 は XServer の共用サーバーへ出す道を決め、「VPS など�
 - 1 台の置き場所（`vps.root`）は 1 つ。違う値の設定は doctor と setup が止める（edge は 1 つなので、別の置き場所の同じ名前の DB を「無い」と読み違えないため）
 - **Caddy はサイトのファイルを見ない**（転送だけ）。全サイトのディレクトリを Caddy に見せると、あるサイトの中に置かれた symlink を辿って、別のサイトの `.env`・設定のキャッシュ・バックアップを配信できる（Caddy の root は sandbox ではない — 公式の file_server の説明）
 - **サイト**：PHP-FPM のコンテナ、web（nginx。root ではない利用者で動く公式の nginx-unprivileged）のコンテナ、scheduler のコンテナ（毎分 `current` に入り直して `schedule:run`。`schedule:work` のように入ったまま動き続けると、切り替えたあとも古い release で動くため）。どちらも ssh の利用者と同じ uid:gid で動く（`shared/.env` は 600）
-- PHP-FPM は TCP（9000）で待たず、サイトの置き場所の中の Unix ソケット（`<site>/run/php-fpm.sock`）でだけ待つ。そのサイトの web だけがつなぐ。TCP で待たせると、同じ Docker ネットワークの別のサイトから FastCGI を直接送れる（PHP 公式の注意）
+- PHP-FPM は TCP（9000）で待たず、サーバーだけが触る置き場所の Unix ソケット（`control/<site>/run/php-fpm.sock`）でだけ待つ。そのサイトの web だけがつなぐ。TCP で待たせると、同じ Docker ネットワークの別のサイトから FastCGI を直接送れる（PHP 公式の注意）
 - web は `current/public` を配信し、PHP へは `$realpath_root` で**symlink を実際の release のパスへ解いてから**渡す。ADR-0008 の entry stub が `realpath()` しているのと同じ理由（同じパスに見えると OPcache が古い release のコードを返す）。前に立つのは Caddy の HTTPS だけなので PHP には HTTPS・443 と伝え、利用者の IP は X-Forwarded-For から読む（Docker の内側の宛先だけを信じる）
 - サイトのディレクトリはコンテナへ**同じ絶対パス**で入れる。`current`・`storage`・`.env` の symlink がそのまま解ける
 
@@ -38,7 +38,7 @@ ADR-0008 は XServer の共用サーバーへ出す道を決め、「VPS など�
 
 ### 3. Caddy の行は「確かめてから差し替える」
 
-1. 同じドメインを別のサイトが使っていないか（各行の `# agentcms-domain:` の印）、同じサイト名を別のドメインが使っていないか（`<サイト>/.agentcms-site`）を見る。重なれば**何も変えずに止める**
+1. 同じドメインを別のサイトが使っていないか（各行の `# agentcms-domain:` の印）、同じサイト名を別のドメインが使っていないか（`control/<サイト>/site`）を見る。重なれば**何も変えずに止める**
 2. 新しい行を入れた設定を、動いている Caddy の外（コンテナの /tmp）で `caddy validate`
 3. 通ったら差し替えて `caddy reload`。reload が落ちたら元の行へ戻す（Caddy は reload に失敗すると前の設定のまま動く）
 
@@ -58,16 +58,27 @@ deploy の中でこの差し替えをするのは、送信・展開・サイト�
 
 ### 5. 失敗したときと、同時に流したとき
 
-- health まで通った release に印（`.agentcms-healthy`）を付け、公開した順に `releases.history` へ書く。rollback と掃除はこの記録の順で選ぶ（release の番号は手元の時計の時刻なので、build の長さや時計のずれで公開の順と食い違う）。途中で落ちた release へは戻らず、掃除で消す。`keepReleases` は 1〜20 の整数だけ受け取る
+- health まで通った release に印（`.agentcms-healthy`）を付け、公開した順に `control/<site>/releases.history` へ書く。rollback と掃除はこの記録の順で選ぶ（release の番号は手元の時計の時刻なので、build の長さや時計のずれで公開の順と食い違う）。途中で落ちた release へは戻らず、掃除で消す。`keepReleases` は 1〜20 の整数だけ受け取る
 - 手での rollback で戻した先の health が通らなければ、元の release に戻して止める
-- サイトごとの鍵（`mkdir` で取る `.agentcms-deploy.lock`）を、current を読む前から health・掃除が終わるまで持つ。edge の変更（edge の設定の初回作成・Caddy の行・DB の作成）も `mkdir` の鍵で順番に流す（flock は BusyBox と macOS で使い方が違うため使わない）
+- サイトごとの鍵（`mkdir` で取る `control/<site>/deploy.lock`）を、current を読む前から health・掃除が終わるまで持つ。edge の変更（edge の設定の初回作成・Caddy の行・DB の作成）も `mkdir` の鍵で順番に流す（flock は BusyBox と macOS で使い方が違うため使わない）
 - Caddy の行の退避・差し替え・戻しは、それぞれ結果を確かめる。戻せなかったときは手で直す場所を出す
 - DB を戻すのは手で、手順書のスクリプト（docs/deployment/vps.md §8）を流す。壊す前に確かめ（無い・壊れている）、アプリを止め、いまの状態を取り、DB を空にしてから戻し、コードを DB を取ったときの release（`backups/<id>-db.release`）に合わせてから起こす。途中で落ちたらアプリは止めたまま。通し試験はこのスクリプトを手を加えずに流す
-- setup は「同じ名前の DB・利用者が無い」と確かめてから、作る値を `shared/.env.pending`（600）に置き、それから DB に触る。途中で止まったら次の setup がその値で続け（`IF NOT EXISTS`）、その値で本当に入れるかを確かめてから権限を足す。入れなければ他人のものなので止める。既にある利用者のパスワードは変えない
+- setup は「同じ名前の DB・利用者が無い」と確かめてから、作る値を `control/<site>/env.pending`（600・サイトのコンテナから見えない）に置き、それから DB に触る。途中で止まったら次の setup がその値で続け（`IF NOT EXISTS`）、その値で本当に入れるかを確かめてから権限を足す。入れなければ他人のものなので止める。既にある利用者のパスワードは変えない
 - release の番号（手元の時計の秒）が既にあれば、鍵を取ったあとで止める（同じ名前の展開先を消さない）
 - いまの release（current）を読めなかったときは「初回」と読まずに止める（戻す先が無いまま進まない）
 - edge をそろえるとき、前の形（Caddy が直接配信する）のサイトの行が残っていれば、edge を変える前に止める。各サイトを今のキットで deploy し直すと行が今の形になり、そのあとでそろえられる
 - DB を戻すスクリプトも同じサイトの鍵を取り、戻す前の DB と release を `before-restore-*` に残す。DB を取ったときの release が無ければ、壊す前に止まる
+
+### 7. サイトの置き場所の中は、サーバーの処理の入力にしない
+
+サイトのコンテナ（PHP）は `sites/<site>` を書き換えられる（値も、ほかの場所を指す symlink も置ける）。setup・deploy は docker グループの利用者（実質 root）と MySQL の root で動くので、そこから読んだ値や、そこを通る読み書きは、ほかのサイトやサーバーの秘密に届く。だから:
+
+- サーバーが決める物（compose・web の設定・PHP-FPM のソケット・このサイト名のドメインの印・公開の記録・deploy の鍵・setup の途中の値）は `control/<site>`（700・どのコンテナにも見せない）に置く。compose の mount の元もそこから取る
+- MySQL の root で流す SQL には、設定のサイト名から作った `sgk-<site>`（形を台本の中でも確かめる）と、setup がサーバーで作った英数字 32 文字のパスワードだけを入れる。DB バックアップも DB 名は同じ規則の名前だけ（サイトの `.env` は読まない）
+- サイトの置き場所の中のファイル操作（レイアウト・展開・リンク・current の切り替え・掃除・バックアップを書く・`.env` を置く）は、その置き場所だけを入れた使い捨てのコンテナ（ネットワークなし・capability なし・サイトと同じ利用者）の中で流す。symlink はコンテナの中で解けるので外へ届かない。xserver と同じ工程の中身を、実行する場所だけ差し替える（`siteFsExecutor`）
+- DB を戻す手順も同じ（戻すのはサイトの利用者で。バックアップの中身はサイトが書き換えられるので root では流さない。MySQL のクライアントは秘密の入っていない使い捨てのコンテナで `--binary-mode` を付けて流し、`\!`・`source` などクライアントのコマンドを止める）
+- 1 サイトがサーバーを使い切らないよう、サイトのコンテナに上限（メモリ 768MB・CPU 1・プロセス 256・ログ 10MB×3）、DB の利用者に同時接続の上限（30）を付ける。ディスクの容量はサイトごとには区切っていない（同じ利用者の uid で動くので、区切るにはホストの project quota などが要る）
+- サイトの web は、そのサイトの web と Caddy だけが入るネットワーク（外へ出られない）に置く。ほかのサイトのコンテナから web へ直接届かないので、`X-Forwarded-For` を偽って送信元 IP を変えることもできない
 
 ### 6. 試験
 

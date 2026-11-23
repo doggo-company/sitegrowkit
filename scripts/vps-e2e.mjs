@@ -16,7 +16,11 @@
  *  3. health が落ちる版を出すと、自動で前の版へ戻る
  *  4. 2 つ目のサイトを足しても 1 つ目は 200 のまま。2 つ目の DB 利用者は 1 つ目の DB を読めない
  *  5. 同じドメイン・同じサイト名の 3 つ目は、何も変えずに止まる（1 つ目は 200 のまま）
- *  6. サーバーで生成した秘密（APP_KEY・DB パスワード・MySQL root）が、CLI の出力・
+ *  6. サイトのコンテナの中から置いた値（shared/.env.pending）やリンク（compose.yml・web の設定・
+ *     ソケットの置き場所・印・記録・releases・backups・tmp）が、MySQL の root の SQL・ほかのサイト・
+ *     サーバーのファイルに届かない（見張りの DB が消えない・権限が足されない・リンクの先が変わらない・
+ *     MySQL の root パスワードがサイトのコンテナに見えない）
+ *  7. サーバーで生成した秘密（APP_KEY・DB パスワード・MySQL root）が、CLI の出力・
  *     コンテナの設定（docker inspect）・compose/Caddy のファイルのどこにも出ていない
  *
  * 後片付け: 立てた「VPS の代わり」（とその中身）だけを消す（--keep なら残す）。
@@ -34,8 +38,8 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const args = process.argv.slice(2);
@@ -698,7 +702,7 @@ exit 0`,
 
   // deploy・rollback と同時に動かない（同じ鍵）
   remote(
-    `mkdir /srv/agentcms/sites/${S1.site}/.agentcms-deploy.lock && echo "e2e-hold" > /srv/agentcms/sites/${S1.site}/.agentcms-deploy.lock/info`,
+    `mkdir /srv/agentcms/control/${S1.site}/deploy.lock && echo "e2e-hold" > /srv/agentcms/control/${S1.site}/deploy.lock/info`,
   );
   out = restore(
     remote(
@@ -713,7 +717,7 @@ exit 0`,
     appUp() && Number(sql("SELECT COUNT(*) FROM migrations")) === 0,
     "アプリは動いたまま・DB はそのまま",
   );
-  remote(`rm -r /srv/agentcms/sites/${S1.site}/.agentcms-deploy.lock`);
+  remote(`rm -r /srv/agentcms/control/${S1.site}/deploy.lock`);
 
   // 本物のバックアップで戻す
   const curBefore = remote(
@@ -789,6 +793,36 @@ exit 0`,
     "もう一度戻して、/healthz は 200",
   );
 
+  // バックアップの中身はサイトが書き換えられる。MySQL のクライアントのコマンド（\! でシェル・system）を
+  // 仕込んでも、MySQL のコンテナ（root のパスワードと全サイトのデータがある）で動かない
+  const relNow = remote(
+    `basename "$(readlink /srv/agentcms/sites/${S1.site}/current)"`,
+  ).stdout.trim();
+  remote(
+    `cd /srv/agentcms/sites/${S1.site}/backups && printf '%s\\n' 'CREATE TABLE e2e_evil (id INT);' '\\! touch /tmp/sgk-e2e-pwned' 'system touch /tmp/sgk-e2e-pwned2' | gzip > 29990101000003-db.sql.gz && echo ${relNow} > 29990101000003-db.release`,
+  );
+  out = restore("29990101000003");
+  const pwned = remote(
+    "docker exec agentcms-mysql sh -c 'ls /tmp/sgk-e2e-pwned* 2>/dev/null | wc -l'",
+  ).stdout.trim();
+  check(
+    !out.includes("rc=0") && pwned === "0",
+    `クライアントのコマンドを仕込んだバックアップは戻さずに止まり、MySQL のコンテナで何も動かない（rc≠0・作られたファイル ${pwned} 件）`,
+  );
+  const undo2 = remote(
+    `cd /srv/agentcms/sites/${S1.site}/backups && ls | grep -E '^before-restore-[0-9]{14}-db.sql.gz$' | tail -1 | sed 's/-db.sql.gz$//'`,
+  ).stdout.trim();
+  out = restore(undo2);
+  check(
+    out.includes("rc=0") &&
+      Number(sql("SELECT COUNT(*) FROM migrations")) === rows &&
+      (await waitHealthy()) === 200,
+    `戻す前（${undo2}）へ戻して、/healthz は 200`,
+  );
+  remote(
+    `rm -f /srv/agentcms/sites/${S1.site}/backups/29990101000003-db.*`,
+  );
+
   // ------------------------------------------------------------ 6c. サイトの分離
   step("6c. サイトの分離（別のサイトから PHP-FPM にもファイルにも届かない）");
   const probe = remote(
@@ -798,12 +832,28 @@ exit 0`,
     probe.includes("bool(false)"),
     `サイト 2 からサイト 1 の 9000 へはつながらない（${probe}）`,
   );
+  const probeWeb = remote(
+    `docker exec agentcms-${S2.site}-app php -r 'var_dump(@fsockopen("agentcms-${S1.site}-web", 8080, $e, $m, 3));' 2>&1`,
+  ).stdout.trim();
+  check(
+    probeWeb.includes("bool(false)"),
+    `サイト 2 からサイト 1 の web（8080）へ直接つながらない（Caddy を通さずに X-Forwarded-For を偽れない）（${probeWeb}）`,
+  );
+  const lim = remote(
+    `docker inspect -f '{{.HostConfig.Memory}} {{.HostConfig.PidsLimit}} {{.HostConfig.NanoCpus}} {{index .HostConfig.LogConfig.Config "max-size"}}' agentcms-${S1.site}-app agentcms-${S1.site}-web agentcms-${S1.site}-scheduler`,
+  )
+    .stdout.trim()
+    .split("\n");
+  check(
+    lim.length === 3 && lim.every((l) => l === "805306368 256 1000000000 10m"),
+    `サイトのコンテナに上限（メモリ 768MB・プロセス 256・CPU 1・ログ 10MB）（${lim.join(" / ")}）`,
+  );
   const sock = remote(
-    `test -S /srv/agentcms/sites/${S1.site}/run/php-fpm.sock && echo socket`,
+    `test -S /srv/agentcms/control/${S1.site}/run/php-fpm.sock && echo socket`,
   ).stdout.trim();
   check(
     sock === "socket",
-    "サイト 1 の PHP-FPM は置き場所の中のソケットで待っている",
+    "サイト 1 の PHP-FPM は control（サイトのコンテナから差し替えられない場所）のソケットで待っている",
   );
   const seen = remote(
     `docker exec agentcms-${S2.site}-app sh -c 'ls /srv/agentcms/sites/${S1.site} 2>&1 || true'`,
@@ -837,15 +887,17 @@ exit 0`,
     "6d. 前の形から移る（送信が落ちても止まらない・出し直してから edge をそろえる）",
   );
   // 前の形（Caddy がサイトのファイルを直接配信し、PHP-FPM のソケットへつなぐ）を作る:
-  // edge の Caddy にサイトの置き場所を見せ、サイト 1 の行を前の形にして、サイト 1 の web を止める
+  // edge の Caddy にサイトの置き場所を見せ、サイト 1 の行を前の形にして、サイト 1 の web を止める。
+  // （前の形のソケットはサイトの置き場所の中にあった。いまの PHP-FPM は control の中で待つので、
+  //   試験の前の形の行はそちらへつなぐ。確かめたいのは edge を移る道で、ソケットの場所ではない）
   const kitCompose = remote("cat /srv/agentcms/edge/compose.yml").stdout;
   const oldCompose = kitCompose
     .replace(/\n    labels:\n      agentcms\.root: "[^"]*"/, "")
     .replace(
       "      - ./sites:/etc/caddy/sites:ro\n",
-      "      - ./sites:/etc/caddy/sites:ro\n      - /srv/agentcms/sites:/srv/agentcms/sites:ro\n",
+      "      - ./sites:/etc/caddy/sites:ro\n      - /srv/agentcms/sites:/srv/agentcms/sites:ro\n      - /srv/agentcms/control:/srv/agentcms/control:ro\n",
     );
-  const oldSite = `# agentcms-domain: ${S1.host}\n${S1.host} {\n\ttls internal\n\troot * /srv/agentcms/sites/${S1.site}/current/public\n\tencode zstd gzip\n\tphp_fastcgi unix//srv/agentcms/sites/${S1.site}/run/php-fpm.sock {\n\t\tresolve_root_symlink\n\t}\n\tfile_server\n}\n`;
+  const oldSite = `# agentcms-domain: ${S1.host}\n${S1.host} {\n\ttls internal\n\troot * /srv/agentcms/sites/${S1.site}/current/public\n\tencode zstd gzip\n\tphp_fastcgi unix//srv/agentcms/control/${S1.site}/run/php-fpm.sock {\n\t\tresolve_root_symlink\n\t}\n\tfile_server\n}\n`;
   const made = remote(
     `cd /srv/agentcms/edge && cp compose.yml compose.yml.e2e-new && cat > compose.yml << 'E2E_EOS'\n${oldCompose}E2E_EOS\n` +
       `cat > sites/${S1.site}.caddy << 'E2E_EOS'\n${oldSite}E2E_EOS\n` +
@@ -939,6 +991,266 @@ exit 0`,
   }
   check(s2ok === 200, "サイト 2 も 200 に戻る");
 
+  // ------------------------------------------------------------ 6e. サイトの中から特権の処理へ届かない
+  // サイトのコンテナ（PHP が動く）は自分の置き場所を書き換えられる。そこに置いた値や
+  // リンクを、setup・deploy（docker グループの利用者・MySQL の root）が信じないこと。
+  step(
+    "6e. サイトの中に置いた値・リンクが、MySQL の root・ほかのサイト・サーバーのファイルに届かない",
+  );
+  // SQL は標準入力で渡す（バッククォートをシェルに解かせない）
+  const rootQ = (q) => {
+    const r = sh(
+      join(bin, "ssh"),
+      [
+        "-p",
+        String(ports.ssh),
+        "-i",
+        key,
+        "-o",
+        "BatchMode=yes",
+        "deploy@127.0.0.1",
+        `docker exec -i agentcms-mysql sh -c 'MYSQL_PWD="$(cat /run/agentcms/mysql-root)" exec mysql -uroot -N' 2>&1`,
+      ],
+      { input: `${q};\n` },
+    );
+    return `${r.stdout}`.trim();
+  };
+  // サイト 2 のコンテナの中で流す（＝サイトの PHP ができること）
+  const inS2 = (script, input = "") =>
+    sh(
+      join(bin, "ssh"),
+      [
+        "-p",
+        String(ports.ssh),
+        "-i",
+        key,
+        "-o",
+        "BatchMode=yes",
+        "deploy@127.0.0.1",
+        // 台本は単引用符で包む（サーバーのシェルに $ を解かせない）
+        `docker exec -i -w /srv/agentcms/sites/${S2.site} agentcms-${S2.site}-app sh -c '${script.replaceAll("'", `'\\''`)}'`,
+      ],
+      { input },
+    );
+  const s2 = `/srv/agentcms/sites/${S2.site}`;
+  const s1 = `/srv/agentcms/sites/${S1.site}`;
+  rootQ(
+    "CREATE DATABASE IF NOT EXISTS `sgk-e2e-canary`; CREATE TABLE IF NOT EXISTS `sgk-e2e-canary`.t (x INT)",
+  );
+  check(
+    rootQ(
+      "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='sgk-e2e-canary'",
+    ) === "1",
+    "見張りの DB（sgk-e2e-canary）を root で作った",
+  );
+
+  // (a) shared/.env.pending の値を、setup が MySQL の root の SQL に入れない
+  const payload =
+    "x'; DROP DATABASE `sgk-e2e-canary`; GRANT SELECT ON `sgk-e2e-one`.* TO 'sgk-e2e-two'@'%'; -- ";
+  const planted = inS2(
+    "set -e; cd shared; mv .env .env.e2e-saved; cat > .env.pending; echo planted",
+    `DB_PASSWORD=${payload}\nAPP_KEY=base64:${Buffer.alloc(32, 7).toString("base64")}\n`,
+  );
+  check(
+    planted.stdout.includes("planted"),
+    "サイト 2 のコンテナの中から shared/.env を外し、.env.pending を置けた（サイトができること）",
+  );
+  a = agentcms("setup-poisoned", ["deploy", "setup", "-t", S2.target, "-y"]);
+  console.log(`    （setup の終了コード ${a.code}）`);
+  check(
+    rootQ(
+      "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='sgk-e2e-canary'",
+    ) === "1",
+    "見張りの DB は消えていない（.env.pending の値が root の SQL に入っていない）",
+  );
+  const grants = rootQ("SHOW GRANTS FOR 'sgk-e2e-two'@'%'");
+  check(
+    !grants.includes("sgk-e2e-one"),
+    `サイト 2 の利用者にサイト 1 の DB の権限が足されていない（${grants.replace(/\n/g, " / ").slice(0, 160)}）`,
+  );
+  inS2(
+    "cd shared && rm -f .env.pending && mv .env.e2e-saved .env && echo restored",
+  );
+  const conns = rootQ(
+    "SELECT CONCAT(user, '=', max_user_connections) FROM mysql.user WHERE user LIKE 'sgk-e2e-%' ORDER BY user",
+  ).replace(/\n/g, " ");
+  check(
+    conns === "sgk-e2e-one=30 sgk-e2e-two=30",
+    `サイトの DB 利用者に同時接続の上限 30（共有の MySQL の接続枠を 1 サイトで使い切らない）（${conns}）`,
+  );
+  const crossAfter = remote(
+    `cd ${s2} && grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2- | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" mysql -h 127.0.0.1 -u sgk-e2e-two -D sgk-e2e-one -N -e "SELECT COUNT(*) FROM users"' 2>&1; echo "rc=$?"`,
+  );
+  check(
+    !crossAfter.stdout.includes("rc=0"),
+    `その後もサイト 2 の利用者はサイト 1 の DB を読めない（${crossAfter.stdout.trim().split("\n")[0]}）`,
+  );
+
+  // (b) 置き場所の中のファイルをリンクに差し替えても、deploy がサーバーのファイルを書き換えない・
+  //     サーバーの秘密をサイトのコンテナに見せない
+  remote(
+    "mkdir -p /srv/agentcms/e2e-canary/tmpdir && for f in marker compose nginx history; do echo keep > /srv/agentcms/e2e-canary/$f; chmod 600 /srv/agentcms/e2e-canary/$f; done",
+  );
+  const canarySum = () =>
+    remote(
+      "cd /srv/agentcms/e2e-canary && ls -la tmpdir | wc -l && stat -c '%a %s' marker compose nginx history && cat marker compose nginx history | sha256sum",
+    ).stdout.trim();
+  const before6e = canarySum();
+  const linked = inS2(
+    [
+      "set -e",
+      "for f in .agentcms-site compose.yml nginx.conf releases.history run; do if [ -e $f ] || [ -L $f ]; then mv $f $f.e2e-saved; fi; done",
+      "ln -s /srv/agentcms/e2e-canary/marker .agentcms-site",
+      "ln -s /srv/agentcms/e2e-canary/compose compose.yml",
+      "ln -s /srv/agentcms/e2e-canary/nginx nginx.conf",
+      "ln -s /srv/agentcms/e2e-canary/history releases.history",
+      "ln -s /srv/agentcms/edge/secrets run",
+      "echo linked",
+    ].join("; "),
+  );
+  check(
+    linked.stdout.includes("linked"),
+    `サイト 2 のコンテナの中から、置き場所のファイル・ディレクトリをサーバーの物へのリンクに差し替えた${linked.stdout.includes("linked") ? "" : `（${`${linked.stdout}${linked.stderr}`.trim().slice(-200)}）`}`,
+  );
+  // 前の版で作った利用者（上限なし）にも、deploy が接続の上限を付け直す
+  rootQ("ALTER USER 'sgk-e2e-two'@'%' WITH MAX_USER_CONNECTIONS 0");
+  release("v3-two");
+  a = agentcms("deploy-linked", [
+    "deploy",
+    "staging",
+    "-t",
+    S2.target,
+    "--confirm-target",
+    S2.target,
+    "-y",
+  ]);
+  console.log(`    （deploy の終了コード ${a.code}）`);
+  check(
+    canarySum() === before6e,
+    "リンクの先（サーバーのファイル 4 つ）は変わっていない",
+  );
+  const conn2 = rootQ(
+    "SELECT max_user_connections FROM mysql.user WHERE user='sgk-e2e-two'",
+  );
+  check(
+    conn2 === "30",
+    `上限の無かった利用者にも、deploy が同時接続の上限 30 を付け直した（${conn2}）`,
+  );
+  const rootPwNow = remote(
+    "cat /srv/agentcms/edge/secrets/mysql-root",
+  ).stdout.trim();
+  remote(
+    `docker restart agentcms-${S2.site}-app >/dev/null 2>&1; sleep 2`,
+  );
+  const seenRoot = remote(
+    `docker exec agentcms-${S2.site}-app sh -c 'cat /run/agentcms/mysql-root 2>/dev/null; ls /run/agentcms 2>&1'`,
+  ).stdout;
+  check(
+    rootPwNow.length >= 16 && !seenRoot.includes(rootPwNow),
+    `サイト 2 のコンテナを起こし直しても、MySQL の root パスワードは見えない（/run/agentcms: ${seenRoot.replace(rootPwNow, "<root の値>").trim().split("\n").slice(-3).join(" ")}）`,
+  );
+  check(
+    (await get(S1.host, "/healthz")).status === 200,
+    "サイト 1 の /healthz は 200 のまま",
+  );
+  inS2(
+    [
+      "rm -f .agentcms-site compose.yml nginx.conf releases.history run",
+      "for f in .agentcms-site compose.yml nginx.conf releases.history run; do [ -e $f.e2e-saved ] && mv $f.e2e-saved $f || true; done",
+      "echo unlinked",
+    ].join("; "),
+  );
+
+  // (c) releases・backups・tmp をほかのサイト・サーバーの物へのリンクに差し替えても、そこへ書かない・消さない
+  const s1List = () =>
+    remote(
+      `ls -1 ${s1}/releases ${s1}/backups /srv/agentcms/e2e-canary/tmpdir | sha256sum`,
+    ).stdout.trim();
+  const s1Before = s1List();
+  const linked2 = inS2(
+    [
+      "set -e",
+      "mv releases releases.e2e-saved",
+      "mv backups backups.e2e-saved",
+      "mv tmp tmp.e2e-saved",
+      `ln -s ${s1}/releases releases`,
+      `ln -s ${s1}/backups backups`,
+      "ln -s /srv/agentcms/e2e-canary/tmpdir tmp",
+      "echo linked",
+    ].join("; "),
+  );
+  check(
+    linked2.stdout.includes("linked"),
+    `${linked2.stdout.includes("linked") ? "" : `（${`${linked2.stdout}${linked2.stderr}`.trim().slice(-200)}）`}` +
+    "サイト 2 の releases・backups・tmp をサイト 1・サーバーの物へのリンクに差し替えた",
+  );
+  release("v4-two");
+  a = agentcms("deploy-linked2", [
+    "deploy",
+    "staging",
+    "-t",
+    S2.target,
+    "--confirm-target",
+    S2.target,
+    "-y",
+  ]);
+  console.log(`    （deploy の終了コード ${a.code}）`);
+  check(
+    s1List() === s1Before,
+    "サイト 1 の releases・backups とサーバーの一時ディレクトリは変わっていない（書かれも消されもしない）",
+  );
+  check(
+    (await get(S1.host, "/healthz")).status === 200,
+    "サイト 1 の /healthz は 200 のまま",
+  );
+  inS2(
+    "rm -f releases backups tmp; mv releases.e2e-saved releases; mv backups.e2e-saved backups; mv tmp.e2e-saved tmp; echo unlinked",
+  );
+  release("v5-two");
+  a = agentcms("deploy-after-6e", [
+    "deploy",
+    "staging",
+    "-t",
+    S2.target,
+    "--confirm-target",
+    S2.target,
+    "-y",
+  ]);
+  check(a.code === 0, "リンクを戻したあと、サイト 2 は普通に deploy できる");
+  check(
+    (await get(S2.host, "/e2e-version.php")).body.trim() === "php-v5-two",
+    "サイト 2 が新しい版を返す",
+  );
+  // (d) サイトの置き場所を読む使い捨てのコンテナは、サイトが置いた FIFO で待たされても、
+  //     サーバーの上の時間の上限で終わって消える（手元の CLI の時間切れに頼らない）
+  const { siteFsCommand } = await import(
+    pathToFileURL(join(dirname(cli), "deploy", "providers", "vps.js")).href
+  );
+  const { vpsNames } = await import(
+    pathToFileURL(join(dirname(cli), "deploy", "providers", "vps-assets.js"))
+      .href
+  );
+  inS2("mkfifo backups/e2e-fifo && echo made");
+  const psBefore = remote("docker ps -aq | wc -l").stdout.trim();
+  const t0 = Date.now();
+  const fifo = remote(
+    `${siteFsCommand(vpsNames({ vps: { site: S2.site }, app: { url: `https://${S2.host}` } }), "head -c 32 backups/e2e-fifo", { timeoutSec: 3 })} < /dev/null; echo "rc=$?"`,
+  ).stdout;
+  const waited = Math.round((Date.now() - t0) / 1000);
+  const psAfter = remote("docker ps -aq | wc -l").stdout.trim();
+  const fifoRc = Number(/rc=(\d+)/.exec(fifo)?.[1] ?? -1);
+  check(
+    // 125〜127 は docker が動かせなかった（待っていない）。実際に 3 秒待ってから切られたことを見る
+    fifoRc > 0 &&
+      ![125, 126, 127].includes(fifoRc) &&
+      waited >= 3 &&
+      waited < 30 &&
+      psAfter === psBefore,
+    `サイトが置いた FIFO を読まされても、使い捨てのコンテナはサーバーの上で 3 秒で終わって消えた（${waited} 秒・rc=${fifoRc}・コンテナの数 ${psBefore} → ${psAfter}）`,
+  );
+  inS2("rm -f backups/e2e-fifo");
+  rootQ("DROP DATABASE IF EXISTS `sgk-e2e-canary`");
+
   // ------------------------------------------------------------ 7. 秘密が漏れていない
   step("7. サーバーで生成した秘密が、出力・コンテナ設定・ファイルに出ていない");
   const secrets = [];
@@ -974,7 +1286,7 @@ exit 0`,
     "docker inspect（全コンテナ）": remote("docker inspect $(docker ps -aq)")
       .stdout,
     "compose・Caddy のファイル": remote(
-      "cat /srv/agentcms/edge/compose.yml /srv/agentcms/edge/Caddyfile /srv/agentcms/edge/sites/*.caddy /srv/agentcms/sites/*/compose.yml",
+      "cat /srv/agentcms/edge/compose.yml /srv/agentcms/edge/Caddyfile /srv/agentcms/edge/sites/*.caddy /srv/agentcms/control/*/compose.yml /srv/agentcms/control/*/nginx.conf",
     ).stdout,
     "サーバーの ps（試験の間ずっと 0.2 秒ごと）": sh("docker", [
       "exec",

@@ -6,6 +6,7 @@ import { shq } from "./executor.js";
 import { xserverCronCommand, xserverDocrootConflicts, } from "./providers/xserver.js";
 import { inDir } from "./release.js";
 import { vpsNames } from "./providers/vps-assets.js";
+import { siteFsCommand } from "./providers/vps.js";
 /**
  * Deployment Plan の生成。実サーバーへは読み取りアクセスのみ
  * （exec が null の場合は完全オフラインで、リモート依存項目を「未接続」と明示する）。
@@ -17,7 +18,11 @@ export async function buildPlan(projectRoot, cfg, exec, caps) {
     // 環境キー（リモート shared/.env のキー名のみ。値は読まない）
     let sharedEnvKeys = [];
     if (exec) {
-        const r = await exec.exec(`grep -oE '^[A-Za-z0-9_]+=' ${shq(cfg.remote.appDir + "/shared/.env")} 2>/dev/null | sed 's/=$//'`);
+        const keys = `grep -oE '^[A-Za-z0-9_]+=' shared/.env 2>/dev/null | sed 's/=$//' | head -200`;
+        const r = await exec.exec(cfg.provider === "vps"
+            ? // vps のサイトの置き場所はサイトが書き換えられる（symlink も）。置き場所だけを入れたコンテナで読む
+                `${siteFsCommand(vpsNames(cfg), keys)} < /dev/null`
+            : `cd ${shq(cfg.remote.appDir)} && ${keys}`);
         if (r.code === 0 && r.stdout)
             sharedEnvKeys = r.stdout.split("\n").filter(Boolean);
     }

@@ -13,12 +13,25 @@ import type { DeployTargetConfig } from "../types.js";
  *     compose.yml  Caddyfile
  *     sites/<site>.caddy       … サイトごとの行（agentcms deploy が書く）
  *     secrets/mysql-root       … MySQL の root パスワード（サーバーで生成・600）
- *   sites/<site>/              … サイトごと（= remote.appDir）
+ *   sites/<site>/              … サイトごと（= remote.appDir）。**サイトのコンテナが書き換えられる**
+ *     releases/ shared/ backups/ tmp/ current -> releases/<id>
+ *   control/<site>/            … サイトごとの、サーバーだけが触る物（コンテナには見せない・700）
  *     compose.yml nginx.conf   … このサイトの PHP-FPM・web（nginx）・scheduler
- *     releases/ shared/ backups/ current -> releases/<id>
  *     run/php-fpm.sock         … PHP-FPM はここでだけ待つ（TCP では待たない）
+ *     site                     … このサイト名を使っているドメイン
  *     releases.history         … health まで通って公開した順の記録
+ *     env.pending              … setup の途中で止まったときの DB パスワード・APP_KEY（600）
+ *     deploy.lock/ upload/     … deploy の鍵・送ってきた artifact
  * ```
+ *
+ * **サイトの置き場所（sites/<site>）の中の物は、サーバーの処理の入力にしない。**
+ * サイトの PHP はそこを書き換えられる（値も、ほかの場所を指す symlink も置ける）。
+ * サーバーの処理（docker グループの利用者・MySQL の root）がそれを読んだり、
+ * そこを通って書いたりすると、ほかのサイトやサーバーの秘密に届く。だから:
+ *
+ * - サーバーが決める物・秘密は control/<site> に置く
+ * - サイトの置き場所の中のファイル操作は、**その置き場所だけを入れた使い捨てのコンテナの中**で
+ *   サイトと同じ利用者で流す（`siteFs`・vps.ts）。symlink はコンテナの中で解けるので、外へ届かない
  */
 
 /** サーバーの置き場所の既定値 */
@@ -36,6 +49,20 @@ export const CADDY_IMAGE = "caddy:2.11-alpine";
 export const NGINX_IMAGE = "nginxinc/nginx-unprivileged:1.27-alpine";
 /** サイトの web が待つポート（Docker の内側だけ。ホストへは出さない） */
 export const WEB_PORT = 8080;
+
+/**
+ * サイトのコンテナ 1 つずつの上限。乗っ取られた 1 サイトが CPU・メモリ・プロセス・ログで
+ * サーバーを使い切り、ほかのサイトや MySQL を止めないように（Docker の既定は上限なし）
+ */
+export const SITE_LIMITS = {
+  memory: "768m",
+  cpus: "1.0",
+  pids: 256,
+  logMaxSize: "10m",
+  logMaxFile: "3",
+} as const;
+/** サイトの DB 利用者 1 人が同時に張れる接続の数（共有の MySQL の接続枠を 1 サイトで使い切らない） */
+export const DB_MAX_USER_CONNECTIONS = 30;
 export const MYSQL_IMAGE = "mysql:8.4";
 
 /**
@@ -67,6 +94,11 @@ export interface VpsNames {
   webContainer: string;
   schedulerContainer: string;
   /**
+   * サイトの web と Caddy だけが入る Docker ネットワーク（外へ出られない）。
+   * ほかのサイトのコンテナから、このサイトの web へ直接届かない（送信元 IP の偽装もできない）
+   */
+  webNetwork: string;
+  /**
    * MySQL の DB 名と利用者名（`sgk-<サイト名>`）。
    * 頭の `sgk-` で `mysql`・`sys` などの DB と重ならない。`_`・`%` を含まないので
    * GRANT のワイルドカードにならない（バッククォートで囲んで使う）
@@ -74,6 +106,8 @@ export interface VpsNames {
   dbName: string;
   dbUser: string;
   tls: "auto" | "internal";
+  /** サーバーだけが触る物の置き場所（サイトのコンテナには見せない） */
+  controlDir: string;
 }
 
 export function vpsNames(cfg: DeployTargetConfig): VpsNames {
@@ -91,9 +125,11 @@ export function vpsNames(cfg: DeployTargetConfig): VpsNames {
     appContainer: `agentcms-${site}-app`,
     webContainer: `agentcms-${site}-web`,
     schedulerContainer: `agentcms-${site}-scheduler`,
+    webNetwork: `agentcms-site-${site}-web`,
     dbName: db,
     dbUser: db,
     tls: vps.tls ?? "auto",
+    controlDir: `${root}/control/${site}`,
   };
 }
 
@@ -182,7 +218,7 @@ ${n.tls === "internal" ? "\ttls internal\n" : ""}\tencode zstd gzip
  * - `$realpath_root`：`current` の symlink を実際の release のパスへ解いてから PHP へ渡す。
  *   解かないと全 release が同じパスに見え、OPcache が古い release のコードを返し続ける
  *   （Xserver の entry stub が `realpath()` しているのと同じ理由・ADR-0008）
- * - PHP-FPM へはサイトの置き場所の中の Unix ソケットでつなぐ（TCP では待たせない。
+ * - PHP-FPM へは control/<site>/run の Unix ソケットでつなぐ（TCP では待たせない。
  *   同じ Docker ネットワークの別のサイトから FastCGI を直接送れないように）
  * - 前に立つのは Caddy の HTTPS だけなので、PHP には HTTPS・443 と伝える
  * - 利用者の IP は Caddy が付ける X-Forwarded-For から読む（ログインの回数制限が
@@ -218,7 +254,7 @@ server {
 
     location ~ \\.php$ {
         try_files $uri =404;
-        fastcgi_pass unix:${n.appDir}/run/php-fpm.sock;
+        fastcgi_pass unix:${FPM_SOCKET_IN_CONTAINER};
         fastcgi_index index.php;
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
@@ -253,10 +289,23 @@ export function siteCompose(
   n: VpsNames,
   ids: { uid: string; gid: string },
 ): string {
-  const common = `    user: "${ids.uid}:${ids.gid}"
+  const base = `    user: "${ids.uid}:${ids.gid}"
     working_dir: ${n.appDir}
     restart: unless-stopped
+    mem_limit: ${SITE_LIMITS.memory}
+    memswap_limit: ${SITE_LIMITS.memory}
+    cpus: ${SITE_LIMITS.cpus}
+    pids_limit: ${SITE_LIMITS.pids}
+    logging:
+      driver: json-file
+      options:
+        max-size: "${SITE_LIMITS.logMaxSize}"
+        max-file: "${SITE_LIMITS.logMaxFile}"`;
+  // app・scheduler は MySQL と外へ（メール・Web Push）。web はこのサイトの web 用のネットワークだけ
+  const common = `${base}
     networks: [${EDGE_NETWORK}]`;
+  const webCommon = `${base}
+    networks: [web]`;
   return `# SiteGrowKit サイト "${n.site}"（agentcms deploy が書く。手で変えても次の deploy で戻る）
 name: agentcms-site-${n.site}
 services:
@@ -266,16 +315,17 @@ services:
 ${common}
     volumes:
       - ${n.appDir}:${n.appDir}
-      # PHP-FPM はこのソケットだけで待つ（web がサイトの置き場所越しにつなぐ）
-      - ${n.appDir}/run:/run/agentcms
+      # PHP-FPM はこのソケットだけで待つ。置き場所はサイトから差し替えられない control の中
+      - ${n.controlDir}/run:/run/agentcms
   web:
     container_name: ${n.webContainer}
     image: ${NGINX_IMAGE}
-${common}
+${webCommon}
     depends_on: [app]
     volumes:
       - ${n.appDir}:${n.appDir}:ro
-      - ${n.appDir}/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${n.controlDir}/run:/run/agentcms
+      - ${n.controlDir}/nginx.conf:/etc/nginx/conf.d/default.conf:ro
   scheduler:
     container_name: ${n.schedulerContainer}
     image: ${PHP_IMAGE}
@@ -289,6 +339,9 @@ ${common}
 networks:
   ${EDGE_NETWORK}:
     external: true
+  web:
+    name: ${n.webNetwork}
+    internal: true
 `;
 }
 

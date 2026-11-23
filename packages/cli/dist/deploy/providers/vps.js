@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 import { shq } from "../executor.js";
-import { APP_KEY_PLACEHOLDER, CADDY_CONTAINER, DB_PASSWORD_PLACEHOLDER, DOMAIN_MARK, edgeCaddyfile, edgeCompose, MYSQL_CONTAINER, PHP_IMAGE, phpDockerfile, siteCaddy, siteCompose, siteNginx, vpsNames, } from "./vps-assets.js";
+import { APP_KEY_PLACEHOLDER, CADDY_CONTAINER, DB_MAX_USER_CONNECTIONS, DB_PASSWORD_PLACEHOLDER, DOMAIN_MARK, edgeCaddyfile, edgeCompose, MYSQL_CONTAINER, PHP_IMAGE, phpDockerfile, siteCaddy, siteCompose, siteNginx, vpsNames, } from "./vps-assets.js";
 import { minimalEnv } from "./xserver-setup.js";
 /**
  * provider "vps"（Docker の入った Linux VPS 1 台・ADR-0021）。
@@ -43,6 +44,94 @@ export async function runScript(exec, script, timeoutMs = TIMEOUTS.default) {
 function tail(r, n = 600) {
     return `${r.stdout}\n${r.stderr}`.trim().slice(-n);
 }
+// ---------------------------------------------------------------- サイトの置き場所の中のファイル操作
+/**
+ * サイトの置き場所（`sites/<site>`）の中のファイル操作を、**その置き場所だけを入れた
+ * 使い捨てのコンテナ**で、サイトと同じ利用者のまま流すコマンド行。
+ *
+ * サイトの PHP は置き場所を書き換えられる（ほかのサイトやサーバーのファイルを指す
+ * symlink も置ける）。ssh の利用者（docker グループ）がホストの上でそこを通って
+ * 読み書きすると、symlink の先（ほかのサイト・edge の秘密・~/.ssh）に届く。
+ * コンテナの中では、symlink はコンテナに見える物の中でしか解けない。
+ *
+ * - ネットワークなし・権限（capability）なし・特権の昇格なし・メモリ／プロセス／CPU・時間の上限つき・ログを残さない
+ * - イメージはサイトの PHP と同じ（setup が build したもの。取りに行かない）
+ * - 秘密を引数に載せない（`stdin` で渡す）
+ */
+/** サイトの置き場所の中のファイル操作に使う使い捨てのコンテナの上限 */
+const SITE_FS_LIMITS = {
+    memory: "512m",
+    pids: 128,
+    cpus: "1.0",
+    timeoutSec: 900,
+};
+export function siteFsCommand(n, script, opts = {}) {
+    // 時間の上限はコンテナの中の timeout で切る。手元の CLI や ssh が先に切れても、
+    // サーバーの上でその時間が来れば中の処理ごと終わり、--rm で消える。
+    // --init で PID 1 を Docker の init にする（BusyBox の timeout は自分を対象の処理に置き換えるので、
+    // それが PID 1 だと同じ名前空間からの KILL が届かない）
+    const secs = Math.max(1, Math.floor(opts.timeoutSec ?? SITE_FS_LIMITS.timeoutSec));
+    return (`docker run --rm${opts.stdin ? " -i" : ""} --init --pull never --network none --cap-drop ALL ` +
+        `--security-opt no-new-privileges --memory ${SITE_FS_LIMITS.memory} --memory-swap ${SITE_FS_LIMITS.memory} ` +
+        `--pids-limit ${SITE_FS_LIMITS.pids} --cpus ${SITE_FS_LIMITS.cpus} --log-driver none --user "$(id -u):$(id -g)" ` +
+        `-v ${shq(`${n.appDir}:${n.appDir}`)} -w ${shq(n.appDir)} ` +
+        `--entrypoint timeout ${shq(PHP_IMAGE)} -s KILL ${secs} sh -c ${shq(script)}`);
+}
+/** bash の台本の中で使う同じもの（in_site は標準入力なし、in_site_in は標準入力を渡す） */
+function siteFsFns(n) {
+    return `in_site() { ${siteFsCommand(n, '"$1"').replace(`'"$1"'`, '"$1"')} < /dev/null; }
+in_site_in() { ${siteFsCommand(n, '"$1"', { stdin: true, timeoutSec: 3600 }).replace(`'"$1"'`, '"$1"')}; }`;
+}
+/**
+ * release.ts の工程（レイアウト・送信と展開・shared のリンク・current の切り替え）を、
+ * サイトの置き場所の中だけで流す RemoteExecutor。xserver と同じ工程の中身をそのまま使う。
+ *
+ * - `exec` … 置き場所だけを入れたコンテナの中で流す
+ * - `upload` … いったん control/<site>/upload（サイトから見えない）へ scp し、
+ *   コンテナの中で置き場所へ写す（scp が置き場所の中の symlink を辿らない）
+ */
+export function siteFsExecutor(exec, n) {
+    return {
+        label: () => exec.label(),
+        exec: (command, opts) => exec.exec(`${siteFsCommand(n, command)} < /dev/null`, opts),
+        upload: async (localPath, remotePath) => {
+            if (!remotePath.startsWith(`${n.appDir}/`) || remotePath.includes("/../"))
+                return {
+                    code: 1,
+                    stdout: "",
+                    stderr: `サイトの置き場所の外へは送りません: ${remotePath}`,
+                };
+            const upDir = `${n.controlDir}/upload`;
+            const staged = `${upDir}/${posix.basename(remotePath)}`;
+            const mk = await exec.exec(`mkdir -p ${shq(upDir)} && chmod 700 ${shq(n.controlDir)} ${shq(upDir)}`);
+            if (mk.code !== 0)
+                return mk;
+            const up = await exec.upload(localPath, staged);
+            if (up.code !== 0)
+                return up;
+            const dir = posix.dirname(remotePath);
+            return exec.exec(`${siteFsCommand(n, `set -eu; mkdir -p ${shq(dir)}; t=$(mktemp ${shq(`${dir}/.upload.XXXXXX`)}); cat > "$t"; mv -f "$t" ${shq(remotePath)}`, { stdin: true })} < ${shq(staged)}; rc=$?; rm -f ${shq(staged)}; exit $rc`, { timeoutMs: 600_000 });
+        },
+    };
+}
+/** release.ts の工程に渡す DeployContext（ファイル操作だけをサイトの置き場所の中へ閉じ込める） */
+export function siteFsContext(ctx) {
+    return { ...ctx, exec: siteFsExecutor(ctx.exec, vpsNames(ctx.cfg)) };
+}
+/**
+ * Caddy を、あるサイトの web 用のネットワーク（そのサイトの web と Caddy だけ）へ入れる bash の関数。
+ * 入っていれば何もしない。Caddy を作り直したあと（edge をそろえる・起こす）は全サイトの分を入れ直す
+ */
+const CADDY_JOIN_FN = `caddy_join() {
+  if ! docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' "$1" 2>/dev/null | tr ' ' '\\n' | grep -qx ${CADDY_CONTAINER}; then
+    docker network connect "$1" ${CADDY_CONTAINER}
+  fi
+}
+caddy_join_all() {
+  for net in $(docker network ls --format '{{.Name}}' | grep -E '^agentcms-site-[a-z0-9-]+-web$' || true); do caddy_join "$net"; done
+}`;
+/** DB 名・利用者名（`sgk-<サイト名>`）の形。SQL とシェルに入る前に台本の中でも確かめる */
+const DB_NAME_SHELL_RE = "^sgk-[a-z][a-z0-9-]{0,26}[a-z0-9]$";
 // ---------------------------------------------------------------- doctor
 /** `agentcms deploy doctor`（vps）。読むだけで何も変えない */
 export async function vpsDoctor(exec, cfg) {
@@ -184,6 +273,17 @@ export async function vpsDoctor(exec, cfg) {
             fix: "vps.site を別の名前にしてください",
         }
         : { key: "site", name: `サイト名 ${n.site}`, status: "PASS" });
+    if (fact("disk_shared") === "yes" || fact("disk_shared") === "unknown")
+        add({
+            key: "disk",
+            name: "サイトの置き場所の容量",
+            status: "WARN",
+            what: fact("disk_shared") === "yes"
+                ? `サイトの置き場所と Docker（MySQL のデータ）が同じファイルシステムにあり、サイトごとの容量の上限がありません`
+                : `サイトの置き場所と Docker（MySQL のデータ）が同じファイルシステムかどうかを確かめられませんでした`,
+            why: "1 つのサイトが置き場所を書き足し続けると、MySQL とほかのサイトも書けなくなります（サイトのコンテナは同じ uid で動くので、利用者ごとの quota では区切れません）",
+            fix: `${n.root}/sites をサイトごとに容量を区切ったファイルシステム（project quota・サイトごとのディスクイメージなど）に置くか、Docker の置き場所と別のディスクに分けてください（docs/deployment/vps.md「1 台に置くサイトの上限」）`,
+        });
     return done(fact("current") || null);
 }
 function doctorScript(n) {
@@ -194,15 +294,27 @@ if [ -d ${shq(n.root)} ] && [ -w ${shq(n.root)} ]; then echo root_writable=yes; 
 echo "caddy=$(docker inspect -f '{{.State.Running}}' ${CADDY_CONTAINER} 2>/dev/null)"
 echo "mysql=$(docker inspect -f '{{.State.Running}}' ${MYSQL_CONTAINER} 2>/dev/null)"
 if docker image inspect ${shq(PHP_IMAGE)} >/dev/null 2>&1; then echo php_image=yes; else echo php_image=no; fi
-if grep -q '^APP_KEY=base64:' ${shq(n.appDir + "/shared/.env")} 2>/dev/null; then echo env=yes; else echo env=no; fi
+${siteFsFns(n)}
+if [ -d ${shq(n.appDir)} ] && docker image inspect ${shq(PHP_IMAGE)} >/dev/null 2>&1 && in_site "grep -q '^APP_KEY=base64:' shared/.env" 2>/dev/null; then echo env=yes; else echo env=no; fi
 for g in ${shq(n.root + "/edge/sites")}/*.caddy; do
   [ -e "$g" ] || continue
   [ "$(basename "$g" .caddy)" = ${shq(n.site)} ] && continue
   if grep -qxF ${shq(`${DOMAIN_MARK} ${n.domain}`)} "$g"; then echo "domain_taken_by=$(basename "$g" .caddy)"; fi
 done
-[ -f ${shq(n.appDir + "/.agentcms-site")} ] && echo "site_owner=$(head -1 ${shq(n.appDir + "/.agentcms-site")})"
+[ -f ${shq(n.controlDir + "/site")} ] && echo "site_owner=$(head -1 ${shq(n.controlDir + "/site")})"
 echo "current=$(readlink ${shq(n.appDir + "/current")} 2>/dev/null)"
 ${edgeRootProbe(n)}
+# サイトの置き場所と Docker（MySQL のデータ）が同じ場所（ファイルシステム）か。同じなら、1 サイトが
+# 置き場所を書き足し続けると MySQL とほかのサイトも書けなくなる（サイトごとの容量の上限は無い）
+# 比べるのは、サイトが実際に書く場所（このサイトの置き場所・無ければ sites/）と Docker の置き場所
+if [ -d ${shq(n.root)} ]; then
+  dr=$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || true)
+  w=${shq(n.root + "/sites")}; [ -d ${shq(n.appDir)} ] && w=${shq(n.appDir)}
+  a=""; b=""
+  [ -d "$w" ] && a=$(df -P "$w" 2>/dev/null | awk 'NR==2{print $1}')
+  [ -n "$dr" ] && b=$(df -P "$dr" 2>/dev/null | awk 'NR==2{print $1}')
+  if [ -z "$a" ] || [ -z "$b" ]; then echo disk_shared=unknown; elif [ "$a" = "$b" ]; then echo disk_shared=yes; else echo disk_shared=no; fi
+fi
 exit 0`;
 }
 /**
@@ -255,7 +367,8 @@ export async function vpsSetupActions(exec, cfg) {
 ${edgeRootProbe(n)}
 [ "$(docker inspect -f '{{.State.Running}}' ${CADDY_CONTAINER} 2>/dev/null)" = true ] && [ "$(docker inspect -f '{{.State.Health.Status}}' ${MYSQL_CONTAINER} 2>/dev/null)" = healthy ] && echo edge_up=yes
 docker image inspect ${shq(PHP_IMAGE)} >/dev/null 2>&1 && echo php_image=yes
-[ -f ${shq(n.appDir + "/shared/.env")} ] && echo env=yes
+${siteFsFns(n)}
+[ -d ${shq(n.appDir)} ] && docker image inspect ${shq(PHP_IMAGE)} >/dev/null 2>&1 && in_site 'test -f shared/.env' 2>/dev/null && echo env=yes
 exit 0`);
     if (probe.code !== 0)
         return { actions: [], error: `サーバーを読めませんでした: ${tail(probe)}` };
@@ -372,6 +485,9 @@ ${edgeCompose(n.root)}AGENTCMS_EDGE
 chmod 644 compose.yml.new
 mv compose.yml.new compose.yml
 docker compose up -d --remove-orphans --quiet-pull 2>&1 | tail -20
+# 作り直した Caddy を、各サイトの web 用のネットワークへ入れ直す（入れないと全サイトが 502）
+${CADDY_JOIN_FN}
+caddy_join_all
 for i in $(seq 1 ${TIMEOUTS.mysqlReady / 2000}); do
   if [ "$(docker inspect -f '{{.State.Health.Status}}' ${MYSQL_CONTAINER} 2>/dev/null)" = healthy ] && [ "$(docker inspect -f '{{.State.Running}}' ${CADDY_CONTAINER} 2>/dev/null)" = true ]; then echo edge-upgrade-ok; exit 0; fi
   sleep 2
@@ -383,6 +499,8 @@ function edgeUpScript(n) {
     return `set -euo pipefail
 cd ${shq(n.root + "/edge")}
 docker compose up -d --quiet-pull 2>&1 | tail -20
+${CADDY_JOIN_FN}
+caddy_join_all
 for i in $(seq 1 ${TIMEOUTS.mysqlReady / 2000}); do
   if [ "$(docker inspect -f '{{.State.Health.Status}}' ${MYSQL_CONTAINER} 2>/dev/null)" = healthy ]; then echo edge-up-ok; exit 0; fi
   sleep 2
@@ -400,76 +518,109 @@ docker image inspect ${shq(PHP_IMAGE)} >/dev/null && echo php-image-ok`;
 /**
  * サイトの DB・利用者・shared/.env。**.env が既にあれば何もしない**（パスワードを回さない）。
  *
+ * - MySQL の root で流す SQL には、**サイトの置き場所から読んだ値を一切入れない**。
+ *   DB 名・利用者名は設定のサイト名から作った `sgk-<サイト名>`（形を台本の中でも確かめる）、
+ *   パスワードはこの台本がサーバーの上で作った英数字 32 文字だけ
+ * - 途中で止まったときの値は control/<site>/env.pending（サイトのコンテナから見えない・600）に置く。
+ *   サイトの置き場所の shared/.env.pending は読まない（サイトが書き換えられる）
  * - MySQL の root パスワードはコンテナの中のファイルから読む（ホストの引数に出ない）
  * - 新しいパスワードは SQL ごと標準入力で渡す
- * - .env は印の行だけを builtin の printf で差し替える（sed の引数に値が載らない）
+ * - .env は印の行だけを builtin の printf で差し替え、置き場所だけを入れたコンテナの中で置く
  * - 同じ名前の DB か利用者が既にあれば止める（パスワードを変えない・他人の DB に権限を足さない）
  * - DB を作り終えてから .env を置く
  */
 export function siteEnvScript(n, template) {
-    const env = `${n.appDir}/shared/.env`;
+    const pendingFile = `${n.controlDir}/env.pending`;
     return `set -euo pipefail
 umask 077
 ${edgeLock(n)}
-if [ -f ${shq(env)} ]; then echo site-env-exists; exit 0; fi
-mkdir -p ${shq(n.appDir + "/shared")}
-chmod 700 ${shq(n.appDir)}
+[[ ${shq(n.dbName)} =~ ${DB_NAME_SHELL_RE} ]] && [[ ${shq(n.dbUser)} =~ ${DB_NAME_SHELL_RE} ]] || { echo "name-odd: DB 名・利用者名の形が違います。何も変えずに止めました"; exit 1; }
+mkdir -p ${shq(n.appDir)} ${shq(n.controlDir)}
+chmod 700 ${shq(n.appDir)} ${shq(n.controlDir)}
+${siteFsFns(n)}
+has_env=$(in_site 'if [ -f shared/.env ]; then echo yes; else echo no; fi') || { echo "site-fs-failed: サイトの置き場所を読めませんでした（PHP のイメージが無い？）"; exit 1; }
+if [ "$has_env" = yes ]; then echo site-env-exists; exit 0; fi
+[ "$has_env" = no ] || { echo "site-fs-failed: $has_env"; exit 1; }
 tmpl=$(mktemp)
+trap 'rm -f "$tmpl"; rmdir ${shq(`${n.root}/edge/.agentcms.lock`)} 2>/dev/null' EXIT
 cat > "$tmpl" << 'AGENTCMS_ENV'
 ${template}
 AGENTCMS_ENV
 gen() { head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32; }
-pending=${shq(env + ".pending")}
+pending=${shq(pendingFile)}
 root_sql() { docker exec -i ${MYSQL_CONTAINER} sh -c 'MYSQL_PWD="$(cat /run/agentcms/mysql-root)" exec mysql -uroot -N'; }
-if [ -s "$pending" ]; then
-  # 前の setup が「同じ名前の DB・利用者が無い」と確かめてから置いた値。その値で続きをやる
-  resume=1
-  # IFS='=' で分けると APP_KEY の末尾の = が落ちる。行の頭を外して読む
+db_pass=""; app_key=""
+if [ -s "$pending" ] && [ ! -L "$pending" ]; then
+  # 前の setup が「同じ名前の DB・利用者が無い」と確かめてから置いた値（サイトから見えない場所）。
+  # 形が違えば信じない（手で書き換えられた・壊れた）
   while IFS= read -r line; do
     case "$line" in
       DB_PASSWORD=*) db_pass="\${line#DB_PASSWORD=}" ;;
       APP_KEY=*) app_key="\${line#APP_KEY=}" ;;
+      *) echo "pending-odd: ${pendingFile} に知らない行があります。何も変えずに止めました"; exit 1 ;;
     esac
   done < "$pending"
+  [[ "$db_pass" =~ ^[A-Za-z0-9]{32}$ ]] || { echo "pending-odd: ${pendingFile} の DB_PASSWORD の形が違います。何も変えずに止めました"; exit 1; }
+  [[ "$app_key" =~ ^base64:[A-Za-z0-9+/]{43}=$ ]] || { echo "pending-odd: ${pendingFile} の APP_KEY の形が違います。何も変えずに止めました"; exit 1; }
 else
-  resume=0
-  # 同じ名前の DB か利用者が既にあれば作らない（別の置き場所のサイトや手で作ったもの）。
-  # 確かめられなければ（MySQL に入れないなど）ここで止まる — まだ何も書いていない
+  # 同じ名前の DB か利用者が既にあれば作らない（別の置き場所のサイトや手で作ったもの・
+  # .env を消されたサイト）。確かめられなければ（MySQL に入れないなど）ここで止まる — まだ何も書いていない
   exists=$(printf "SELECT (SELECT COUNT(*) FROM mysql.user WHERE user='%s') + (SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='%s');\\n" ${shq(n.dbUser)} ${shq(n.dbName)} | root_sql)
   if [ "$exists" != "0" ]; then
-    rm -f "$tmpl"
-    echo "db-exists: DB か利用者「${n.dbName}」が既にあるのに、このサイトの shared/.env がありません。別の置き場所の同じサイト名か、手で作ったものです。何も変えずに止めました"
+    echo "db-exists: DB か利用者「${n.dbName}」が既にあるのに、このサイトの shared/.env がありません。別の置き場所の同じサイト名か、手で作ったものか、.env を消されたサイトです。何も変えずに止めました"
     exit 1
   fi
   db_pass=$(gen)
   app_key="base64:$(head -c 32 /dev/urandom | base64 | tr -d '\\n')"
-  # DB に触る前に値を残す（600）。止まっても次の setup が同じ値で続けられる
+  [[ "$db_pass" =~ ^[A-Za-z0-9]{32}$ ]] && [[ "$app_key" =~ ^base64:[A-Za-z0-9+/]{43}=$ ]] || { echo "gen-failed: 値を作れませんでした"; exit 1; }
+  # DB に触る前に値を残す（600・サイトから見えない場所）。止まっても次の setup が同じ値で続けられる
   printf 'DB_PASSWORD=%s\\nAPP_KEY=%s\\n' "$db_pass" "$app_key" > "$pending.tmp"
   chmod 600 "$pending.tmp"
-  mv "$pending.tmp" "$pending"
+  mv -f "$pending.tmp" "$pending"
 fi
-# 作る（続きのときは、あるものは飛ばす。既にある利用者のパスワードは変えない）
-printf "CREATE DATABASE IF NOT EXISTS \\\`%s\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\\nCREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s';\\n" \\
+# 作る（続きのときは、あるものは飛ばす。既にある利用者のパスワードは変えない）。
+# ここに入る値は、上で形を確かめた sgk-<サイト名> と英数字 32 文字だけ
+printf "CREATE DATABASE IF NOT EXISTS \\\`%s\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\\nCREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s' WITH MAX_USER_CONNECTIONS ${DB_MAX_USER_CONNECTIONS};\\n" \\
   ${shq(n.dbName)} ${shq(n.dbUser)} "$db_pass" | root_sql
 # その利用者に、残した値で本当に入れるか（入れなければ自分の作ったものではない）
 if ! printf '%s\\n' "$db_pass" | docker exec -i ${MYSQL_CONTAINER} sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysql -h 127.0.0.1 -u "$1" -N -e "SELECT 1"' sh ${shq(n.dbUser)} >/dev/null 2>&1; then
-  rm -f "$tmpl"
-  echo "db-owner-mismatch: 利用者「${n.dbUser}」に、このサイトの値で入れません。別の人の利用者です。権限は足さずに止めました（shared/.env.pending を消すと、最初からやり直します）"
+  echo "db-owner-mismatch: 利用者「${n.dbUser}」に、このサイトの値で入れません。別の人の利用者です。権限は足さずに止めました（${pendingFile} を消すと、最初からやり直します）"
   exit 1
 fi
-printf "GRANT ALL PRIVILEGES ON \\\`%s\\\`.* TO '%s'@'%%';\\n" ${shq(n.dbName)} ${shq(n.dbUser)} | root_sql
+# 接続の数の上限（パスワードは変えない）と権限。共有の MySQL の接続枠を 1 サイトで使い切らない
+printf "ALTER USER '%s'@'%%' WITH MAX_USER_CONNECTIONS ${DB_MAX_USER_CONNECTIONS};\\nGRANT ALL PRIVILEGES ON \\\`%s\\\`.* TO '%s'@'%%';\\n" ${shq(n.dbUser)} ${shq(n.dbName)} ${shq(n.dbUser)} | root_sql
+# .env はサイトの置き場所だけを入れたコンテナの中で置く（置き場所の中の symlink を外で辿らない）
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     "APP_KEY=${APP_KEY_PLACEHOLDER}") printf 'APP_KEY=%s\\n' "$app_key" ;;
     "DB_PASSWORD=${DB_PASSWORD_PLACEHOLDER}") printf 'DB_PASSWORD=%s\\n' "$db_pass" ;;
     *) printf '%s\\n' "$line" ;;
   esac
-done < "$tmpl" > ${shq(env + ".tmp")}
-rm -f "$tmpl"
-chmod 600 ${shq(env + ".tmp")}
-mv ${shq(env + ".tmp")} ${shq(env)}
+done < "$tmpl" | in_site_in 'set -eu; umask 077; mkdir -p shared; t=$(mktemp shared/.env.XXXXXX); cat > "$t"; chmod 600 "$t"; mv -f "$t" shared/.env; rm -f shared/.env.pending'
+in_site 'test -s shared/.env'
 rm -f "$pending"
 echo site-env-ok`;
+}
+/**
+ * サイトの DB 利用者に同時接続の上限を付ける（deploy のたび・何度流しても同じ）。
+ * setup より前の版で作った利用者にも付く。パスワードは変えない。
+ * SQL に入るのは設定のサイト名から作った名前（形を確かめる）と決まった数だけ
+ */
+export function dbLimitsScript(n) {
+    return `set -euo pipefail
+[[ ${shq(n.dbUser)} =~ ${DB_NAME_SHELL_RE} ]] || { echo "name-odd"; exit 1; }
+root_sql() { docker exec -i ${MYSQL_CONTAINER} sh -c 'MYSQL_PWD="$(cat /run/agentcms/mysql-root)" exec mysql -uroot -N'; }
+have=$(printf "SELECT COUNT(*) FROM mysql.user WHERE user='%s' AND host='%%';\\n" ${shq(n.dbUser)} | root_sql)
+[ "$have" = 1 ] || { echo "db-user-missing: DB の利用者「${n.dbUser}」がありません。agentcms deploy setup を流してください"; exit 1; }
+printf "ALTER USER '%s'@'%%' WITH MAX_USER_CONNECTIONS ${DB_MAX_USER_CONNECTIONS};\\n" ${shq(n.dbUser)} | root_sql
+echo db-limits-ok`;
+}
+export async function dbUserLimits(ctx) {
+    const n = vpsNames(ctx.cfg);
+    const r = await runScript(ctx.exec, dbLimitsScript(n));
+    return r.code === 0 && r.stdout.includes("db-limits-ok")
+        ? ok("db-limits", `${n.dbUser} の同時接続は ${DB_MAX_USER_CONNECTIONS} まで`)
+        : ng("db-limits", `DB の利用者に接続の上限を付けられませんでした: ${tail(r)}`);
 }
 // ---------------------------------------------------------------- deploy steps
 /**
@@ -503,7 +654,8 @@ export async function siteRoute(ctx) {
 export function siteRouteScript(n) {
     const sites = `${n.root}/edge/sites`;
     const f = `${sites}/${n.site}.caddy`;
-    const marker = `${n.appDir}/.agentcms-site`;
+    // このサイト名を使っているドメインの印。サイトのコンテナから見えない control に置く
+    const marker = `${n.controlDir}/site`;
     return `set -uo pipefail
 ${edgeLock(n)}
 for g in ${shq(sites)}/*.caddy; do
@@ -512,8 +664,8 @@ for g in ${shq(sites)}/*.caddy; do
   if grep -qxF ${shq(`${DOMAIN_MARK} ${n.domain}`)} "$g"; then echo "domain-taken:$(basename "$g" .caddy)"; exit 3; fi
 done
 if [ -f ${shq(marker)} ] && [ "$(head -1 ${shq(marker)})" != ${shq(n.domain)} ]; then echo "site-taken:$(head -1 ${shq(marker)})"; exit 4; fi
-mkdir -p ${shq(n.appDir)} && chmod 700 ${shq(n.appDir)}
-printf '%s\\n' ${shq(n.domain)} > ${shq(marker)}
+mkdir -p ${shq(n.appDir)} ${shq(n.controlDir)} && chmod 700 ${shq(n.appDir)} ${shq(n.controlDir)}
+printf '%s\\n' ${shq(n.domain)} > ${shq(marker + ".tmp")} && mv -f ${shq(marker + ".tmp")} ${shq(marker)}
 new=${shq(f + ".new")}
 cat > "$new" << 'AGENTCMS_CADDY'
 ${siteCaddy(n)}AGENTCMS_CADDY
@@ -553,14 +705,25 @@ export async function siteContainers(ctx) {
     const compose = siteCompose(n, { uid: m[1], gid: m[2] });
     const nginx = siteNginx(n);
     const r = await runScript(ctx.exec, `set -euo pipefail
-# PHP-FPM のソケットの置き場所（無いと Docker が root の持ち物で作り、FPM が書けない）
-mkdir -p ${shq(n.appDir + "/run")}
-cat > ${shq(n.appDir + "/nginx.conf")} << 'AGENTCMS_NGINX'
+${siteFsFns(n)}
+# compose・nginx の設定・PHP-FPM のソケットは control/<site>（サイトのコンテナから見えない）に置く。
+# サイトの置き場所に置くと、サイトが書き換えた compose を docker compose が読む・
+# symlink を辿って別の場所へ書く・mount の元を差し替えられる
+mkdir -p ${shq(n.controlDir + "/run")}
+chmod 700 ${shq(n.controlDir)}
+# ソケットの置き場所は FPM（ssh の利用者と同じ uid）が書ける。無いと Docker が root の持ち物で作る
+chmod 755 ${shq(n.controlDir + "/run")}
+cat > ${shq(n.controlDir + "/nginx.conf.tmp")} << 'AGENTCMS_NGINX'
 ${nginx}AGENTCMS_NGINX
-chmod 644 ${shq(n.appDir + "/nginx.conf")}
-cat > ${shq(n.appDir + "/compose.yml")} << 'AGENTCMS_COMPOSE'
+chmod 644 ${shq(n.controlDir + "/nginx.conf.tmp")}
+mv -f ${shq(n.controlDir + "/nginx.conf.tmp")} ${shq(n.controlDir + "/nginx.conf")}
+cat > ${shq(n.controlDir + "/compose.yml.tmp")} << 'AGENTCMS_COMPOSE'
 ${compose}AGENTCMS_COMPOSE
-docker compose -f ${shq(n.appDir + "/compose.yml")} up -d --remove-orphans --quiet-pull 2>&1 | tail -20
+mv -f ${shq(n.controlDir + "/compose.yml.tmp")} ${shq(n.controlDir + "/compose.yml")}
+docker compose -f ${shq(n.controlDir + "/compose.yml")} up -d --remove-orphans --quiet-pull 2>&1 | tail -20
+# Caddy をこのサイトの web 用のネットワークへ（web にはほかのサイトのコンテナから届かない）
+${CADDY_JOIN_FN}
+caddy_join ${shq(n.webNetwork)}
 # nginx の設定を確かめてから読み直させる（中身が変わってもコンテナは作り直されないことがある）。
 # 通らなければ、Caddy の行を差し替える前にここで止まる
 for i in $(seq 1 30); do
@@ -570,7 +733,11 @@ done
 docker exec ${shq(n.webContainer)} nginx -t 2>&1 | tail -3
 docker exec ${shq(n.webContainer)} nginx -s reload >/dev/null 2>&1 || true
 for i in $(seq 1 30); do
-  if [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.appContainer)} 2>/dev/null)" = true ] && [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.webContainer)} 2>/dev/null)" = true ] && [ -S ${shq(n.appDir + "/run/php-fpm.sock")} ]; then echo containers-ok; exit 0; fi
+  if [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.appContainer)} 2>/dev/null)" = true ] && [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.webContainer)} 2>/dev/null)" = true ] && [ -S ${shq(n.controlDir + "/run/php-fpm.sock")} ]; then
+    # 前の版が置き場所に置いていた物を片付ける（コンテナの中で消す。symlink でも外は辿らない）
+    in_site 'rm -rf run compose.yml nginx.conf .agentcms-site releases.history .agentcms-deploy.lock shared/.env.pending' || true
+    echo containers-ok; exit 0
+  fi
   sleep 1
 done
 docker logs --tail 20 ${shq(n.webContainer)} 2>&1
@@ -582,24 +749,30 @@ exit 1`, TIMEOUTS.composeUp);
 }
 /**
  * DB バックアップ（vps）。mysqldump は MySQL のコンテナの中で流す。
- * パスワードは shared/.env から読み、**標準入力**で渡す（引数・環境変数の受け渡しに載せない）。
- * 成功は終了コード＋gzip の検査＋大きさの下限で見る（ファイルがあるだけで成功にしない）。
+ *
+ * - DB 名は設定のサイト名から作った `sgk-<サイト名>` だけ（サイトの .env の値は使わない。
+ *   MySQL のコンテナの中で root として動く mysqldump の引数に、サイトが決めた値を渡さない）
+ * - root のパスワードはコンテナの中のファイルから読む（引数・環境変数の受け渡しに載せない）
+ * - 書くのは、サイトの置き場所だけを入れたコンテナの中（backups が symlink でも外へ書かない）
+ * - 成功は終了コード＋gzip の検査＋大きさの下限で見る（ファイルがあるだけで成功にしない）
  */
 export function vpsBackupScript(n, releaseId) {
+    if (!/^\d{14}$/.test(releaseId))
+        throw new Error(`release の番号の形が違います: ${releaseId}`);
     return `set -euo pipefail
-cd ${shq(n.appDir)}
-envval() { grep -E "^$1=" shared/.env | tail -1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"; }
-DB_DATABASE=$(envval DB_DATABASE)
-DB_USERNAME=$(envval DB_USERNAME)
+[[ ${shq(n.dbName)} =~ ${DB_NAME_SHELL_RE} ]] || { echo "name-odd"; exit 1; }
+${siteFsFns(n)}
+docker exec ${MYSQL_CONTAINER} sh -c 'MYSQL_PWD="$(cat /run/agentcms/mysql-root)" exec mysqldump --single-transaction --no-tablespaces -uroot "$1"' sh ${shq(n.dbName)} | gzip | in_site_in 'set -eu
 mkdir -p backups
-out="backups/${releaseId}-db.sql.gz"
-envval DB_PASSWORD | docker exec -i ${MYSQL_CONTAINER} sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysqldump --single-transaction --no-tablespaces -h 127.0.0.1 -u "$1" "$2"' sh "$DB_USERNAME" "$DB_DATABASE" | gzip > "$out"
-gzip -t "$out"
-size=$(wc -c < "$out")
-if [ "$size" -lt 200 ]; then echo "backup-too-small:$size"; exit 1; fi
+t=$(mktemp backups/.db.XXXXXX)
+cat > "$t"
+gzip -t "$t"
+size=$(wc -c < "$t")
+if [ "$size" -lt 200 ]; then rm -f "$t"; echo "backup-too-small:$size"; exit 1; fi
+mv -f "$t" backups/${releaseId}-db.sql.gz
 # このときに出ていた release を横に残す（DB を戻すとき、コードも同じ版へ合わせるため）
-if [ -L current ]; then basename "$(readlink current)" > "backups/${releaseId}-db.release"; fi
-echo "backup-ok:$size"`;
+if [ -L current ]; then basename "$(readlink current)" > backups/${releaseId}-db.release; fi
+echo "backup-ok:$size"'`;
 }
 export async function backupDatabaseVps(ctx) {
     const n = vpsNames(ctx.cfg);
@@ -620,8 +793,9 @@ export const HEALTHY_MARK = ".agentcms-healthy";
 export const HISTORY_FILE = "releases.history";
 export async function markHealthy(ctx) {
     const n = vpsNames(ctx.cfg);
-    const r = await ctx.exec.exec(`touch ${shq(`${n.appDir}/releases/${ctx.releaseId}/${HEALTHY_MARK}`)} && ` +
-        `printf '%s\\n' ${shq(ctx.releaseId)} >> ${shq(`${n.appDir}/${HISTORY_FILE}`)} && echo mark-ok`);
+    // 印はサイトの release の中（置き場所の中で付ける）、記録は control（サイトから見えない）
+    const r = await ctx.exec.exec(`${siteFsCommand(n, `touch ${shq(`releases/${ctx.releaseId}/${HEALTHY_MARK}`)}`)} < /dev/null && ` +
+        `mkdir -p ${shq(n.controlDir)} && printf '%s\\n' ${shq(ctx.releaseId)} >> ${shq(`${n.controlDir}/${HISTORY_FILE}`)} && echo mark-ok`);
     return r.code === 0 && r.stdout.includes("mark-ok")
         ? ok("mark-healthy")
         : ng("mark-healthy", tail(r));
@@ -633,10 +807,12 @@ export async function markHealthy(ctx) {
  */
 export async function healthyReleases(exec, cfg) {
     const n = vpsNames(cfg);
-    const r = await exec.exec(`cd ${shq(n.appDir)} || exit 3; [ -f ${HISTORY_FILE} ] || { echo history-none; exit 0; }; ` +
+    // 記録は control（サイトから見えない）。印があるかは、置き場所だけを入れたコンテナの中で見る。
+    // コンテナへ渡すのは番号の形（14 桁）の行だけ
+    const r = await exec.exec(`cd ${shq(n.controlDir)} 2>/dev/null || { echo history-none; exit 0; }; [ -f ${HISTORY_FILE} ] || { echo history-none; exit 0; }; ` +
         // 読めなければここで止まる（パイプの途中の失敗は sh では拾えないので、先に読み切る）
         `out=$(awk '{ l[NR] = $0 } END { for (i = NR; i > 0; i--) print l[i] }' ${HISTORY_FILE}) || exit 4; ` +
-        `printf '%s\\n' "$out" | while IFS= read -r d; do if [ -f "releases/$d/${HEALTHY_MARK}" ]; then echo "$d"; fi; done; echo history-ok`);
+        `printf '%s\\n' "$out" | grep -E '^[0-9]{14}$' | ${siteFsCommand(n, `while IFS= read -r d; do if [ -f "releases/$d/${HEALTHY_MARK}" ]; then echo "$d"; fi; done; echo history-ok`, { stdin: true })}`);
     // 読めなかったのか、まだ記録が無いのかを分ける（読めなかったのに空と読むと、掃除が戻り先を消す）
     if (r.code !== 0 || !/history-(ok|none)/.test(r.stdout))
         return null;
@@ -676,19 +852,24 @@ export async function cleanupReleasesVps(ctx) {
         current,
         ...history.filter((id) => id !== current).slice(0, keep),
     ]);
+    // 消すのは、置き場所だけを入れたコンテナの中（releases が symlink でも外のものは消さない）
+    const keepList = [...keepSet].filter((id) => /^\d{14}$/.test(id)).join(" ");
     const r = await runScript(ctx.exec, `set -uo pipefail
-cd ${shq(n.appDir + "/releases")} || exit 1
-for d in $(ls -1 | grep -E '^[0-9]{14}$'); do
-  case " ${[...keepSet].join(" ")} " in *" $d "*) continue ;; esac
+${siteFsFns(n)}
+in_site 'cd releases || exit 1
+for d in $(ls -1 | grep -E "^[0-9]{14}$"); do
+  case " ${keepList} " in *" $d "*) continue ;; esac
   rm -rf "$d"
 done
-rm -f ${shq(n.appDir + "/tmp")}/*.tar.gz
-echo cleanup-ok`);
+rm -f tmp/*.tar.gz
+echo cleanup-ok'
+rm -f ${shq(n.controlDir + "/upload")}/*.tar.gz`);
     return r.code === 0 && r.stdout.includes("cleanup-ok")
         ? ok("cleanup")
         : ng("cleanup", tail(r));
 }
-const LOCK = ".agentcms-deploy.lock";
+/** サイトごとの deploy の鍵（control/<site> の中・サイトのコンテナから見えない） */
+const LOCK = "deploy.lock";
 /**
  * サイトごとの鍵。deploy と rollback は、current を読む前から health・掃除が
  * 終わるまでこれを持つ（同じサイトへの 2 つの deploy が切り替えと切り戻しを
@@ -696,15 +877,15 @@ const LOCK = ".agentcms-deploy.lock";
  */
 export async function acquireSiteLock(ctx, what) {
     const n = vpsNames(ctx.cfg);
-    const lock = `${n.appDir}/${LOCK}`;
-    const r = await ctx.exec.exec(`if mkdir ${shq(lock)} 2>/dev/null; then printf '%s %s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" ${shq(what)} > ${shq(lock + "/info")}; echo lock-ok; else echo "lock-busy: $(cat ${shq(lock + "/info")} 2>/dev/null)"; fi`);
+    const lock = `${n.controlDir}/${LOCK}`;
+    const r = await ctx.exec.exec(`mkdir -p ${shq(n.controlDir)} && chmod 700 ${shq(n.controlDir)}; if mkdir ${shq(lock)} 2>/dev/null; then printf '%s %s\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" ${shq(what)} > ${shq(lock + "/info")}; echo lock-ok; else echo "lock-busy: $(cat ${shq(lock + "/info")} 2>/dev/null)"; fi`);
     if (r.code === 0 && r.stdout.includes("lock-ok"))
         return ok("lock");
     return ng("lock", `このサイトでは別の deploy / rollback が動いています（${r.stdout.replace("lock-busy:", "").trim() || "始めた時刻は不明"}）。終わるのを待ってください。止まったまま残っているなら、ほかに動いていないことを確かめてから ${lock} を消してください`);
 }
 export async function releaseSiteLock(ctx) {
     const n = vpsNames(ctx.cfg);
-    await ctx.exec.exec(`rm -rf ${shq(`${n.appDir}/${LOCK}`)}`);
+    await ctx.exec.exec(`rm -rf ${shq(`${n.controlDir}/${LOCK}`)}`);
 }
 /**
  * これから出す release の番号が、まだ使われていないか。番号は手元の時計の秒なので、
@@ -729,9 +910,19 @@ export async function readCurrent(ctx) {
     const r = await ctx.exec.exec(`cd ${shq(n.appDir)} || exit 3; if [ -L current ]; then printf 'current=%s\\n' "$(readlink current)"; elif [ -e current ]; then echo current-not-link; else echo current-none; fi`);
     if (r.code === 0 && r.stdout.includes("current-none"))
         return { ok: true, target: null };
-    const m = /current=(\S+)/.exec(r.stdout);
-    if (r.code === 0 && m)
-        return { ok: true, target: m[1] };
+    const m = /current=(.*)/.exec(r.stdout);
+    if (r.code === 0 && m) {
+        // current はサイトのコンテナが書き換えられる。この置き場所の release を指していなければ信じない
+        // （戻す先・画面に出す直し方のコマンドに、サイトの決めた値を入れない）
+        const target = m[1];
+        const prefix = `${n.appDir}/releases/`;
+        if (target.startsWith(prefix) && /^\d{14}$/.test(target.slice(prefix.length)))
+            return { ok: true, target };
+        return {
+            ok: false,
+            detail: `${n.appDir}/current がこのサイトの release（releases/<14 桁>）を指していません（${JSON.stringify(target.slice(0, 80))}）。何も変えずに止めました。ssh で current を正しい release へ向け直してください`,
+        };
+    }
     return {
         ok: false,
         detail: r.stdout.includes("current-not-link")

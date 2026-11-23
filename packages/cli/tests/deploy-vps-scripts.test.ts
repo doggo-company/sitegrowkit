@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { ExecResult, RemoteExecutor } from "../src/deploy/executor.js";
+import { MAX_CAPTURE_CHARS, spawnCapture } from "../src/deploy/executor.js";
 import {
   acquireSiteLock,
   backupDatabaseVps,
@@ -27,6 +28,9 @@ import {
   releaseSiteLock,
   rollbackTargetByHistory,
   siteEnvScript,
+  siteFsExecutor,
+  siteFsCommand,
+  dbUserLimits,
   siteRoute,
   envTemplate,
   runScript,
@@ -70,7 +74,7 @@ class LocalExecutor implements RemoteExecutor {
       stderr: r.stderr.trim(),
     };
   }
-  async upload(): Promise<ExecResult> {
+  async upload(_localPath?: string, _remotePath?: string): Promise<ExecResult> {
     return { code: 0, stdout: "", stderr: "" };
   }
 }
@@ -79,6 +83,22 @@ const FAKE_DOCKER = `#!/bin/bash
 # 引数を 1 行ずつ、標準入力は呼ばれた回ごとのファイルへ
 n=$(ls "$FAKE_LOG".stdin.* 2>/dev/null | wc -l | tr -d ' ')
 printf '%s\\n' "$*" >> "$FAKE_LOG"
+# docker run（サイトの置き場所だけを入れた使い捨てのコンテナ）は、-w の場所で台本を流す。
+# -v は 1 つ（その置き場所だけ）でなければ失敗する
+if [ "$1" = run ]; then
+  shift; w=""; vols=0; vol=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -w) w="$2"; shift 2 ;;
+      -v) vols=$((vols + 1)); vol="$2"; shift 2 ;;
+      -c) shift; break ;;
+      *) shift ;;
+    esac
+  done
+  [ "$vols" = 1 ] && [ "$vol" = "$w:$w" ] || { echo "fake: 置き場所だけを入れていない（$vols 個・$vol）"; exit 99; }
+  [ "\${FAKE_RUN:-ok}" = ok ] || exit 125
+  cd "$w" && exec sh -c "$1"
+fi
 case "$*" in
   *"exec -i"*) cat > "$FAKE_LOG.stdin.$n" ;;
 esac
@@ -87,6 +107,7 @@ case "$*" in
   *"caddy reload"*) [ "\${FAKE_RELOAD:-ok}" = ok ] || { echo "Error: reload failed"; exit 1; } ;;
   *"mysql -uroot -N"*)
     if grep -q "SELECT (SELECT COUNT" "$FAKE_LOG.stdin.$n"; then [ "\${FAKE_QUERY:-ok}" = ok ] || exit 1; echo "\${FAKE_EXISTS:-0}";
+    elif grep -q "SELECT COUNT(\\*) FROM mysql.user WHERE user=" "$FAKE_LOG.stdin.$n"; then echo "\${FAKE_USER_COUNT:-1}";
     elif [ "\${FAKE_CREATE:-ok}" != ok ] && grep -q "CREATE" "$FAKE_LOG.stdin.$n"; then echo "ERROR 1396: Operation CREATE USER failed"; exit 1; fi ;;
   *"SELECT 1"*) [ "\${FAKE_AUTH:-ok}" = ok ] || { echo "ERROR 1045: Access denied"; exit 1; } ;;
   *"volume inspect"*) [ "\${FAKE_VOLUME:-none}" = exists ] || exit 1 ;;
@@ -274,31 +295,56 @@ run("DB と shared/.env を作る台本", () => {
     expect(readFileSync(join(c.remote.appDir, "shared/.env"), "utf8")).toBe(
       before,
     );
-    expect(dockerCalls()).toEqual([]);
+    // 置き場所を見に行く使い捨てのコンテナだけ。MySQL には触らない
+    expect(dockerCalls().filter((l) => !l.startsWith("run "))).toEqual([]);
   });
 });
 
 run("DB バックアップの台本", () => {
-  function withEnv(c: DeployTargetConfig) {
+  function withEnv(c: DeployTargetConfig, db = "sgk-shop-a") {
     mkdirSync(join(c.remote.appDir, "shared"), { recursive: true });
     writeFileSync(
       join(c.remote.appDir, "shared/.env"),
-      "DB_DATABASE=sgk-shop-a\nDB_USERNAME=sgk-shop-a\nDB_PASSWORD=Sekret0123456789abcdefABCDEF0123\n",
+      `DB_DATABASE=${db}\nDB_USERNAME=${db}\nDB_PASSWORD=Sekret0123456789abcdefABCDEF0123\n`,
     );
   }
 
-  it("パスワードは標準入力の 1 行目で渡し、引数に載せない", async () => {
+  it("DB 名は設定から作った名前だけ。パスワードも .env の値も引数・標準入力に載せない", async () => {
     const c = cfg();
     withEnv(c);
     const r = await backupDatabaseVps(ctx(c));
     expect(r.ok).toBe(true);
-    expect(readFileSync(`${log}.stdin.0`, "utf8")).toBe(
-      "Sekret0123456789abcdefABCDEF0123\n",
-    );
-    expect(readFileSync(log, "utf8")).not.toContain("Sekret0123456789");
+    const calls = readFileSync(log, "utf8");
+    expect(calls).not.toContain("Sekret0123456789");
+    const dump = dockerCalls().find((l) => l.includes("mysqldump"));
+    expect(dump).toMatch(/ sh sgk-shop-a$/);
     expect(
       existsSync(join(c.remote.appDir, "backups/20260101000000-db.sql.gz")),
     ).toBe(true);
+  });
+
+  it("サイトの .env の DB 名がほかの値でも、root の mysqldump には渡らない", async () => {
+    const c = cfg();
+    withEnv(c, "--result-file=/var/lib/mysql/sgk-other/x.ibd");
+    const r = await backupDatabaseVps(ctx(c));
+    expect(r.ok).toBe(true);
+    expect(readFileSync(log, "utf8")).not.toContain("--result-file");
+    expect(dockerCalls().find((l) => l.includes("mysqldump"))).toMatch(
+      / sh sgk-shop-a$/,
+    );
+  });
+
+  it("書くのはサイトの置き場所だけを入れたコンテナの中", async () => {
+    const c = cfg();
+    withEnv(c);
+    await backupDatabaseVps(ctx(c));
+    const runs = dockerCalls().filter((l) => l.startsWith("run "));
+    expect(runs.length).toBeGreaterThan(0);
+    for (const l of runs) {
+      expect(l).toContain("--network none");
+      expect(l).toContain("--cap-drop ALL");
+      expect(l).toContain(`-v ${c.remote.appDir}:${c.remote.appDir}`);
+    }
   });
 
   it("mysqldump が落ちたら成功にしない", async () => {
@@ -319,8 +365,8 @@ run("DB と利用者が既にあるときは作らない", () => {
     expect(r.code).not.toBe(0);
     expect(r.stdout).toContain("db-exists");
     expect(existsSync(join(c.remote.appDir, "shared/.env"))).toBe(false);
-    // CREATE も ALTER も流していない（呼ばれたのは在るかどうかの問い合わせ 1 回だけ）
-    expect(dockerCalls()).toHaveLength(1);
+    // CREATE も ALTER も流していない（MySQL に流したのは在るかどうかの問い合わせ 1 回だけ）
+    expect(dockerCalls().filter((l) => !l.startsWith("run "))).toHaveLength(1);
     expect(readFileSync(`${log}.stdin.0`, "utf8")).not.toMatch(
       /CREATE|ALTER|GRANT/,
     );
@@ -378,8 +424,9 @@ run("release の印・掃除・鍵", () => {
           "",
         );
     }
+    mkdirSync(vpsNames(c).controlDir, { recursive: true });
     writeFileSync(
-      join(c.remote.appDir, "releases.history"),
+      join(vpsNames(c).controlDir, "releases.history"),
       history.map((h) => `${h}\n`).join(""),
     );
     mkdirSync(join(c.remote.appDir, "tmp"), { recursive: true });
@@ -445,6 +492,10 @@ run("release の印・掃除・鍵", () => {
       "20260101000002",
       "20260101000004",
     ]);
+    // 消すのは置き場所だけを入れた使い捨てのコンテナの中（releases が symlink でも外を消さない）
+    const runs = dockerCalls().filter((l) => l.startsWith("run "));
+    expect(runs.length).toBeGreaterThanOrEqual(2); // 印を見る・消す
+    expect(runs.some((l) => l.includes(" -c cd releases || exit 1"))).toBe(true);
   });
 
   it.skipIf(process.getuid?.() === 0)(
@@ -459,9 +510,9 @@ run("release の印・掃除・鍵", () => {
         ],
         "20260101000002",
       );
-      chmodSync(join(c.remote.appDir, "releases.history"), 0o000);
+      chmodSync(join(vpsNames(c).controlDir, "releases.history"), 0o000);
       const r = await cleanupReleasesVps(ctx(c));
-      chmodSync(join(c.remote.appDir, "releases.history"), 0o644);
+      chmodSync(join(vpsNames(c).controlDir, "releases.history"), 0o644);
       expect(r.ok).toBe(false);
       expect(readdirSync(join(c.remote.appDir, "releases")).sort()).toEqual([
         "20260101000001",
@@ -513,35 +564,88 @@ run("release の印・掃除・鍵", () => {
 });
 
 run("setup が途中で止まったあと", () => {
-  it(".env.pending があれば、そのときの値で DB をそろえ直して .env を置く", async () => {
+  const KEY = `base64:${Buffer.alloc(32, 7).toString("base64")}`;
+  function pendingAt(c: DeployTargetConfig, body: string) {
+    const d = vpsNames(c).controlDir;
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, "env.pending"), body);
+  }
+
+  it("control の env.pending があれば、そのときの値で DB をそろえ直して .env を置く", async () => {
     const c = cfg();
-    const shared = join(c.remote.appDir, "shared");
-    mkdirSync(shared, { recursive: true });
-    const key = `base64:${Buffer.alloc(32, 7).toString("base64")}`;
-    writeFileSync(
-      join(shared, ".env.pending"),
-      `DB_PASSWORD=Resume0123456789abcdefABCDEF0123\nAPP_KEY=${key}\n`,
-    );
+    pendingAt(c, `DB_PASSWORD=Resume0123456789abcdefABCDEF0123\nAPP_KEY=${KEY}\n`);
     const r = await runScript(
       new LocalExecutor(),
       siteEnvScript(vpsNames(c), envTemplate(c)),
     );
     expect(r.stdout).toContain("site-env-ok");
+    const shared = join(c.remote.appDir, "shared");
     const env = readFileSync(join(shared, ".env"), "utf8");
     expect(env).toContain("DB_PASSWORD=Resume0123456789abcdefABCDEF0123\n");
     // APP_KEY の末尾の = まで落とさない
-    expect(env).toContain(`APP_KEY=${key}\n`);
-    expect(existsSync(join(shared, ".env.pending"))).toBe(false);
+    expect(env).toContain(`APP_KEY=${KEY}\n`);
+    expect(existsSync(join(vpsNames(c).controlDir, "env.pending"))).toBe(false);
     const sqlIn = allStdin();
     expect(sqlIn).toContain(
       "CREATE USER IF NOT EXISTS 'sgk-shop-a'@'%' IDENTIFIED BY 'Resume0123456789abcdefABCDEF0123'",
     );
     // 既にある利用者のパスワードは変えない。その値で入れるかを確かめてから権限を足す
-    expect(sqlIn).not.toContain("ALTER USER");
+    expect(sqlIn).not.toMatch(/ALTER USER[^\n]*IDENTIFIED/);
+    expect(sqlIn).toContain(
+      "ALTER USER 'sgk-shop-a'@'%' WITH MAX_USER_CONNECTIONS 30;",
+    );
     expect(sqlIn).toContain("GRANT ALL PRIVILEGES");
   });
 
-  it("新しく始めるときは、無いと確かめてから .env.pending（600）を置き、DB に触る", async () => {
+  it("サイトの置き場所の shared/.env.pending は読まない（root の SQL にサイトの値を入れない）", async () => {
+    const c = cfg();
+    const shared = join(c.remote.appDir, "shared");
+    mkdirSync(shared, { recursive: true });
+    const evil =
+      "x'; DROP DATABASE `sgk-other`; GRANT ALL ON *.* TO 'sgk-shop-a'@'%'; -- ";
+    writeFileSync(
+      join(shared, ".env.pending"),
+      `DB_PASSWORD=${evil}\nAPP_KEY=${KEY}\n`,
+    );
+    // DB・利用者が既にある（.env を消されたサイト）→ 何も作らずに止まる
+    const r = await runScript(
+      new LocalExecutor({ FAKE_EXISTS: "1" }),
+      siteEnvScript(vpsNames(c), envTemplate(c)),
+    );
+    expect(r.code).not.toBe(0);
+    expect(r.stdout).toContain("db-exists");
+    expect(allStdin()).not.toContain("DROP");
+    expect(allStdin()).not.toMatch(/CREATE|GRANT/);
+    // 無い（新しく始める）ときも、サーバーで作った値だけを使う
+    writeFileSync(log, "");
+    for (const f of readdirSync(root).filter((f) => f.startsWith("docker.log.stdin.")))
+      rmSync(join(root, f));
+    const r2 = await runScript(
+      new LocalExecutor(),
+      siteEnvScript(vpsNames(c), envTemplate(c)),
+    );
+    expect(r2.stdout).toContain("site-env-ok");
+    expect(allStdin()).not.toContain("DROP");
+    expect(allStdin()).toMatch(/IDENTIFIED BY '[A-Za-z0-9]{32}'/);
+    expect(existsSync(join(shared, ".env.pending"))).toBe(false);
+  });
+
+  it("control の env.pending の形が違えば（手で書き換えた・壊れた）、何も流さずに止まる", async () => {
+    const c = cfg();
+    pendingAt(
+      c,
+      `DB_PASSWORD=x'; DROP DATABASE \`sgk-other\`; -- \nAPP_KEY=${KEY}\n`,
+    );
+    const r = await runScript(
+      new LocalExecutor(),
+      siteEnvScript(vpsNames(c), envTemplate(c)),
+    );
+    expect(r.code).not.toBe(0);
+    expect(r.stdout).toContain("pending-odd");
+    expect(dockerCalls().filter((l) => !l.startsWith("run "))).toEqual([]);
+  });
+
+  it("新しく始めるときは、無いと確かめてから control に env.pending（600）を置き、DB に触る", async () => {
     const c = cfg();
     // 利用者を作る段で落ちる（GRANT までいかない）
     const r = await runScript(
@@ -549,36 +653,40 @@ run("setup が途中で止まったあと", () => {
       siteEnvScript(vpsNames(c), envTemplate(c)),
     );
     expect(r.code).not.toBe(0);
-    const pending = join(c.remote.appDir, "shared/.env.pending");
+    const pending = join(vpsNames(c).controlDir, "env.pending");
     expect(statSync(pending).mode & 0o777).toBe(0o600);
     expect(readFileSync(pending, "utf8")).toMatch(
       /^DB_PASSWORD=[A-Za-z0-9]{32}\nAPP_KEY=base64:\S+=\n$/,
     );
     expect(existsSync(join(c.remote.appDir, "shared/.env"))).toBe(false);
+    expect(existsSync(join(c.remote.appDir, "shared/.env.pending"))).toBe(false);
     expect(allStdin()).not.toContain("GRANT");
   });
 
-  it("在るかどうかを確かめられなければ、.env.pending を置かずに止まる", async () => {
+  it("在るかどうかを確かめられなければ、env.pending を置かずに止まる", async () => {
     const c = cfg();
     const r = await runScript(
       new LocalExecutor({ FAKE_QUERY: "fail" }),
       siteEnvScript(vpsNames(c), envTemplate(c)),
     );
     expect(r.code).not.toBe(0);
-    expect(existsSync(join(c.remote.appDir, "shared/.env.pending"))).toBe(
-      false,
-    );
+    expect(existsSync(join(vpsNames(c).controlDir, "env.pending"))).toBe(false);
     expect(allStdin()).not.toMatch(/CREATE|GRANT/);
+  });
+
+  it("サイトの置き場所を読めなければ（使い捨てのコンテナが動かない）、DB に触らずに止まる", async () => {
+    const c = cfg();
+    const r = await runScript(
+      new LocalExecutor({ FAKE_RUN: "fail" }),
+      siteEnvScript(vpsNames(c), envTemplate(c)),
+    );
+    expect(r.code).not.toBe(0);
+    expect(dockerCalls().filter((l) => !l.startsWith("run "))).toEqual([]);
   });
 
   it("続きのとき、その値で利用者に入れなければ（他人の利用者）権限を足さずに止める", async () => {
     const c = cfg();
-    const shared = join(c.remote.appDir, "shared");
-    mkdirSync(shared, { recursive: true });
-    writeFileSync(
-      join(shared, ".env.pending"),
-      "DB_PASSWORD=Other0123456789abcdefABCDEF01234\nAPP_KEY=base64:AAAA=\n",
-    );
+    pendingAt(c, `DB_PASSWORD=Other0123456789abcdefABCDEF01234\nAPP_KEY=${KEY}\n`);
     const r = await runScript(
       new LocalExecutor({ FAKE_AUTH: "fail" }),
       siteEnvScript(vpsNames(c), envTemplate(c)),
@@ -586,7 +694,7 @@ run("setup が途中で止まったあと", () => {
     expect(r.code).not.toBe(0);
     expect(r.stdout).toContain("db-owner-mismatch");
     expect(allStdin()).not.toMatch(/GRANT|ALTER/);
-    expect(existsSync(join(shared, ".env"))).toBe(false);
+    expect(existsSync(join(c.remote.appDir, "shared/.env"))).toBe(false);
   });
 });
 
@@ -673,5 +781,116 @@ run("いまの release を読む", () => {
     mkdirSync(join(c.remote.appDir, "current"));
     const bad = await readCurrent(ctx(c));
     expect(bad.ok).toBe(false);
+  });
+});
+
+run("サイトの置き場所の中のファイル操作", () => {
+  it("release.ts の工程は、置き場所だけを入れた使い捨てのコンテナで流す", async () => {
+    const c = cfg();
+    const n = vpsNames(c);
+    mkdirSync(c.remote.appDir, { recursive: true });
+    const fs = siteFsExecutor(new LocalExecutor(), n);
+    const r = await fs.exec("mkdir -p releases/x && echo made");
+    expect(r.stdout).toContain("made");
+    const calls = dockerCalls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatch(/^run --rm --init --pull never --network none --cap-drop ALL --security-opt no-new-privileges --memory 512m --memory-swap 512m --pids-limit 128 --cpus 1\.0 --log-driver none --user \d+:\d+ -v /);
+    expect(calls[0]).toContain(`-v ${n.appDir}:${n.appDir} -w ${n.appDir}`);
+  });
+
+  it("送るのは control へ置いてから、コンテナの中で置き場所へ写す。置き場所の外へは送らない", async () => {
+    const c = cfg();
+    const n = vpsNames(c);
+    mkdirSync(c.remote.appDir, { recursive: true });
+    const src = join(root, "artifact.tar.gz");
+    writeFileSync(src, "artifact-bytes");
+    const uploads: string[] = [];
+    class Up extends LocalExecutor {
+      async upload(local: string, remote: string): Promise<ExecResult> {
+        uploads.push(remote);
+        const r = spawnSync("cp", [local, remote]);
+        return { code: r.status ?? 1, stdout: "", stderr: "" };
+      }
+    }
+    const fs = siteFsExecutor(new Up(), n);
+    const ok1 = await fs.upload(src, `${n.appDir}/tmp/20260101000000.tar.gz`);
+    expect(ok1.code).toBe(0);
+    expect(uploads).toEqual([`${n.controlDir}/upload/20260101000000.tar.gz`]);
+    expect(
+      readFileSync(join(n.appDir, "tmp/20260101000000.tar.gz"), "utf8"),
+    ).toBe("artifact-bytes");
+    expect(existsSync(join(n.controlDir, "upload/20260101000000.tar.gz"))).toBe(
+      false,
+    );
+    for (const bad of [
+      `${n.root}/edge/Caddyfile`,
+      `${n.appDir}/../other/x.tar.gz`,
+    ]) {
+      const r = await fs.upload(src, bad);
+      expect(r.code).not.toBe(0);
+    }
+    expect(uploads).toHaveLength(1);
+  });
+});
+
+run("DB の利用者の同時接続の上限（deploy のたび）", () => {
+  it("前の版で作った利用者にも付ける。パスワードは変えない・名前は設定から", async () => {
+    const r = await dbUserLimits(ctx(cfg()));
+    expect(r.ok).toBe(true);
+    const sqlIn = allStdin();
+    expect(sqlIn).toContain(
+      "ALTER USER 'sgk-shop-a'@'%' WITH MAX_USER_CONNECTIONS 30;",
+    );
+    expect(sqlIn).not.toContain("IDENTIFIED");
+  });
+
+  it("利用者が無ければ（setup が済んでいない）止める", async () => {
+    const r = await dbUserLimits(ctx(cfg(), { FAKE_USER_COUNT: "0" }));
+    expect(r.ok).toBe(false);
+    expect(allStdin()).not.toContain("ALTER USER");
+  });
+});
+
+run("current をサイトが書き換えたとき", () => {
+  it("この置き場所の release を指していなければ信じない（戻す先・直し方のコマンドに入れない）", async () => {
+    const c = cfg();
+    mkdirSync(join(c.remote.appDir, "releases", "20260101000000"), {
+      recursive: true,
+    });
+    for (const bad of [
+      "/etc",
+      join(c.remote.appDir, "releases", "20260101000000; rm -rf ~"),
+      join(c.remote.appDir, "..", "other", "releases", "20260101000000"),
+    ]) {
+      rmSync(join(c.remote.appDir, "current"), { force: true });
+      spawnSync("ln", ["-sfn", bad, join(c.remote.appDir, "current")]);
+      const r = await readCurrent(ctx(c));
+      expect(r.ok).toBe(false);
+    }
+  });
+});
+
+run("サーバーからの出力の上限", () => {
+  it("上限を超える出力は受け取り続けず、止めて失敗にする（手元の CLI のメモリを守る）", async () => {
+    const r = await spawnCapture(
+      "sh",
+      ["-c", `head -c ${MAX_CAPTURE_CHARS + 1024} /dev/zero | tr '\\0' a; echo done`],
+      60_000,
+    );
+    expect(r.code).toBe(1);
+    expect(r.stdout.length).toBeLessThanOrEqual(MAX_CAPTURE_CHARS);
+    expect(r.stderr).toContain("超えたので止めました");
+    const small = await spawnCapture("sh", ["-c", "echo ok"], 10_000);
+    expect(small).toEqual({ code: 0, stdout: "ok", stderr: "" });
+  });
+});
+
+run("使い捨てのコンテナの時間の上限", () => {
+  it("時間はコンテナの中で切る（手元や ssh が切れても、サーバーの上で終わって消える）", () => {
+    const n = vpsNames(cfg());
+    const c = siteFsCommand(n, "echo hi");
+    expect(c).toContain("--rm ");
+    expect(c).toMatch(/--entrypoint timeout '[^']+' -s KILL 900 sh -c 'echo hi'$/);
+    expect(siteFsCommand(n, "x", { timeoutSec: 30 })).toMatch(/-s KILL 30 sh -c 'x'$/);
   });
 });
