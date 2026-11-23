@@ -161,11 +161,11 @@ final class OffsiteBackups
         }
 
         /*
-         * 中身の違う同じ id を送り直すときは、先に古い checksum を消す。残したまま zip を上書きすると、
-         * 送っている間その id は「置き終えた」に数えられ、`--latest` が途中の物を選ぶ。
+         * 一時的な名前（`<id>.zip.part`）へ送り、大きさを確かめてから本来の名前へ差し替える。
+         * 送っている途中で落ちても、外に前からある同じ id の組（zip と checksum）は触らない
+         * （送り直しの失敗で、健全な世代を「途中のもの」に格下げしない）。
          */
-        $this->quietDelete($disk, $this->checksumPath($id));
-
+        $part = $path.'.part';
         $stream = @fopen($local, 'rb');
 
         if ($stream === false) {
@@ -173,8 +173,10 @@ final class OffsiteBackups
         }
 
         try {
-            $written = $disk->writeStream($path, $stream);
+            $written = $disk->writeStream($part, $stream);
         } catch (Throwable $e) {
+            $this->quietDelete($disk, $part);
+
             throw new BackupFailed('外の置き場所へ送れませんでした（'.$this->describe().'）: '.$e->getMessage(), 0, $e);
         } finally {
             if (is_resource($stream)) {
@@ -183,15 +185,36 @@ final class OffsiteBackups
         }
 
         if ($written === false) {
+            $this->quietDelete($disk, $part);
+
             throw new BackupFailed('外の置き場所へ送れませんでした（'.$this->describe().'）: 書き込みが拒まれました');
         }
 
-        $remoteBytes = $this->remoteSize($disk, $path);
+        $remoteBytes = $this->remoteSize($disk, $part);
 
         if ($remoteBytes !== $bytes) {
-            $this->quietDelete($disk, $path);
+            $this->quietDelete($disk, $part);
 
             throw new BackupFailed(sprintf('外の置き場所へ送れませんでした（%s）: 大きさが合いません（手元 %d / 外 %s）', $this->describe(), $bytes, $remoteBytes === null ? '読めない' : (string) $remoteBytes));
+        }
+
+        /*
+         * 差し替える。古い checksum を先に外し、新しい zip を置いてから新しい checksum を置く —
+         * どこで落ちても「checksum と zip が食い違ったまま置き終えた扱い」にはならない
+         * （checksum が無い id は途中のものとして数えない）。
+         */
+        $this->quietDelete($disk, $this->checksumPath($id));
+
+        try {
+            $moved = $disk->move($part, $path);
+        } catch (Throwable $e) {
+            $moved = false;
+        }
+
+        if ($moved === false) {
+            $this->quietDelete($disk, $part);
+
+            throw new BackupFailed('外の置き場所へ送れませんでした（'.$this->describe().'）: 送ったものを本来の名前へ差し替えられません');
         }
 
         try {
@@ -250,6 +273,22 @@ final class OffsiteBackups
         foreach (array_keys($names) as $name) {
             $name = (string) $name;
 
+            if (str_ends_with($name, '.zip.part')) {
+                $name = substr($name, 0, -5);
+
+                if (isset($names[$name])) {
+                    continue; // zip もある id は下で数える
+                }
+
+                $id = substr($name, 0, -4);
+
+                if (BackupPaths::isValidId($id)) {
+                    $partial[] = $id;
+                }
+
+                continue;
+            }
+
             if (! str_ends_with($name, '.zip')) {
                 continue;
             }
@@ -307,6 +346,7 @@ final class OffsiteBackups
         foreach ($listing['partial'] as $id) {
             if ($newest !== null && strcmp(self::sortKey($id), self::sortKey($newest)) < 0) {
                 $this->quietDelete($disk, $this->archivePath($id));
+                $this->quietDelete($disk, $this->archivePath($id).'.part');
             }
         }
 

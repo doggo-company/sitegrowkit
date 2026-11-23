@@ -255,7 +255,7 @@ final class OffsiteBackupTest extends TestCase
         $this->assertCount(1, $normal);
     }
 
-    public function test_同じidを送り直すと古いchecksumは先に消える(): void
+    public function test_送り直しが途中で落ちても前の組は残る(): void
     {
         $this->artisan('agentcms:backup-auto')->assertExitCode(0);
 
@@ -276,10 +276,15 @@ final class OffsiteBackupTest extends TestCase
         });
         config()->set('filesystems.disks.'.self::DISK, ['driver' => 'dies-mid-upload']);
 
-        $this->artisan('agentcms:backup-offsite', ['id' => $id])->assertExitCode(1);
+        $zip = $this->elsewhere.'/'.self::PREFIX.'/'.$id.'.zip';
+        $before = hash_file('sha256', $zip);
 
-        // 古い checksum が残っていると、途中の zip が「置き終えた」に数えられる
-        $this->assertFileDoesNotExist($sum);
+        $this->artisan('agentcms:backup-offsite', ['id' => $id, '--force' => true])->assertExitCode(1);
+
+        // 前からある組（zip と checksum）はそのまま。途中の一時ファイルは残さない
+        $this->assertSame($before, hash_file('sha256', $zip));
+        $this->assertSame(str_repeat('f', 64), trim((string) file_get_contents($sum)));
+        $this->assertFileDoesNotExist($zip.'.part');
     }
 
     public function test_同じ中身が外にあれば送り直さず健全な世代を残す(): void
@@ -363,12 +368,17 @@ final class OffsiteBackupTest extends TestCase
     public function test_途中で止まった古いものは次の整理で捨てる(): void
     {
         $stale = '20000101-000000-000-eeeeee';
+        $leftover = '20000102-000000-000-dddddd';
         @mkdir($this->elsewhere.'/'.self::PREFIX, 0777, true);
         file_put_contents($this->elsewhere.'/'.self::PREFIX.'/'.$stale.'.zip', 'PK…途中');
+        file_put_contents($this->elsewhere.'/'.self::PREFIX.'/'.$leftover.'.zip.part', 'PK…途中');
 
         $this->artisan('agentcms:backup-auto')->assertExitCode(0);
 
         $this->assertFileDoesNotExist($this->elsewhere.'/'.self::PREFIX.'/'.$stale.'.zip');
+        $this->assertFileDoesNotExist($this->elsewhere.'/'.self::PREFIX.'/'.$leftover.'.zip.part');
+        // 置き終えたものには一時ファイルが残らない
+        $this->assertSame([], glob($this->elsewhere.'/'.self::PREFIX.'/*.part') ?: []);
     }
 
     public function test_公開アドレスがlocalhostのままで場所を決めていなければ送らない(): void
