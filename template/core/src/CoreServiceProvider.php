@@ -12,8 +12,12 @@ use AgentCms\Core\Application\RequestCorrelation;
 use AgentCms\Core\Audit\PruneAuditLogsCommand;
 use AgentCms\Core\Backups\BackupLock;
 use AgentCms\Core\Backups\BackupRunLauncher;
+use AgentCms\Core\Backups\BackupSchedule;
+use AgentCms\Core\Backups\Console\AutoBackupCommand;
 use AgentCms\Core\Backups\Console\CreateBackupCommand;
+use AgentCms\Core\Backups\Console\OffsiteBackupCommand;
 use AgentCms\Core\Backups\Console\RecoverRestoreCommand;
+use AgentCms\Core\Backups\Console\RestoreBackupCommand;
 use AgentCms\Core\Backups\Console\RunBackupCommand;
 use AgentCms\Core\Backups\NullRestoreProbe;
 use AgentCms\Core\Backups\ProcessBackupRunLauncher;
@@ -59,6 +63,7 @@ use AgentCms\Core\Wxr\Console\PlanWxrCommand;
 use AgentCms\Core\Wxr\Console\RollbackWxrCommand;
 use AgentCms\Core\Wxr\Media\HostResolver;
 use AgentCms\Core\Wxr\Media\SystemHostResolver;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\ServiceProvider;
 
 final class CoreServiceProvider extends ServiceProvider
@@ -266,6 +271,14 @@ final class CoreServiceProvider extends ServiceProvider
 
         $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
 
+        /*
+         * 毎日の自動 backup（時刻を設定したときだけ載る — `BackupSchedule`）。
+         * core に置くのは、core を更新しただけのサイトでも env の 1 行で入るようにするため。
+         */
+        $this->callAfterResolving(Schedule::class, static function (Schedule $schedule): void {
+            BackupSchedule::register($schedule);
+        });
+
         // taxonomy コマンドは **CLI でのみ登録**する。
         // 登録は class の宣言だけで、boot 中に DB へ触れない（PV-6 / SY-3）
         if ($this->app->runningInConsole()) {
@@ -282,6 +295,9 @@ final class CoreServiceProvider extends ServiceProvider
                 CreateBackupCommand::class,
                 RunBackupCommand::class,
                 RecoverRestoreCommand::class,
+                AutoBackupCommand::class,
+                OffsiteBackupCommand::class,
+                RestoreBackupCommand::class,
                 PruneFormSubmissionsCommand::class,
                 PruneCommentsCommand::class,
                 ApplyWxrCommand::class,

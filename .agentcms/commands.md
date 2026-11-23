@@ -108,6 +108,9 @@ project-only:end -->
 <!-- project-only:start
 | `pnpm e2e:visual` | Visual regression: imported HTML vs rendered site (host, against running app). Thresholds: `.agentcms/visual-thresholds.json`, default 2% — see `visual-thresholds.example.json` |
 project-only:end -->
+| `php artisan agentcms:backup-auto` | Take a backup, copy it to the offsite disk (size + sha256 checked), prune old generations. Scheduled daily only when `AGENTCMS_BACKUP_SCHEDULE=HH:MM` is set. Exit 1 when offsite is configured and the copy fails; local backup is kept |
+| `php artisan agentcms:backup-offsite [<id>] [--list]` | Copy a local backup to the offsite disk (`AGENTCMS_BACKUP_OFFSITE_DISK`: a `config/filesystems.php` disk — another directory or S3-compatible). `--list` shows schedule/offsite settings and remote generations; exit 1 if unset or unreadable |
+| `php artisan agentcms:backup-restore <id>\|--latest [--from-offsite] [--force]` | Restore DB + media from a backup on the server CLI. `--from-offsite` downloads it first and refuses a sha256 mismatch. Same verification, pre-restore backup and session cut as the admin restore; asks for confirmation unless `--force` |
 | `php artisan agentcms:maintenance` | Check installed PHP dependencies and HTTPS certificate; save private results for admin/readiness (daily in production/staging with schedule:run). No code updates. |
 | `pnpm lighthouse` | Lighthouse CI (host, against docker app) |
 

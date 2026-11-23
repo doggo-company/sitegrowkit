@@ -97,7 +97,10 @@ return [
      *
      * **保存先は設定で変えられない。** `storage/app/private/backups` 固定である
      * （public 配下に落ちると URL 推測だけで全データが持ち去られる — SPEC §G.1）。
-     * ここで決めるのは世代の残し方だけ。**自動では走らない。**
+     *
+     * **自動では走らない**のが既定。`schedule` に時刻を入れたときだけ、毎日その時刻に
+     * `agentcms:backup-auto` が取る（サーバーの cron で schedule:run が動いていること）。
+     * `offsite` を設定すると、取った zip の写しを別の置き場所へ送る（手元の置き場所は変わらない）。
      */
     'backup' => [
         'keep' => (int) env('AGENTCMS_BACKUP_KEEP', 5),
@@ -112,6 +115,18 @@ return [
          */
         'run_start_timeout' => (int) env('AGENTCMS_BACKUP_RUN_START_TIMEOUT', 120),
         'run_stale_after' => (int) env('AGENTCMS_BACKUP_RUN_STALE_AFTER', 600),
+        // 毎日の自動取得の時刻（HH:MM・アプリの時刻帯）。空なら自動では取らない
+        'schedule' => (string) env('AGENTCMS_BACKUP_SCHEDULE', ''),
+        /*
+         * 別の置き場所（offsite）。`disk` は config/filesystems.php の disk 名。空なら送らない。
+         * 1 つの置き場所を複数サイトで使うときは、`prefix` をサイトごとに変える
+         * （空なら APP_URL の host から作る）。`keep` は外に残す世代で、手元の `keep` とは別に数える。
+         */
+        'offsite' => [
+            'disk' => (string) env('AGENTCMS_BACKUP_OFFSITE_DISK', ''),
+            'prefix' => (string) env('AGENTCMS_BACKUP_OFFSITE_PREFIX', ''),
+            'keep' => (int) env('AGENTCMS_BACKUP_OFFSITE_KEEP', 14),
+        ],
     ],
 
     /*

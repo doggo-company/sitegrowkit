@@ -6,6 +6,13 @@ SiteGrowKit の変更履歴です。
 > そこに書かれた販売・購入・返金・ライセンスの条件・入手方法（Polar）・アップデートの期間などは、
 > GPL-3.0-or-later のこの版には**適用されません**。いまの条件は [LICENSE](LICENSE) と [COPYRIGHT](COPYRIGHT) を見てください。
 
+## 未リリース — 毎日のバックアップを別の置き場所へ写せるようにしました
+
+- `AGENTCMS_BACKUP_SCHEDULE=HH:MM` を設定すると、毎日その時刻にバックアップを取ります（`agentcms:backup-auto`。空なら今までどおり自動では取りません）
+- `AGENTCMS_BACKUP_OFFSITE_DISK` を設定すると、取ったバックアップの写しを S3 互換の置き場所か別のディレクトリへ送ります。大きさと checksum を確かめ、送れなければ終了コード 1 で知らせます。置き場所に残す世代は `AGENTCMS_BACKUP_OFFSITE_KEEP`（既定 14）
+- `agentcms:backup-restore --from-offsite --latest` で、置き場所から取り込んで戻せます。checksum が合わないものは取り込みません
+- 手元の置き場所（`storage/app/private/backups`）と 5 世代の整理は変えていません
+
 ## 0.9.4-rc33 — ダッシュボードと権限の案内を揃えました（未配布）
 
 rc32 の確認で見つかった 2 点を直した候補です。まだ配布していません。

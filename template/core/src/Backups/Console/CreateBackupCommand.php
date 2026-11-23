@@ -20,7 +20,8 @@ use Illuminate\Console\Command;
  * を**別プロセス**として起こす（`ProcessBackupRunLauncher`）。こちらは人が打つ入口で、
  * 起動できない環境では管理画面が**このコマンドをそのまま表示**する。挙動は変えていない。
  *
- * 自動では走らない（保持期間の整理と同じ作法）。cron を置くかは運用の判断である。
+ * このコマンド自体は自動では走らない（保持期間の整理と同じ作法）。毎日の自動取得と
+ * 外の置き場所への写しは `agentcms:backup-auto`（`AGENTCMS_BACKUP_SCHEDULE` を入れたときだけ載る）。
  */
 final class CreateBackupCommand extends Command
 {
