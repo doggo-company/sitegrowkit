@@ -287,6 +287,26 @@ final class OffsiteBackupTest extends TestCase
         $this->assertFileDoesNotExist($zip.'.part');
     }
 
+    public function test_s3互換でchecksumを置けなくてもzipは消さない(): void
+    {
+        $real = Storage::build(['driver' => 'local', 'root' => $this->elsewhere, 'throw' => true]);
+        Storage::extend('s3', static function () use ($real): Filesystem {
+            $disk = \Mockery::mock($real)->makePartial();
+            $disk->shouldReceive('put')->andThrow(new \RuntimeException('503 SlowDown'));
+
+            return $disk;
+        });
+        config()->set('filesystems.disks.'.self::DISK, ['driver' => 's3']);
+
+        $this->artisan('agentcms:backup-auto')
+            ->expectsOutputToContain('checksum を置けません')
+            ->assertExitCode(1);
+
+        // zip は残り、checksum が無いので「途中のもの」— 戻す候補にはしないが、黙って消えもしない
+        $this->assertCount(1, glob($this->elsewhere.'/'.self::PREFIX.'/*.zip') ?: []);
+        $this->assertSame([], glob($this->elsewhere.'/'.self::PREFIX.'/*.sha256') ?: []);
+    }
+
     public function test_差し替えに失敗したら前の組のまま残る(): void
     {
         $this->artisan('agentcms:backup-auto')->assertExitCode(0);
@@ -325,7 +345,7 @@ final class OffsiteBackupTest extends TestCase
     {
         $written = [];
         $real = Storage::build(['driver' => 'local', 'root' => $this->elsewhere, 'throw' => true]);
-        Storage::extend('object-store', static function () use ($real, &$written): Filesystem {
+        Storage::extend('s3', static function () use ($real, &$written): Filesystem {
             $disk = \Mockery::mock($real)->makePartial();
             $disk->shouldReceive('writeStream')->andReturnUsing(static function (string $path, $stream) use ($real, &$written): bool {
                 $written[] = $path;
@@ -336,7 +356,7 @@ final class OffsiteBackupTest extends TestCase
 
             return $disk;
         });
-        config()->set('filesystems.disks.'.self::DISK, ['driver' => 'object-store']);
+        config()->set('filesystems.disks.'.self::DISK, ['driver' => 's3']);
 
         $this->artisan('agentcms:backup-auto')->assertExitCode(0);
 

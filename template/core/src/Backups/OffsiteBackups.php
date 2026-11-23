@@ -224,7 +224,11 @@ final class OffsiteBackups
         }
 
         if ($ok === false) {
-            $this->quietDelete($disk, $path);
+            /*
+             * 一時的な名前から差し替えた zip は消す（前の組は差し替えで既に無い）。直接置いたときは
+             * zip を残して checksum だけ外す — その id は「途中のもの」として残り、黙って消えない。
+             */
+            $this->quietDelete($disk, $staged ? $path : $this->checksumPath($id));
 
             throw new BackupFailed('外の置き場所へ送れませんでした（'.$this->describe().'）: checksum を置けません');
         }
@@ -538,12 +542,16 @@ final class OffsiteBackups
         return rtrim($base, '/').'/';
     }
 
-    /** 一時的な名前で送ってから差し替えるか（ディレクトリの置き場所だけ — rename が原子的） */
+    /**
+     * 一時的な名前で送ってから差し替えるか。直接置くのは S3 互換（`s3` driver）だけ —
+     * PUT は終わるまで中身が入れ替わらない。ディレクトリ・sftp・ftp などは書いている途中の物が
+     * 見えるので、一時的な名前に置いてから差し替える。
+     */
     private function stagesUploads(): bool
     {
         $config = config('filesystems.disks.'.$this->diskName());
 
-        return is_array($config) && ($config['driver'] ?? null) === 'local';
+        return ! is_array($config) || ($config['driver'] ?? null) !== 's3';
     }
 
     /**

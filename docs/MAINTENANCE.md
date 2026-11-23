@@ -47,7 +47,7 @@ AGENTCMS_BACKUP_ALERT_MAIL=ops@example.com   # 失敗したら知らせる宛先
 - 置き場所は 2 種類から選べます
   - **S3 互換**（Cloudflare R2・Backblaze B2・MinIO など）：`config/filesystems.php` の `s3` disk に `AWS_ACCESS_KEY_ID`・`AWS_SECRET_ACCESS_KEY`・`AWS_DEFAULT_REGION`・`AWS_BUCKET`・`AWS_ENDPOINT`（必要なら `AWS_USE_PATH_STYLE_ENDPOINT=true`）を設定し、プロジェクトで `composer require league/flysystem-aws-s3-v3` を実行します。キットにはこのパッケージを同梱していません
   - **別のディレクトリ**（別のディスク・ネットワークのマウント）：`AGENTCMS_BACKUP_OFFSITE_DISK=backup-offsite` と `AGENTCMS_BACKUP_OFFSITE_ROOT=<絶対パス>`。手元のバックアップと同じ場所の中、または公開ディレクトリの中を指すと送信を止めます
-- 別のディレクトリへは `<id>.zip.part` に書いてから名前を変えて差し替え、S3 互換へは本来の名前へ直接置きます（PUT は終わるまで中身が入れ替わりません）。どちらも、送っている途中で落ちても前からある同じ世代には触りません。送った後に大きさを読み直し、`<id>.zip.sha256` を横に置きます。checksum まで置き終えたものだけを世代・戻す候補に数えます（送っている途中で止まった zip は数えず、次の整理で捨てます）。送れなかったときは `agentcms:backup-auto` が終了コード 1 で終わります。手元のバックアップは残します
+- S3 互換（`s3` driver）へは本来の名前へ直接置き、それ以外（別のディレクトリなど）へは `<id>.zip.part` に書いてから名前を変えて差し替えます（PUT は終わるまで中身が入れ替わりません）。どちらも、送っている途中で落ちても前からある同じ世代には触りません。送った後に大きさを読み直し、`<id>.zip.sha256` を横に置きます。checksum まで置き終えたものだけを世代・戻す候補に数えます（送っている途中で止まった zip は数えず、次の整理で捨てます）。送れなかったときは `agentcms:backup-auto` が終了コード 1 で終わります。手元のバックアップは残します
 - 世代の整理は、このサイトの prefix の中だけで行います。**置き場所の鍵には、一覧・読み取り・書き込み・削除の権限が要ります**（削除できないと、整理の失敗として毎回知らせます）
 - 手元のバックアップと同じ private 領域（`storage/app/private`）の中・公開ディレクトリの中・相対パスを指すと送信を止めます。シンボリックリンクはたどった先で判断します
 
