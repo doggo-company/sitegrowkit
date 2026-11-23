@@ -28,7 +28,7 @@ use Throwable;
  *
  * ## 置き場所
  *
- * `storage/app/private/backup-status/auto.json`（web から見えない・他人は読めない 0660／ディレクトリ 0770）。backup の zip の中にも、
+ * `storage/app/private/backup-status/auto.json`（web から見えない・他人は読めない 0660／ディレクトリ 2770）。backup の zip の中にも、
  * 手元の backup の置き場所にも入れない — 復元で古い結果が戻ってくる、手元の置き場所が
  * 壊れたときに結果も書けない、を起こさないため。
  *
@@ -237,7 +237,7 @@ final class AutoBackupStatus
 
     /**
      * 原子的に置き換える。cron（schedule:run）と web（管理画面）のどちらが先に作っても、
-     * 同じグループならもう片方が読み書きできるよう 0660／0770 にする（他人には読ませない。
+     * 同じグループならもう片方が読み書きできるよう 0660／2770（setgid）にする（他人には読ませない。
      * 理由の文は鍵を伏せてある）。書けなければログに残して false。
      *
      * @param  array<string, mixed>  $data
@@ -253,7 +253,8 @@ final class AutoBackupStatus
                 throw new BackupFailed('置き場所を作れません');
             }
 
-            @chmod($dir, 0770); // umask で落ちたグループの書き込みを戻す
+            // umask で落ちたグループの書き込みを戻し、setgid で中のファイルを同じグループにする
+            @chmod($dir, 02770);
 
             if (is_link($path)) {
                 throw new BackupFailed('置き場所がシンボリックリンクです');

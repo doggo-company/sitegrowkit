@@ -179,6 +179,8 @@ final class AutoBackupAlertTest extends TestCase
         $this->assertSame(0, fileperms($path) & 0007);
         $this->assertSame(0, fileperms(dirname($path)) & 0007);
         $this->assertSame(0660, fileperms($path) & 0777);
+        // 中のファイルがディレクトリのグループになる（cron と web が別のユーザーでも読み合える）
+        $this->assertSame(02000, fileperms(dirname($path)) & 02000);
     }
 
     public function test_backupを作れなくても失敗として残る(): void

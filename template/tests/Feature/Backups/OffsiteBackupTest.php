@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace Tests\Feature\Backups;
 
 use AgentCms\Core\Backups\BackupPaths;
+use AgentCms\Core\Media\MediaKind;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -261,6 +263,9 @@ final class OffsiteBackupTest extends TestCase
         $sum = $this->elsewhere.'/'.self::PREFIX.'/'.$id.'.zip.sha256';
         $this->assertFileExists($sum);
 
+        // 外の組が手元と違う（以前に別の中身で送った・壊れた）
+        file_put_contents($sum, str_repeat('f', 64)."\n");
+
         // 送り直しの途中で落ちる置き場所（zip の書き込みで止まる）
         $real = Storage::build(['driver' => 'local', 'root' => $this->elsewhere, 'throw' => true]);
         Storage::extend('dies-mid-upload', static function () use ($real): Filesystem {
@@ -275,6 +280,57 @@ final class OffsiteBackupTest extends TestCase
 
         // 古い checksum が残っていると、途中の zip が「置き終えた」に数えられる
         $this->assertFileDoesNotExist($sum);
+    }
+
+    public function test_同じ中身が外にあれば送り直さず健全な世代を残す(): void
+    {
+        $this->artisan('agentcms:backup-auto')->assertExitCode(0);
+
+        $id = basename($this->localArchives()[0], '.zip');
+        $sum = $this->elsewhere.'/'.self::PREFIX.'/'.$id.'.zip.sha256';
+
+        // 送り直すと途中で落ちる置き場所。同じ中身なら書きに行かないので落ちない
+        $real = Storage::build(['driver' => 'local', 'root' => $this->elsewhere, 'throw' => true]);
+        Storage::extend('dies-mid-upload-2', static function () use ($real): Filesystem {
+            $disk = \Mockery::mock($real)->makePartial();
+            $disk->shouldReceive('writeStream')->andThrow(new \RuntimeException('connection reset'));
+
+            return $disk;
+        });
+        config()->set('filesystems.disks.'.self::DISK, ['driver' => 'dies-mid-upload-2']);
+
+        $this->artisan('agentcms:backup-offsite', ['id' => $id])->assertExitCode(0);
+
+        $this->assertSame(hash_file('sha256', $this->localArchives()[0]), trim((string) file_get_contents($sum)));
+    }
+
+    public function test_作り直したデータベースにも外から戻せてメディアも戻る(): void
+    {
+        $this->entry('作り直しても戻る記事');
+        $kind = MediaKind::Image;
+        $media = Storage::disk($kind->disk());
+        $file = $kind->directory().'/offsite-restore-test.txt';
+        $media->put($file, 'image bytes');
+
+        $this->artisan('agentcms:backup-auto')->assertExitCode(0);
+
+        // サーバーごと失った: 手元の backup・メディア・中身が無い。新しい DB（マイグレーションだけ済んだ空の表）
+        self::removeTree(BackupPaths::root());
+        $media->delete($file);
+        Schema::withoutForeignKeyConstraints(static function (): void {
+            foreach (Schema::getTableListing(schemaQualified: false) as $table) {
+                if ($table !== 'migrations') {
+                    DB::table($table)->delete();
+                }
+            }
+        });
+        $this->assertDatabaseMissing('post', ['title' => '作り直しても戻る記事']);
+
+        $this->artisan('agentcms:backup-restore', ['--from-offsite' => true, '--latest' => true, '--force' => true])
+            ->assertExitCode(0);
+
+        $this->assertDatabaseHas('post', ['title' => '作り直しても戻る記事']);
+        $this->assertSame('image bytes', $media->get($file));
     }
 
     public function test_送っている途中で止まったものは戻す候補にも世代にも数えない(): void

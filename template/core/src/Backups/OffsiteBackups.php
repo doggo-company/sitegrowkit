@@ -151,7 +151,15 @@ final class OffsiteBackups
         $path = $this->archivePath($id);
 
         /*
-         * 同じ id を送り直すときは、先に古い checksum を消す。残したまま zip を上書きすると、
+         * 外に同じ中身が置き終わっているなら、送り直さない（送り直しが途中で落ちて、
+         * 健全な世代を「途中のもの」に格下げしない）。
+         */
+        if ($this->alreadyThere($disk, $id, $sha256, $bytes)) {
+            return ['id' => $id, 'path' => $path, 'bytes' => $bytes, 'sha256' => $sha256];
+        }
+
+        /*
+         * 中身の違う同じ id を送り直すときは、先に古い checksum を消す。残したまま zip を上書きすると、
          * 送っている間その id は「置き終えた」に数えられ、`--latest` が途中の物を選ぶ。
          */
         $this->quietDelete($disk, $this->checksumPath($id));
@@ -486,6 +494,20 @@ final class OffsiteBackups
         }
 
         return rtrim($base, '/').'/';
+    }
+
+    /** 外に、手元と同じ checksum・同じ大きさの組が既にあるか（読めなければ false） */
+    private function alreadyThere(Filesystem $disk, string $id, string $sha256, int $bytes): bool
+    {
+        try {
+            $raw = $disk->exists($this->checksumPath($id)) ? $disk->get($this->checksumPath($id)) : null;
+        } catch (Throwable) {
+            return false;
+        }
+
+        return is_string($raw)
+            && strtolower(trim($raw)) === $sha256
+            && $this->remoteSize($disk, $this->archivePath($id)) === $bytes;
     }
 
     private function remoteChecksum(Filesystem $disk, string $id): string
