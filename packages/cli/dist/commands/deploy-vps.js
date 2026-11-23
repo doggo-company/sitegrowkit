@@ -1,7 +1,7 @@
 import { buildArtifact, cleanupBuilds, newReleaseId } from "../deploy/build.js";
 import { postHealthAction, runHealthChecks } from "../deploy/health.js";
-import { currentTarget, ensureLayout, linkShared, migrate, optimize, switchCurrent, taxonomySync, uploadAndExtract, } from "../deploy/release.js";
-import { acquireSiteLock, backupDatabaseVps, cleanupReleasesVps, healthyReleases, markHealthy, releaseIdIsFree, rollbackTargetByHistory, releaseSiteLock, runScript, siteContainers, siteRoute, vpsDoctor, vpsSetupActions, } from "../deploy/providers/vps.js";
+import { ensureLayout, linkShared, migrate, optimize, switchCurrent, taxonomySync, uploadAndExtract, } from "../deploy/release.js";
+import { acquireSiteLock, backupDatabaseVps, cleanupReleasesVps, healthyReleases, markHealthy, readCurrent, releaseIdIsFree, rollbackTargetByHistory, releaseSiteLock, runScript, siteContainers, siteRoute, vpsDoctor, vpsSetupActions, } from "../deploy/providers/vps.js";
 import { vpsNames } from "../deploy/providers/vps-assets.js";
 import { worstStatus } from "../deploy/types.js";
 import { fail, heading, info, ok, warn } from "../ui.js";
@@ -146,7 +146,16 @@ export async function vpsDeploy(root, cfg, exec, io, approval, opts) {
 async function deployLocked(ctx, root, artifactPath, io) {
     const { cfg, releaseId } = ctx;
     const n = vpsNames(cfg);
-    const previous = await currentTarget(ctx);
+    const live = await readCurrent(ctx);
+    if (!live.ok) {
+        fail({
+            what: "deploy を始められません",
+            why: live.detail,
+            fix: "ssh でつながるか・その場所を確かめてから、もう一度流してください",
+        });
+        return 1;
+    }
+    const previous = live.target;
     const rel = `${n.appDir}/releases/${releaseId}`;
     const steps = [
         ["release の番号が空いているか", () => releaseIdIsFree(ctx)],
@@ -236,7 +245,16 @@ export async function vpsRollback(cfg, exec, io, approval) {
 async function rollbackLocked(ctx, io, approval) {
     const { cfg, exec } = ctx;
     const n = vpsNames(cfg);
-    const cur = await currentTarget(ctx);
+    const live = await readCurrent(ctx);
+    if (!live.ok) {
+        fail({
+            what: "rollback できません",
+            why: live.detail,
+            fix: "ssh でつながるか・その場所を確かめてから、もう一度流してください",
+        });
+        return 1;
+    }
+    const cur = live.target;
     if (!cur) {
         fail({
             what: "rollback できません",

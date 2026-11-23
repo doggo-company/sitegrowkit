@@ -20,6 +20,8 @@ import {
   backupDatabaseVps,
   cleanupReleasesVps,
   edgeFilesScript,
+  edgeUpgradeScript,
+  readCurrent,
   healthyReleases,
   releaseIdIsFree,
   releaseSiteLock,
@@ -88,6 +90,8 @@ case "$*" in
     elif [ "\${FAKE_CREATE:-ok}" != ok ] && grep -q "CREATE" "$FAKE_LOG.stdin.$n"; then echo "ERROR 1396: Operation CREATE USER failed"; exit 1; fi ;;
   *"SELECT 1"*) [ "\${FAKE_AUTH:-ok}" = ok ] || { echo "ERROR 1045: Access denied"; exit 1; } ;;
   *"volume inspect"*) [ "\${FAKE_VOLUME:-none}" = exists ] || exit 1 ;;
+  *"inspect -f {{.State.Health.Status}}"*) echo "\${FAKE_HEALTH:-starting}" ;;
+  *"inspect -f {{.State.Running}}"*) echo true ;;
   *mysqldump*) [ "\${FAKE_DUMP:-ok}" = ok ] || exit 2; for i in $(seq 1 400); do echo "INSERT INTO t VALUES ($i, 'row-$i-$RANDOM');"; done ;;
 esac
 exit 0
@@ -602,5 +606,72 @@ run("edge の鍵", () => {
     const ok2 = await runScript(new LocalExecutor(), edgeFilesScript(n));
     expect(ok2.stdout).toContain("edge-files-ok");
     expect(existsSync(join(n.root, "edge/.agentcms.lock"))).toBe(false);
+  });
+});
+
+run("edge をそろえる台本", () => {
+  it("前の形（Caddy が直接配信する）のサイトの行が残っていれば、edge を変える前に止める", async () => {
+    const n = vpsNames(cfg());
+    const edge = join(n.root, "edge");
+    mkdirSync(join(edge, "sites"), { recursive: true });
+    writeFileSync(join(edge, "compose.yml"), "# 前の形\n");
+    writeFileSync(
+      join(edge, "sites/old-site.caddy"),
+      "old.example.com {\n\tphp_fastcgi unix//srv/agentcms/sites/old-site/run/php-fpm.sock\n\tfile_server\n}\n",
+    );
+    writeFileSync(
+      join(edge, "sites/new-site.caddy"),
+      "new.example.com {\n\treverse_proxy agentcms-new-site-web:8080\n}\n",
+    );
+    const r = await runScript(new LocalExecutor(), edgeUpgradeScript(n));
+    expect(r.code).not.toBe(0);
+    expect(r.stdout).toContain("edge-old-sites");
+    expect(r.stdout).toContain("old-site.caddy");
+    expect(r.stdout).not.toContain("new-site.caddy");
+    expect(readFileSync(join(edge, "compose.yml"), "utf8")).toBe("# 前の形\n");
+    expect(dockerCalls()).toEqual([]);
+  });
+
+  it("前の形の行が無ければ、前の compose を .prev に残して置き換え、起こし直す", async () => {
+    const n = vpsNames(cfg());
+    const edge = join(n.root, "edge");
+    mkdirSync(join(edge, "sites"), { recursive: true });
+    writeFileSync(join(edge, "compose.yml"), "# 前の形\n");
+    const r = await runScript(
+      new LocalExecutor({ FAKE_HEALTH: "healthy" }),
+      edgeUpgradeScript(n),
+    );
+    expect(readFileSync(join(edge, "compose.yml.prev"), "utf8")).toBe(
+      "# 前の形\n",
+    );
+    expect(readFileSync(join(edge, "compose.yml"), "utf8")).toContain(
+      "agentcms.root:",
+    );
+    expect(dockerCalls().some((c) => c.includes("compose up -d"))).toBe(true);
+    expect(r.stdout).toContain("edge-upgrade-ok");
+  });
+});
+
+run("いまの release を読む", () => {
+  it("まだ無い・ある・読めない・symlink でない を分ける", async () => {
+    const c = cfg();
+    expect((await readCurrent(ctx(c))).ok).toBe(false); // 置き場所が無い（読めない）
+    mkdirSync(join(c.remote.appDir, "releases", "20260101000000"), {
+      recursive: true,
+    });
+    expect(await readCurrent(ctx(c))).toEqual({ ok: true, target: null });
+    spawnSync("ln", [
+      "-sfn",
+      join(c.remote.appDir, "releases", "20260101000000"),
+      join(c.remote.appDir, "current"),
+    ]);
+    expect(await readCurrent(ctx(c))).toEqual({
+      ok: true,
+      target: join(c.remote.appDir, "releases", "20260101000000"),
+    });
+    rmSync(join(c.remote.appDir, "current"));
+    mkdirSync(join(c.remote.appDir, "current"));
+    const bad = await readCurrent(ctx(c));
+    expect(bad.ok).toBe(false);
   });
 });

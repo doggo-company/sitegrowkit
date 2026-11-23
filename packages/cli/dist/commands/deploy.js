@@ -133,10 +133,10 @@ ${plan.database.pendingMigrations.map((m) => `    - ${m}`).join("\n") || "    �
 
 [strategy]
   storage:     ${plan.storageStrategy}
-  public:      ${plan.publicStrategy === "caddy_root"
-        ? "caddy_root（Caddy が current/public を直接配信・PHP はサイトのコンテナ）"
+  public:      ${plan.publicStrategy === "site_web"
+        ? "site_web（Caddy は HTTPS と転送だけ → サイトの web（nginx）が current/public を配信 → PHP-FPM）"
         : `${plan.publicStrategy}（docroot は実ディレクトリ + index.php スタブ）`}
-  docroot${plan.publicStrategy === "caddy_root" ? " / Caddy" : " 競合（DirectoryIndex: index.html > htm > shtml > cgi > php）"}:
+  docroot${plan.publicStrategy === "site_web" ? " / Caddy" : " 競合（DirectoryIndex: index.html > htm > shtml > cgi > php）"}:
 ${plan.docrootActions.map((a) => `    - ${a}`).join("\n")}
   symlink:
 ${plan.symlinkChanges.map((c) => `    - ${c}`).join("\n")}

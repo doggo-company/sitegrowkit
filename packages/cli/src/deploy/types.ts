@@ -118,7 +118,7 @@ export function worstStatus(checks: CapabilityCheck[]): CheckStatus {
 export type PublicStrategy =
   | "docroot_symlink" // docroot 自体を current/public への symlink に置換
   | "entry_stub" // docroot は実ディレクトリのまま、index.php スタブ + 公開アセット同期
-  | "caddy_root"; // VPS: Caddy が current/public を直接配信し、PHP は symlink を解いてから渡す
+  | "site_web"; // VPS: Caddy（HTTPS・転送だけ）→ サイトの web（nginx）が current/public を配信し、PHP へは symlink を解いてから渡す
 
 export interface DeployPlan {
   target: string;

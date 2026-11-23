@@ -85,7 +85,7 @@ export async function buildPlan(projectRoot, cfg, exec, caps) {
             destructive: hasDestructiveMigration(projectRoot, pending),
         },
         storageStrategy: "shared/storage を release 間で共有（release の storage は shared への symlink）",
-        publicStrategy: vps ? "caddy_root" : "entry_stub",
+        publicStrategy: vps ? "site_web" : "entry_stub",
         docrootActions,
         symlinkChanges: [
             `${cfg.remote.appDir}/current -> releases/<releaseId>`,

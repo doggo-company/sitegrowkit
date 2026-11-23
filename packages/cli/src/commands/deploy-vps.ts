@@ -2,7 +2,6 @@ import { buildArtifact, cleanupBuilds, newReleaseId } from "../deploy/build.js";
 import type { RemoteExecutor } from "../deploy/executor.js";
 import { postHealthAction, runHealthChecks } from "../deploy/health.js";
 import {
-  currentTarget,
   ensureLayout,
   linkShared,
   migrate,
@@ -18,6 +17,7 @@ import {
   cleanupReleasesVps,
   healthyReleases,
   markHealthy,
+  readCurrent,
   releaseIdIsFree,
   rollbackTargetByHistory,
   releaseSiteLock,
@@ -237,7 +237,16 @@ async function deployLocked(
 ): Promise<number> {
   const { cfg, releaseId } = ctx;
   const n = vpsNames(cfg);
-  const previous = await currentTarget(ctx);
+  const live = await readCurrent(ctx);
+  if (!live.ok) {
+    fail({
+      what: "deploy を始められません",
+      why: live.detail,
+      fix: "ssh でつながるか・その場所を確かめてから、もう一度流してください",
+    });
+    return 1;
+  }
+  const previous = live.target;
   const rel = `${n.appDir}/releases/${releaseId}`;
   const steps: Array<[string, () => Promise<StepResult>]> = [
     ["release の番号が空いているか", () => releaseIdIsFree(ctx)],
@@ -346,7 +355,16 @@ async function rollbackLocked(
 ): Promise<number> {
   const { cfg, exec } = ctx;
   const n = vpsNames(cfg);
-  const cur = await currentTarget(ctx);
+  const live = await readCurrent(ctx);
+  if (!live.ok) {
+    fail({
+      what: "rollback できません",
+      why: live.detail,
+      fix: "ssh でつながるか・その場所を確かめてから、もう一度流してください",
+    });
+    return 1;
+  }
+  const cur = live.target;
   if (!cur) {
     fail({
       what: "rollback できません",

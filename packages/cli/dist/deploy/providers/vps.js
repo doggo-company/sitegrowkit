@@ -354,11 +354,18 @@ chmod 600 ${shq(edge + "/secrets/mysql-root")}
 echo edge-files-ok`;
 }
 /** edge の compose をこの版の形にそろえ、作り直す（前のものは .prev に残す） */
-function edgeUpgradeScript(n) {
+export function edgeUpgradeScript(n) {
     const edge = `${n.root}/edge`;
     return `set -euo pipefail
 ${edgeLock(n)}
 cd ${shq(edge)}
+# 前の形（Caddy がファイルを直接配信する）のサイトの行が残っていたら、edge を変える前に止める。
+# 先に変えると、その行のサイトは配信の道を失う。各サイトを今のキットで deploy し直すと行が今の形になる
+old=$(grep -lE 'php_fastcgi|file_server' sites/*.caddy 2>/dev/null || true)
+if [ -n "$old" ]; then
+  echo "edge-old-sites: 前の形のサイトの行があります（$(printf '%s' "$old" | xargs -n1 basename | tr '\\n' ' ')）。先にそれぞれのサイトを agentcms deploy で出し直してから、setup をもう一度流してください。edge は変えていません"
+  exit 1
+fi
 cp -p compose.yml compose.yml.prev
 cat > compose.yml.new << 'AGENTCMS_EDGE'
 ${edgeCompose(n.root)}AGENTCMS_EDGE
@@ -706,4 +713,23 @@ export async function releaseIdIsFree(ctx) {
     return ng("release-id", r.stdout.includes("release-taken")
         ? `release ${ctx.releaseId} は既にあります（別の手元から同じ秒に出した可能性）。何も変えずに止めました。もう一度流せば新しい番号で出します`
         : `release の置き場所を読めませんでした: ${tail(r)}`);
+}
+/**
+ * いまの current を**厳しく**読む。「まだ無い（初回）」と「読めなかった」を分ける。
+ * 読めなかったのに初回と読むと、health が落ちたときに戻す先が無いまま進んでしまう。
+ */
+export async function readCurrent(ctx) {
+    const n = vpsNames(ctx.cfg);
+    const r = await ctx.exec.exec(`cd ${shq(n.appDir)} || exit 3; if [ -L current ]; then printf 'current=%s\\n' "$(readlink current)"; elif [ -e current ]; then echo current-not-link; else echo current-none; fi`);
+    if (r.code === 0 && r.stdout.includes("current-none"))
+        return { ok: true, target: null };
+    const m = /current=(\S+)/.exec(r.stdout);
+    if (r.code === 0 && m)
+        return { ok: true, target: m[1] };
+    return {
+        ok: false,
+        detail: r.stdout.includes("current-not-link")
+            ? `${n.appDir}/current が symlink ではありません（手で作られたディレクトリなど）。何も変えずに止めました`
+            : `いまの release（current）を読めませんでした: ${tail(r)}。何も変えずに止めました`,
+    };
 }

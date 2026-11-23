@@ -832,7 +832,23 @@ exit 0`,
   step(
     "6d. edge の compose が古い形なら、setup がそろえる（サイトは 200 のまま戻る）",
   );
-  remote("printf '# 古い形のつもり\\n' >> /srv/agentcms/edge/compose.yml");
+  // 前の形（Caddy が直接配信する）のサイトの行が残っていれば、edge を変える前に止まる
+  remote(
+    "printf 'old.localhost {\\n\\tphp_fastcgi unix//srv/agentcms/sites/old/run/php-fpm.sock\\n\\tfile_server\\n}\\n' > /srv/agentcms/edge/sites/zz-old.caddy && printf '# 古い形のつもり\\n' >> /srv/agentcms/edge/compose.yml",
+  );
+  a = agentcms("setup-old-sites", ["deploy", "setup", "-t", S1.target, "-y"]);
+  check(
+    a.code !== 0 && a.out.includes("zz-old.caddy"),
+    "前の形のサイトの行があると、edge を変えずに止まる",
+  );
+  check(
+    remote(
+      "grep -c '古い形のつもり' /srv/agentcms/edge/compose.yml",
+    ).stdout.trim() === "1",
+    "edge の compose は変わっていない",
+  );
+  check((await waitHealthy()) === 200, "サイト 1 は 200 のまま");
+  remote("rm -f /srv/agentcms/edge/sites/zz-old.caddy");
   a = agentcms("setup-upgrade", ["deploy", "setup", "-t", S1.target, "-y"]);
   check(
     a.code === 0 && a.out.includes("edge_upgrade"),

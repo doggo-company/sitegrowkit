@@ -134,7 +134,7 @@ agentcms deploy staging -t staging    # 更新（毎回 DB バックアップ �
 agentcms deploy rollback -t staging   # health まで通った 1 つ前の release へ（DB は触らない）
 ```
 
-health まで通った release には印が付き、公開した順に `releases.history` へ書かれる。rollback はこの記録で 1 つ前に出ていた release へ戻る（release の番号＝手元の時計の時刻の順ではない。migration などで途中で落ちた release には戻らない）。戻した先の health が通らなければ、元の release に戻して止まる。古い release は、印のあるものを `keepReleases`（既定 3）まで残し、途中で落ちたものは片付ける。同じサイトへの deploy と rollback は同時に 1 つしか動かない（2 つ目は「別の deploy / rollback が動いています」で止まる）。PHP は `current` の symlink を Caddy が実際のパスへ解いてから受け取るので、切り替えた直後から新しい（戻したら古い）コードが動く。
+health まで通った release には印が付き、公開した順に `releases.history` へ書かれる。rollback はこの記録で 1 つ前に出ていた release へ戻る（release の番号＝手元の時計の時刻の順ではない。migration などで途中で落ちた release には戻らない）。戻した先の health が通らなければ、元の release に戻して止まる。古い release は、印のあるものを `keepReleases`（既定 3）まで残し、途中で落ちたものは片付ける。同じサイトへの deploy と rollback は同時に 1 つしか動かない（2 つ目は「別の deploy / rollback が動いています」で止まる）。PHP は `current` の symlink をサイトの web（nginx）が実際のパスへ解いてから受け取るので、切り替えた直後から新しい（戻したら古い）コードが動く。
 
 ## 8. DB を戻す（手で）
 
@@ -151,7 +151,11 @@ site="$1"; id="$2"; mode="${3:-}"
 dir="/srv/agentcms/sites/$site"   # vps.root を変えたなら、ここも変える
 cd "$dir"
 src="backups/$id-db.sql.gz"
-# 1. 何も変える前に確かめる（ここで止まれば、アプリは動いたまま・DB もそのまま）
+# deploy・rollback と同時に動かさない。最初に鍵を取る（確かめたあとに release を消されないように。取れなければ何も変えずに止まる）
+mkdir .agentcms-deploy.lock 2>/dev/null || { echo "別の deploy / rollback / 戻す作業が動いています: $(cat .agentcms-deploy.lock/info 2>/dev/null)"; exit 1; }
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) restore-db $id" > .agentcms-deploy.lock/info
+trap 'rm -rf "$dir/.agentcms-deploy.lock"' EXIT
+# 1. 鍵を取ったあと、何も変える前に確かめる（ここで止まれば、アプリは動いたまま・DB もそのまま）
 [ -f "$src" ] || { echo "バックアップがありません: $src"; exit 1; }
 gzip -t "$src"
 rel=""
@@ -160,10 +164,6 @@ if [ "$mode" != keep-code ] && { [ -z "$rel" ] || [ ! -d "releases/$rel" ]; }; t
   echo "この DB を取ったときの release（${rel:-不明}）がありません。コードを合わせられないので止めます。分かったうえで DB だけ戻すなら、最後に keep-code を付けてください"
   exit 1
 fi
-# deploy・rollback と同時に動かさない（同じ鍵を取る。取れなければ何も変えずに止まる）
-mkdir .agentcms-deploy.lock 2>/dev/null || { echo "別の deploy / rollback / 戻す作業が動いています: $(cat .agentcms-deploy.lock/info 2>/dev/null)"; exit 1; }
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) restore-db $id" > .agentcms-deploy.lock/info
-trap 'rm -rf "$dir/.agentcms-deploy.lock"' EXIT
 db=$(grep -E '^DB_DATABASE=' shared/.env | cut -d= -f2-)
 user=$(grep -E '^DB_USERNAME=' shared/.env | cut -d= -f2-)
 pw() { grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2-; }
