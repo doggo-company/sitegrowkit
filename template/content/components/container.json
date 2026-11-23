@@ -1,0 +1,17 @@
+{
+  "type": "container",
+  "label": "レイアウト",
+  "category": "layout",
+  "since": 1,
+  "propsSchema": {
+    "layout": { "type": "enum", "values": ["stack", "row", "grid"], "default": "stack", "label": "並べ方", "valueLabels": {"stack": "縦に積む", "row": "横に並べる", "grid": "列に分けて並べる（列数）"}, "responsiveCss": { "values": { "stack": "display: flex; flex-direction: column", "row": "display: flex; flex-direction: row; flex-wrap: wrap", "grid": "display: grid" } } },
+    "columns": { "type": "number", "min": 1, "max": 6, "default": 2, "label": "列数", "responsiveCss": { "template": "grid-template-columns: repeat({value}, minmax(0, 1fr))" } },
+    "gap": { "type": "token", "group": "spacing", "css": "gap", "label": "間隔" }
+  },
+  "styleSchema": ["textAlign", "spaceTop", "spaceBottom", "visibility"],
+  "bindable": [],
+  "allowedChildren": ["*"],
+  "allowedParents": ["section", "container"],
+  "renderer": { "kind": "blade", "view": "components.document.container" },
+  "capabilities": { "responsive": ["columns", "layout", "spaceTop", "spaceBottom", "visibility"], "container": true }
+}

@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "edited": [
+    {
+      "target": "database/seeders/TemplateContentSeeder.php",
+      "sha256": "910c25fc99a74ac0723265b3d16a919920a78b2e003ec7b8c313690fa9df0c61",
+      "reason": "デモ用メディアの補完と、画像が無い行の扱い（commit 825a65a）／F-42: seed の category を基底 schema の語彙へ揃えた（Branding → branding）"
+    },
+    {
+      "target": "modules/Contact/views/form.blade.php",
+      "sha256": "35da3ef8619bef4ef725aa2fa4eaecb32228882a4b6987e245e18b0e9920924e",
+      "reason": "P1 ⑤ 手書きのパンくずを component へ置き換え／表記は「ホーム」で固定（F-44 判断 1・原本の \"Home\" とは意図して変えている）／cac012cc: 同梱サンプルの編集・再取り込み方針をコメントへ明記（HTML動作変更なし）／2026-09-28 UX 一周: 見本の断り書きを出す印（sampleNotice）を枠へ渡す（店が作ったページには断り書きを出さないため）。表示は変えていない。／2026-11-06 UX 24周目 #6: 429でも日本語の再送案内と入力値を残す（UxReleaseRound24OtherTest・round24.spec.ts）。"
+    },
+    {
+      "target": "modules/Works/views/index.blade.php",
+      "sha256": "3ab906f1178e9f676bba27d650aa6c216daa57f1a07aa2a0fb777b5353b3cea3",
+      "reason": "P1 ④ 公開サイト内検索の導線と、P1 ⑤ のパンくず／B-14: 宣言の無い型では検索窓を出さない／表記は「ホーム」で固定（F-44 判断 1・原本の \"Home\" とは意図して変えている）／cac012cc: 同梱サンプルの編集・再取り込み方針をコメントへ明記（HTML動作変更なし）／公開一覧のページ送り・実績詳細へのリンクと検索欄のタッチ操作を追加。／2026-09-28 UX 一周: 見本の断り書きを出す印（sampleNotice）を枠へ渡す（店が作ったページには断り書きを出さないため）。表示は変えていない。"
+    },
+    {
+      "target": "public/imported/css/style.css",
+      "sha256": "83686b20fba3ec7129ac40dd18b08de65d4775b2dbfcdea7a2df15944ec6d735",
+      "reason": "外部フォントへの依存を外した（配布物が外の資源に依存しない）／c23ea429: 公開フォームの必須表示を追加（FormRequiredMarkerTestで検証）／2026-09-09 R03/R05: グローバルナビ・フッターの 2 階層目（.gnav__sub / .footer-nav__sub、Enter/Space対応の開閉ボタン、スマホは常時展開）を末尾に追加。既存規則は変えていない（ImportedNavigationTest で検証）／Codexレビュー: Escape後もCSSで開いたままになる問題を再現し、開閉状態をaria-expandedと同期。／公開一覧のページ送り・実績詳細へのリンクと検索欄のタッチ操作を追加。／2026-09-10: サイト設定のロゴ・アイコンを同梱テーマへ反映し、ロゴをスマホ幅に収める（SiteBrandImagesTestとsite-branding.isolated.spec.tsのPC/スマホ実操作で検証）。／2026-09-28 UX 一周: ページもこの枠に載せるため、本文へスキップ（.skip-link）を末尾に追加。既存規則は変えていない（ImportedLayoutTest・PersonalizeTest で検証）。／2026-09-28 UX 一周: フッターに足した SNS とサイト内検索の行（.footer-links）を末尾に追加。既存規則は変えていない（SiteFrameStandardViewsTest で検証）。／2026-09-28 UX 一周: 見本トップの案内（.hero-guide）と写真を入れる場所（.hero-photo-slot）を末尾に追加。既存規則は変えていない（PersonalizeTest で検証）。／2026-11-05 UX 一周 11 周目: フォームの日付・数値・電話・URL の欄にも、ほかの欄と同じ大きさと枠を当てる（tests/e2e/ux-round11.spec.ts で検証） / 2026-11-15: keyboard/mobile/no-JS navigation regression (tests/e2e/isolated/bundled-navigation.isolated.spec.ts).／2026-11-23 GPL 公開: GSAP の代わりに見出しの登場の動きを CSS（hero-rise・動きを減らす設定では止める）で末尾に追加。既存規則は変えていない"
+    },
+    {
+      "target": "public/imported/js/main.js",
+      "sha256": "c61bb8ab3d7cf73942a6a4ccc8c8d357a4ffb097adf878b73b34dfdc947df622",
+      "reason": "見本サイトのブランド中立化／2026-11-23 GPL 公開: GSAP の登場演出を外した（CSS の hero-rise へ。productization.test.ts で検証）"
+    },
+    {
+      "target": "resources/views/layouts/imported.blade.php",
+      "sha256": "8671783949a6f13ab0f08d8d09fd8c6bf96288ef7644aa50b1f8308fec41a103",
+      "reason": "P1 ① canonical / og を共有 layout へ寄せた／cac012cc: 同梱サンプル方針を明記、8d61b22d: SiteGrowKit表記、c3087fa8: メニュー設定をheader/footerへ反映。2026-09-09: SNS画像メタを共通部品で追加（PublicSeoTest検証）／2026-09-09 R03/R05: MenuTree の children を header（gnav__sub + 開閉ボタン）と footer（footer-nav__sub）へ描き、gnav-submenu.js を読み込む（ImportedNavigationTest検証）／Codexレビュー: Escape後もCSSで開いたままになる問題を再現し、開閉状態をaria-expandedと同期。／2026-09-10: サイト設定のロゴ・アイコンを同梱テーマへ反映し、ロゴをスマホ幅に収める（SiteBrandImagesTestとsite-branding.isolated.spec.tsのPC/スマホ実操作で検証）。／2026-09-28 UX 一周: ページをこの枠に載せる（店の色とヒーローを受け継ぐ）。本文へスキップ・正規 URL（$canonical）・既定ナビの印を追加し、店が作ったページ（$band）では見本の断り書きと通知先メールを出さない（PersonalizeTest・DefaultNavigationTest・FrontPageTest で検証）。／2026-09-28 UX 一周: 見本の断り書きを出す印（sampleNotice）を枠へ渡す（店が作ったページには断り書きを出さないため）。表示は変えていない。／2026-09-28 UX 一周: フッターにサイト設定の X / Instagram とサイト内検索への入口を出す（kit 既定の枠と同じもの。入れても店の枠のどこにも出ていなかった。SiteFrameStandardViewsTest・UxWalkRound4Test・DefaultNavigationTest で検証）。／2026-11-05 UX 一周 5 周目のあと: 利用者に見える WordPress 由来の呼び名を「ページ」に揃えた（メンテナ指示。文言とコメントだけ・HTML の構造は変えていない） / 2026-11-15: keyboard/mobile/no-JS navigation regression (tests/e2e/isolated/bundled-navigation.isolated.spec.ts).／2026-11-16 A: ページに限定したCSS・JSとbodyクラスを追加。既存ナビ・検索・保存済みテーマは維持（StarterPageTest）。／2026-11-23 迷う4件: トップに選んだページを帯なし（$band 無し）で / に出すときも、既定ナビの印（data-default-navigation）を付けるよう $siteFrame を条件に足した（UxConfusion20261123Test で検証）。2 周目で記録の更新漏れを直した。"
+    },
+    {
+      "target": "resources/views/public/about.blade.php",
+      "sha256": "c42ce73e067a021ff634591b5d404ad8bc0ecbe34bad0f715d1b45932a38b6bf",
+      "reason": "P1 ⑤ 手書きのパンくずを component へ置き換え／表記は「ホーム」で固定（F-44 判断 1・原本の \"Home\" とは意図して変えている）／cac012cc: 同梱サンプルの編集・再取り込み方針をコメントへ明記（HTML動作変更なし）／2026-09-28 UX 一周: 業種を選んだら、その業種で「何を書く場所か」を案内する見本を出す。事実を言い切る文は置かない（ファクトチェックのルール・PersonalizeTest で検証）。業種未選択のときの表示は変えていない。／2026-09-28 UX 一周: 見本の断り書きを出す印（sampleNotice）を枠へ渡す（店が作ったページには断り書きを出さないため）。表示は変えていない。／2026-11-05 UX 一周 9 周目のあと: 業種の形を IndustrySetup::profile() から読む（「その他」で打ったお仕事の名前を見本の文に使うため。HTML の構造は変えていない）"
+    },
+    {
+      "target": "resources/views/public/home.blade.php",
+      "sha256": "6a6b71f7ceecac0e11e69d9b35fffcd61ac9527d480e608e32226152a515bee5",
+      "reason": "P1 ① SEO タグと、P1 ③ 記事 URL を ContentPermalink 経由へ／cac012cc: 同梱サンプルの編集・再取り込み方針をコメントへ明記（HTML動作変更なし）／2026-09-28 UX 一周: 見本の断り書きを出す印（sampleNotice）を枠へ渡す（店が作ったページには断り書きを出さないため）。表示は変えていない。／2026-09-28 UX 一周: ヒーローのボタンの文言を業種に合わせる（工務店で「料金プランを見る」と出ていた）。業種を選ぶ前の表示は変えていない（PersonalizeTest で検証）。／2026-09-28 UX 一周: キャッチコピーと説明が空でもヒーローを空にしない（業種の見出し〇〇・案内の 1 行・写真を入れる場所の案内。店のことは言い切らない。PersonalizeTest で検証）。／2026-10-04 UX 一周 第16周: トップの帯を DocumentPageView::bandFor に合わせ、本文先頭の見出しと帯の題が同じなら帯を出さない（Canvas と同じ規則）。／2026-11-05 UX 一周 5 周目のあと: 利用者に見える WordPress 由来の呼び名を「ページ」に揃えた（メンテナ指示。文言とコメントだけ・HTML の構造は変えていない）／2026-11-05 UX 一周 9 周目のあと: 業種の形を IndustrySetup::profile() から読む（「その他」で打ったお仕事の名前を見本の文に使うため。HTML の構造は変えていない）／2026-11-23 GPL 公開: GSAP（自由なソフトウェアでないライセンス）の CDN 読み込みを外した（productization.test.ts で検証）"
+    },
+    {
+      "target": "resources/views/public/service.blade.php",
+      "sha256": "c6c508ee899b4931b79d57a969d9be1328c9c41c6b846f11b134a42c2f3d58ed",
+      "reason": "P1 ⑤ 手書きのパンくずを component へ置き換え／表記は「ホーム」で固定（F-44 判断 1・原本の \"Home\" とは意図して変えている）／cac012cc: 同梱サンプルの編集・再取り込み方針をコメントへ明記（HTML動作変更なし）／2026-09-28 UX 一周: 業種を選んだら、〇〇の空欄を入れた業種の見本（メニュー・料金の目安）を出す。具体的な数字は置かない（PersonalizeTest で検証）。業種未選択のときの表示は変えていない。／2026-09-28 UX 一周: 見本の断り書きを出す印（sampleNotice）を枠へ渡す（店が作ったページには断り書きを出さないため）。表示は変えていない。／2026-11-05 UX 一周 9 周目のあと: 業種の形を IndustrySetup::profile() から読む（「その他」で打ったお仕事の名前を見本の文に使うため。HTML の構造は変えていない）"
+    },
+    {
+      "target": "resources/views/components/imported/cta.blade.php",
+      "sha256": "61a125c7c72c92c402710913ecff0c517ae804765fb09ea0149ed09fb8281490",
+      "reason": "cac012cc: 同梱サンプルの編集・再取り込み方針をコメントへ明記（HTML動作変更なし）"
+    },
+    {
+      "target": "modules/Works/views/term.blade.php",
+      "sha256": "a5eb582d2d56a2d396e44436872f086531aff3d107e9f522ccab9bcdfa3e6ba6",
+      "reason": "2026-09-28 UX 一周: 見本の断り書きを出す印（sampleNotice）を枠へ渡す（店が作ったページには断り書きを出さないため）。表示は変えていない。"
+    }
+  ],
+  "removed": [
+    {
+      "target": "public/imported/images/logo.png",
+      "reason": "見本サイトのブランド中立化（配らないと決めた・commit 16749f8）"
+    }
+  ]
+}

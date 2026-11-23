@@ -1,0 +1,234 @@
+/*
+ * PageDocument の描画に必要な最小限のレイアウト（Phase 9.1D）。
+ * 色・余白・角丸は theme.json 由来の CSS custom property を参照する。
+ */
+.doc-section {
+    padding-block: var(--space-section, 4rem);
+}
+
+.doc-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-gap, 1.5rem);
+}
+
+.doc-container--row {
+    flex-direction: row;
+    flex-wrap: wrap;
+}
+
+.doc-container--grid {
+    display: grid;
+    gap: var(--space-gap, 1.5rem);
+}
+
+.doc-container--grid.doc-cols-1 {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+.doc-container--grid.doc-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.doc-container--grid.doc-cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.doc-container--grid.doc-cols-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.doc-container--grid.doc-cols-5 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.doc-container--grid.doc-cols-6 {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.doc-heading {
+    margin-block: 0 var(--space-gap-small, 0.75rem);
+}
+
+.doc-text {
+    margin-block: 0;
+    /* 入力した改行をそのまま出す（UX 一周 2026-09-28）。HTML は解釈しない */
+    white-space: pre-line;
+}
+
+.doc-collection__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: var(--space-gap-small, 0.75rem);
+}
+
+.doc-collection--cards .doc-collection__list {
+    grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+}
+
+.doc-collection__empty {
+    color: var(--color-text-muted, #6b6f76);
+}
+
+.doc-button {
+    display: inline-block;
+    padding: 0.75rem 1.75rem;
+    border-radius: var(--radius-md, 8px);
+    text-decoration: none;
+}
+
+.doc-button--primary {
+    background: var(--color-primary, #0f4c46);
+    color: var(--color-primary-contrast, #fff);
+}
+
+.doc-button--secondary {
+    border: 1px solid var(--color-border, #e3e4e2);
+}
+
+/* ブラウザ既定の figure の左右の余白（40px ずつ）を消す。列に並べたとき写真が
+   豆粒ほどに縮んでいた（UX 一周 2026-09-28） */
+.doc-image {
+    margin: 0;
+}
+
+.doc-image picture {
+    display: block;
+}
+
+.doc-image img {
+    width: 100%;
+    height: auto;
+}
+
+/* スマホ幅では 3 列以上を 2 列にする（画面幅ごとの指定があれば、そちらが後から勝つ） */
+@media (max-width: 599px) {
+    .doc-container--grid.doc-cols-3,
+    .doc-container--grid.doc-cols-4,
+    .doc-container--grid.doc-cols-5,
+    .doc-container--grid.doc-cols-6 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+/*
+ * 画面幅ごとの上書きの規則は **theme.json と component registry から生成**する
+ * （`AgentCms\Core\Render\DocumentCss`）。ここに手で書くと、
+ * 案件が breakpoint やトークンを変えたときに追随しない。
+ *
+ * ここに残すのは「既定の振る舞い」だけ。横並びは狭い画面で縦に積む。
+ * 明示的に画面幅ごとの並べ方を指定した場合は、生成側の規則が優先される。
+ */
+@media (max-width: 767px) {
+    .doc-container--row {
+        flex-direction: column;
+    }
+}
+
+/* 画像ブロックを置いたが、まだ画像を選んでいない（下書きのときだけ描かれる） */
+/* 置いたばかりで、まだ何も書いていないブロックの仮の文字（UX 一周 3 周目 N3）。
+   編集画面の Canvas とプレビューだけに出る（公開面の HTML には入らない）。値ではないので、薄い字にする */
+.doc-placeholder {
+    color: var(--color-text-muted, #6b6f76);
+    opacity: 0.7;
+}
+
+.doc-image--empty {
+    display: grid;
+    place-items: center;
+    min-height: 10rem;
+    border: 2px dashed var(--color-border, #e3e4e2);
+    border-radius: 8px;
+    color: var(--color-text-muted, #6b6f76);
+    font-size: 0.875rem;
+    padding: 1rem;
+    text-align: center;
+}
+
+/* サイトの枠（見本・取り込んだテーマ）に載せたときの帯の題と、本文の幅（UX 一周 2026-09-28）。
+   帯の題は見出しにしないので、見本の h1 と同じ大きさを文字だけで付ける */
+.doc-band__title {
+    margin: 0;
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.4;
+}
+.doc-band__title--hero {
+    font-size: 2.25rem;
+    margin-bottom: 1rem;
+}
+/* 見本のヒーローは本文の p を薄い色にするので、題だけは濃い色に戻す */
+.doc-band .doc-band__title {
+    color: var(--text, #222);
+}
+.doc-section > .container {
+    max-width: var(--max-width, 1080px);
+    margin-inline: auto;
+    padding-inline: clamp(1.25rem, 4vw, 2.5rem);
+}
+
+/* メニュー表・営業時間（UX 一周 2026-09-28）。左に品名や曜日、右に値段や時間 */
+.doc-pairs {
+    margin-block: 1.5rem;
+}
+
+.doc-pairs__table {
+    width: 100%;
+    max-width: 40rem;
+    border-collapse: collapse;
+}
+
+.doc-pairs__caption {
+    caption-side: top;
+    text-align: left;
+    font-weight: 700;
+    font-size: 1.125rem;
+    padding-bottom: 0.5rem;
+}
+
+.doc-pairs__table th,
+.doc-pairs__table td {
+    padding: 0.75rem 0.25rem;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+}
+
+.doc-pairs__table th {
+    font-weight: 400;
+}
+
+.doc-pairs__table td {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.doc-pairs__note {
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    opacity: 0.8;
+}
+
+/*
+ * 狭い画面では、品名・曜日の上に値段・時間を重ねずに**縦に積む**（UX 一周 第 17 周）。
+ * 時間の側が折り返さない（nowrap）まま横に並べると、曜日の側が
+ * 「月曜日〜土曜 10:00〜20:00 日」のように文字の途中で割れて読めなかった。
+ */
+@media (max-width: 30rem) {
+    .doc-pairs__table tr {
+        display: block;
+        padding-block: 0.5rem;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+    }
+
+    .doc-pairs__table th,
+    .doc-pairs__table td {
+        display: block;
+        padding: 0.125rem 0.25rem;
+        border-bottom: 0;
+        text-align: left;
+        white-space: normal;
+    }
+
+    .doc-pairs__table td {
+        font-weight: 600;
+    }
+}

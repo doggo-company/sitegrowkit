@@ -1,0 +1,14 @@
+{
+  "meta": {
+    "images": {
+      "imgref-hero": "fixture://images/hero.png",
+      "imgref-card": "fixture://images/card.png",
+      "imgref-w1": "fixture://images/works-a.png",
+      "imgref-w2": "fixture://images/works-b.png",
+      "imgref-w3": "fixture://images/works-c.png",
+      "imgref-w4": "fixture://images/works-d.png",
+      "imgref-w5": "fixture://images/works-e.png",
+      "imgref-w6": "fixture://images/works-f.png"
+    }
+  }
+}

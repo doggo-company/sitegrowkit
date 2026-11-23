@@ -1,0 +1,10 @@
+{
+  "__": "視覚回帰（tests/e2e/template-visual.spec.ts）の許容差分。このファイルが無ければ既定 2% だけが使われる。使うときは visual-thresholds.json という名前で置く",
+  "default": 0.02,
+  "overrides": {
+    "/example-page": {
+      "ratio": 0.05,
+      "reason": "なぜこのページだけ緩めるのか（何が原本に無いのか・実測した差分は何%か）。reason は必須 — 理由の書けない緩和は置けない"
+    }
+  }
+}

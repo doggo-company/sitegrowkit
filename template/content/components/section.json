@@ -1,0 +1,84 @@
+{
+  "type": "section",
+  "label": "セクション",
+  "category": "layout",
+  "since": 1,
+  "propsSchema": {
+    "background": {
+      "type": "token",
+      "group": "colors",
+      "css": "background",
+      "label": "背景色"
+    },
+    "padding": {
+      "type": "token",
+      "group": "spacing",
+      "css": "padding-block",
+      "label": "余白"
+    },
+    "pattern": {
+      "type": "enum",
+      "values": [
+        "plain",
+        "intro",
+        "photos",
+        "menu",
+        "info",
+        "news",
+        "points",
+        "board",
+        "voice",
+        "contact",
+        "faq"
+      ],
+      "default": "plain",
+      "label": "テンプレートの見せ方",
+      "valueLabels": {
+        "plain": "ふつう",
+        "intro": "紹介（見出しと文を左右に）",
+        "photos": "写真を2枚ずらして並べる",
+        "menu": "メニュー・料金",
+        "info": "営業時間とアクセス",
+        "news": "お知らせ",
+        "points": "3つの特長",
+        "board": "おすすめの黒板",
+        "voice": "ひとこと（写真と文）",
+        "contact": "お問い合わせ",
+        "faq": "よくある質問"
+      },
+      "help": "選んだテンプレート（サイト設定）が、この見せ方に合わせて形を整えます。"
+    },
+    "eyebrow": {
+      "type": "string",
+      "max": 40,
+      "default": "",
+      "label": "見出しの上の小さな文字（なくても可）",
+      "help": "「About」「Menu」のような飾りの小さな文字です。読み上げでは読みません。"
+    }
+  },
+  "styleSchema": [
+    "textAlign",
+    "spaceTop",
+    "spaceBottom",
+    "visibility"
+  ],
+  "bindable": [],
+  "allowedChildren": [
+    "*"
+  ],
+  "allowedParents": [
+    "page"
+  ],
+  "renderer": {
+    "kind": "blade",
+    "view": "components.document.section"
+  },
+  "capabilities": {
+    "responsive": [
+      "spaceTop",
+      "spaceBottom",
+      "visibility"
+    ],
+    "container": true
+  }
+}

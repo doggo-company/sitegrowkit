@@ -1,0 +1,17 @@
+{
+  "type": "probe",
+  "label": "検証用",
+  "category": "basic",
+  "since": 1,
+  "propsSchema": {
+    "text": { "type": "string", "label": "流せる文字" },
+    "note": { "type": "string", "label": "流せない文字" },
+    "raw": { "type": "string", "format": "html", "label": "HTML を受ける" }
+  },
+  "styleSchema": [],
+  "bindable": ["text", "raw"],
+  "allowedChildren": [],
+  "allowedParents": ["page"],
+  "renderer": { "kind": "blade", "view": "components.document.text" },
+  "capabilities": { "responsive": [], "container": false }
+}

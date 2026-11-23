@@ -1,0 +1,136 @@
+{
+  "phase": "9.14",
+  "date": "2026-08-19",
+  "mode": "wxr-import-rollback-scale-measurement",
+  "baseline": "833d9a4 (27E complete)",
+  "final_status": "PASS",
+  "note": "27F は計測と記録まで。出た数字を根拠に何も直していない。",
+  "environment": {
+    "database": "MySQL 8.4.9 (隔離コンテナ・使い捨て)",
+    "sqlite_default": "既定のテストは in-memory sqlite。ここでの実測は接続を差し替えたもの",
+    "media_fetch": "Http::fake（ネットワーク時間は測っていない）",
+    "transactional_tests": "RefreshDatabase の中で計測（本体の transaction は savepoint になる）"
+  },
+  "acceptance": {
+    "kit_verify": {
+      "gates": 10,
+      "passed": 10,
+      "binary": "repo dist build"
+    },
+    "generated_project_verify": {
+      "gates": 10,
+      "passed": 10,
+      "first_run_with_phase27_changes": true
+    },
+    "import_ledger_mysql_test": {
+      "tests": 13,
+      "passed": 13
+    },
+    "wxr_suite_on_mysql": {
+      "phase_27f": {
+        "tests": 936,
+        "passed": 929,
+        "failed": 6,
+        "skipped": 1
+      },
+      "phase_27f_b": {
+        "tests": 1066,
+        "passed": 1065,
+        "failed": 0,
+        "skipped": 1
+      }
+    }
+  },
+  "fixture": {
+    "bytes": 8241738,
+    "posts": 3000,
+    "comments": 12000,
+    "terms": 200,
+    "media": 500
+  },
+  "timings": {
+    "plan": {
+      "seconds": 0.477,
+      "peak_memory_mb": 46.5,
+      "peak_memory_delta_mb": 0,
+      "queries": 37,
+      "ledger_selects": 34,
+      "comment_selects": 0
+    },
+    "apply": {
+      "seconds": 67.308,
+      "peak_memory_mb": 82.5,
+      "peak_memory_delta_mb": 36,
+      "queries": 130602,
+      "ledger_selects": 21734,
+      "comment_selects": 0,
+      "ledger_selects_per_post": 7.245
+    },
+    "rollback": {
+      "seconds": 113.573,
+      "peak_memory_mb": 88.5,
+      "peak_memory_delta_mb": 6,
+      "queries": 97908,
+      "ledger_selects": 6004,
+      "comment_selects": 15000
+    },
+    "reapply": {
+      "seconds": 66.38,
+      "peak_memory_mb": 93.5,
+      "peak_memory_delta_mb": 5,
+      "queries": 130600,
+      "ledger_selects": 21734,
+      "comment_selects": 0
+    }
+  },
+  "after_rollback": {
+    "posts": 0,
+    "comments": 0,
+    "terms": 0,
+    "media": 0,
+    "records": 0
+  },
+  "after_reapply": {
+    "posts": 3000,
+    "comments": 12000
+  },
+  "measurements": {
+    "f5_ledger_selects_per_post": 7.245,
+    "f8_file_scans": {
+      "apply": 6,
+      "plan": 1,
+      "total": 7,
+      "correction": "ImportGraph の切り出しで減ったのではない。39b2c10 の前後で new WxrReader は 3→4 に増えている。避けたのは代替案の 2 周であって絶対数ではない"
+    },
+    "bundle_judge_comment_selects_per_bundle": 5.0,
+    "rollback_vs_apply_ratio": 1.69
+  },
+  "mysql_only_failures": [
+    {
+      "kind": "select_for_update_read_as_write",
+      "count": 5,
+      "detail": "WatchesDatabaseWrites が for update を書き込みとして数え、touchesOnly が insert/update/delete しか確かめられない。sqlite は lockForUpdate を何にもコンパイルしないので今まで存在しなかった経路",
+      "safe_side": true,
+      "fixed": true,
+      "fixed_in": "27F-b",
+      "fix": "locksOnly() を追加。『1つの表の行を掴んだだけ』と言い切れる select … for update を見逃す。join / CTE は従来どおり赤。許した表が空のとき（plan の証明）は見逃さない。掴んだ表は許可の一覧と突き合わせない — 取り込みは taxonomies の行を掴むが書かないため、突き合わせると『書いてよい表』に taxonomies を足すことになり本物の書き込みまで見逃す"
+    },
+    {
+      "kind": "ulid_into_unsigned_bigint",
+      "count": 1,
+      "detail": "TargetRowLookupTest の comment() が content_comments.content_id に ULID を入れる。sqlite は受け取るが MySQL は 1265 で止まる。fixture の問題であって製品の欠陥ではない",
+      "safe_side": true,
+      "fixed": true,
+      "fixed_in": "27F-b",
+      "fix": "列の型に合う整数を置いた"
+    }
+  ],
+  "known_limitations": [
+    "BundleJudge の二重問い合わせ（束あたり 2 回ぶん）は測っただけ（判断済み — 移行は1回きりの操作なので記録のまま）",
+    "取り消しが取り込みの 1.7 倍遅い（判断済み — 1束=1transaction は安全性の構造で §D.5 とのトレードオフ）",
+    "秒数は RefreshDatabase 内の相対比較。本番の所要時間ではない",
+    "メディアの取得時間は測っていない",
+    "規模は 3,000 記事の 1 通りだけ。伸び方は未測",
+    "生成 project 側 verify は macOS で 1 回だけ"
+  ]
+}

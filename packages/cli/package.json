@@ -1,0 +1,48 @@
+{
+  "name": "agent-cms-kit",
+  "version": "0.9.4-rc33",
+  "description": "SiteGrowKit — AI エージェント前提の Web 制作スターターキット（CLI + プロジェクトテンプレート）",
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "agentcms": "./dist/index.js",
+    "create-agent-cms": "./dist/create-entry.js"
+  },
+  "files": [
+    "dist",
+    "template",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "COPYRIGHT",
+    "THIRD-PARTY-LICENSES.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json",
+    "test": "pnpm build && node scripts/vitest-quiet.mjs",
+    "lint": "eslint src tests",
+    "test:raw": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
+    "commander": "^14.0.0",
+    "kuromoji": "0.1.2",
+    "node-html-parser": "^7.0.1",
+    "picocolors": "^1.1.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/kuromoji": "^0.1.3",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.30.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.35.0",
+    "vitest": "^3.2.0"
+  }
+}

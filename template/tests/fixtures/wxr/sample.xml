@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0"
+	xmlns:excerpt="http://wordpress.org/export/1.2/excerpt/"
+	xmlns:content="http://purl.org/rss/1.0/modules/content/"
+	xmlns:wfw="http://wellformedweb.org/CommentAPI/"
+	xmlns:dc="http://purl.org/dc/elements/1.1/"
+	xmlns:wp="http://wordpress.org/export/1.2/">
+<channel>
+	<title>移行元サイト</title>
+	<link>https://old.example.test</link>
+	<wp:wxr_version>1.2</wp:wxr_version>
+	<wp:base_site_url>https://old.example.test</wp:base_site_url>
+
+	<!-- 分類の定義は channel の直下にある。親子はここにしか無い -->
+	<wp:category>
+		<wp:term_id>2</wp:term_id>
+		<wp:category_nicename>info</wp:category_nicename>
+		<wp:category_parent></wp:category_parent>
+		<wp:cat_name><![CDATA[インフォメーション]]></wp:cat_name>
+	</wp:category>
+	<wp:category>
+		<wp:term_id>3</wp:term_id>
+		<wp:category_nicename>news</wp:category_nicename>
+		<wp:category_parent>info</wp:category_parent>
+		<wp:cat_name><![CDATA[お知らせ]]></wp:cat_name>
+	</wp:category>
+	<wp:tag>
+		<wp:term_id>7</wp:term_id>
+		<wp:tag_slug>launch</wp:tag_slug>
+		<wp:tag_name><![CDATA[ローンチ]]></wp:tag_name>
+	</wp:tag>
+	<wp:term>
+		<wp:term_id>9</wp:term_id>
+		<wp:term_taxonomy>product_line</wp:term_taxonomy>
+		<wp:term_slug>alpha</wp:term_slug>
+		<wp:term_parent></wp:term_parent>
+		<wp:term_name><![CDATA[アルファ]]></wp:term_name>
+	</wp:term>
+
+	<item>
+		<title>はじめての記事</title>
+		<dc:creator><![CDATA[oldadmin]]></dc:creator>
+		<content:encoded><![CDATA[<p>本文です。</p>[gallery ids="1,2"]]]></content:encoded>
+		<excerpt:encoded><![CDATA[抜粋です]]></excerpt:encoded>
+		<wp:post_id>11</wp:post_id>
+		<wp:post_date>2024-05-01 10:00:00</wp:post_date>
+		<wp:post_date_gmt>2024-05-01 01:00:00</wp:post_date_gmt>
+		<wp:post_name>first-post</wp:post_name>
+		<wp:status>publish</wp:status>
+		<wp:post_parent>0</wp:post_parent>
+		<wp:post_type>post</wp:post_type>
+		<category domain="category" nicename="news"><![CDATA[お知らせ]]></category>
+		<category domain="post_tag" nicename="launch"><![CDATA[ローンチ]]></category>
+		<wp:postmeta>
+			<wp:meta_key><![CDATA[_edit_last]]></wp:meta_key>
+			<wp:meta_value><![CDATA[1]]></wp:meta_value>
+		</wp:postmeta>
+		<wp:postmeta>
+			<wp:meta_key><![CDATA[subtitle]]></wp:meta_key>
+			<wp:meta_value><![CDATA[a:1:{s:3:"key";s:5:"value";}]]></wp:meta_value>
+		</wp:postmeta>
+		<wp:comment>
+			<wp:comment_id>101</wp:comment_id>
+			<wp:comment_author><![CDATA[読者]]></wp:comment_author>
+			<wp:comment_author_email><![CDATA[reader@example.test]]></wp:comment_author_email>
+			<wp:comment_author_url>https://reader.example.test</wp:comment_author_url>
+			<wp:comment_author_IP><![CDATA[203.0.113.9]]></wp:comment_author_IP>
+			<wp:comment_date>2024-05-02 12:00:00</wp:comment_date>
+			<wp:comment_date_gmt>2024-05-02 03:00:00</wp:comment_date_gmt>
+			<wp:comment_content><![CDATA[よい記事でした]]></wp:comment_content>
+			<wp:comment_approved>1</wp:comment_approved>
+			<wp:comment_parent>0</wp:comment_parent>
+		</wp:comment>
+		<wp:comment>
+			<wp:comment_id>102</wp:comment_id>
+			<wp:comment_author><![CDATA[通りすがり]]></wp:comment_author>
+			<wp:comment_content><![CDATA[承認待ちのコメント]]></wp:comment_content>
+			<wp:comment_approved>0</wp:comment_approved>
+			<wp:comment_parent>101</wp:comment_parent>
+			<wp:comment_date_gmt>0000-00-00 00:00:00</wp:comment_date_gmt>
+		</wp:comment>
+	</item>
+
+	<item>
+		<title>会社概要</title>
+		<content:encoded><![CDATA[<p>固定ページの本文</p>]]></content:encoded>
+		<wp:post_id>12</wp:post_id>
+		<wp:post_name>about</wp:post_name>
+		<wp:status>publish</wp:status>
+		<wp:post_type>page</wp:post_type>
+	</item>
+
+	<item>
+		<title>写真</title>
+		<wp:post_id>13</wp:post_id>
+		<wp:post_name>photo</wp:post_name>
+		<wp:status>inherit</wp:status>
+		<wp:post_type>attachment</wp:post_type>
+		<wp:attachment_url>https://old.example.test/wp-content/uploads/2024/05/photo.jpg</wp:attachment_url>
+	</item>
+
+	<item>
+		<title>下書きのまま</title>
+		<content:encoded><![CDATA[まだ書いている途中]]></content:encoded>
+		<wp:post_id>14</wp:post_id>
+		<wp:post_name></wp:post_name>
+		<wp:status>draft</wp:status>
+		<wp:post_type>post</wp:post_type>
+	</item>
+</channel>
+</rss>

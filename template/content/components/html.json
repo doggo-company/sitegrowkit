@@ -1,0 +1,15 @@
+{
+  "type": "html",
+  "label": "HTML（制限あり）",
+  "category": "advanced",
+  "since": 1,
+  "propsSchema": {
+    "html": { "type": "string", "required": true, "max": 20000, "label": "HTML" }
+  },
+  "styleSchema": ["spaceTop", "spaceBottom", "visibility"],
+  "bindable": [],
+  "allowedChildren": [],
+  "allowedParents": ["section", "container"],
+  "renderer": { "kind": "blade", "view": "components.document.html" },
+  "capabilities": { "responsive": ["spaceTop", "spaceBottom", "visibility"], "container": false }
+}

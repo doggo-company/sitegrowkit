@@ -1,0 +1,59 @@
+{
+  "type": "hours",
+  "label": "営業時間",
+  "category": "basic",
+  "since": 1,
+  "propsSchema": {
+    "caption": {
+      "type": "string",
+      "max": 60,
+      "default": "営業時間",
+      "label": "表の題"
+    },
+    "rows": {
+      "type": "string",
+      "required": true,
+      "max": 1000,
+      "label": "曜日と時間",
+      "default": "〇曜日〜〇曜日｜〇〇:〇〇〜〇〇:〇〇\n〇曜日・祝日｜〇〇:〇〇〜〇〇:〇〇",
+      "help": "1 行に 1 つ。曜日と時間のあいだに「｜」を入れます（例: 月〜金｜〇〇:〇〇〜〇〇:〇〇）。"
+    },
+    "closed": {
+      "type": "string",
+      "max": 100,
+      "default": "〇〇曜日",
+      "label": "定休日",
+      "help": "定休日が無ければ空にします。空なら出ません。"
+    },
+    "note": {
+      "type": "string",
+      "max": 200,
+      "default": "",
+      "label": "注意書き（なくても可）",
+      "help": "ラストオーダーや、臨時のお休みの知らせ方など。書かなければ出ません。"
+    }
+  },
+  "styleSchema": [
+    "spaceTop",
+    "spaceBottom",
+    "visibility"
+  ],
+  "bindable": [],
+  "allowedChildren": [],
+  "allowedParents": [
+    "section",
+    "container"
+  ],
+  "renderer": {
+    "kind": "blade",
+    "view": "components.document.hours"
+  },
+  "capabilities": {
+    "responsive": [
+      "spaceTop",
+      "spaceBottom",
+      "visibility"
+    ],
+    "container": false
+  }
+}

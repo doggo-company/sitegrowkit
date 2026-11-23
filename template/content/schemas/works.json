@@ -1,0 +1,22 @@
+{
+  "id": "works",
+  "label": "実績",
+  "kind": "collection",
+  "fields": [
+    { "key": "title", "type": "text", "label": "タイトル", "required": true, "max": 120 },
+    { "key": "slug", "type": "slug", "label": "スラッグ", "from": "title", "required": true, "unique": true, "max": 120, "help": "このページの住所になります（半角の英数字とハイフン）。空のままにすると見出しから作ります。日本語だけの見出しのときは日付から作ります（例: 2026-09-03-1）。あとから直せます" },
+    { "key": "main_image_id", "type": "media", "label": "メイン画像" },
+    { "key": "category", "type": "select", "label": "カテゴリ", "required": true, "choices": ["web", "graphic", "branding", "Corporate", "EC", "LP", "Package", "Service"] },
+    { "key": "completed_at", "type": "date", "label": "完了日" },
+    { "key": "excerpt", "type": "textarea", "label": "概要", "max": 300 },
+    { "key": "body", "type": "richtext", "label": "本文", "required": true },
+    { "key": "status", "type": "status", "label": "ステータス", "required": true },
+    { "key": "published_at", "type": "datetime", "label": "公開日時" },
+    { "key": "seo_title", "type": "text", "label": "SEOタイトル", "group": "seo", "max": 120 },
+    { "key": "seo_description", "type": "textarea", "label": "SEOディスクリプション", "group": "seo", "max": 200 }
+  ],
+  "admin": {
+    "list": ["title", "category", "status", "published_at"],
+    "search": ["title", "excerpt"]
+  }
+}

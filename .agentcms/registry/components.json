@@ -1,0 +1,152 @@
+{
+  "$comment": "Component Registry. Stable IDs + metadata for Blade/Vue components (future: Figma / Visual Editor mapping). Update when adding public components.",
+  "components": [
+    {
+      "id": "pub-header",
+      "name": "Site Header",
+      "kind": "blade",
+      "path": "template/resources/views/layouts/imported.blade.php#site-header",
+      "origin": "template-import"
+    },
+    {
+      "id": "pub-footer",
+      "name": "Site Footer",
+      "kind": "blade",
+      "path": "template/resources/views/layouts/imported.blade.php#site-footer",
+      "origin": "template-import"
+    },
+    {
+      "id": "pub-card-work",
+      "name": "Work Card",
+      "kind": "blade",
+      "path": "template/modules/Works/views/index.blade.php",
+      "origin": "template-import",
+      "props": [
+        "title",
+        "slug",
+        "category",
+        "main_image_id",
+        "completed_at"
+      ]
+    },
+    {
+      "id": "pub-news-list",
+      "name": "News List",
+      "kind": "blade",
+      "path": "template/modules/News/views/index.blade.php",
+      "origin": "handwritten",
+      "props": [
+        "title",
+        "slug",
+        "published_at"
+      ]
+    },
+    {
+      "id": "pub-service-list",
+      "name": "Service List",
+      "kind": "blade",
+      "path": "template/resources/views/public/service.blade.php",
+      "origin": "handwritten"
+    },
+    {
+      "id": "pub-contact-form",
+      "name": "Contact Form",
+      "kind": "blade",
+      "path": "template/modules/Contact/views/form.blade.php",
+      "origin": "template-import",
+      "props": [
+        "name",
+        "email",
+        "company",
+        "subject",
+        "message"
+      ]
+    },
+    {
+      "id": "adm-schema-field",
+      "name": "Schema Field Input",
+      "kind": "vue",
+      "path": "template/resources/js/components/schema/SchemaFieldInput.vue",
+      "origin": "core-admin"
+    },
+    {
+      "id": "adm-resource-index",
+      "name": "Schema Resource Index",
+      "kind": "vue",
+      "path": "template/resources/js/pages/admin/resource/Index.vue",
+      "origin": "core-admin"
+    },
+    {
+      "id": "adm-resource-form",
+      "name": "Schema Resource Form",
+      "kind": "vue",
+      "path": "template/resources/js/pages/admin/resource/Form.vue",
+      "origin": "core-admin"
+    },
+    {
+      "id": "pub-media-img",
+      "name": "Media Image",
+      "kind": "blade",
+      "path": "template/resources/views/components/media-img.blade.php",
+      "origin": "core-media",
+      "props": [
+        "media",
+        "loading",
+        "imgClass"
+      ]
+    },
+    {
+      "id": "adm-media-picker",
+      "name": "Media Picker",
+      "kind": "vue",
+      "path": "template/resources/js/components/schema/MediaPicker.vue",
+      "origin": "core-admin"
+    },
+    {
+      "id": "adm-media-index",
+      "name": "Media Library",
+      "kind": "vue",
+      "path": "template/resources/js/pages/admin/media/Index.vue",
+      "origin": "core-admin"
+    },
+    {
+      "id": "imported-cta",
+      "name": "Imported CTA Section",
+      "kind": "blade",
+      "path": "template/resources/views/components/imported/cta.blade.php",
+      "origin": "template-import",
+      "source_pattern": "section.cta",
+      "props": []
+    },
+    {
+      "id": "pub-document-form",
+      "name": "Page Form",
+      "kind": "blade",
+      "path": "template/resources/views/components/document/form.blade.php",
+      "props": [
+        "formKey"
+      ]
+    },
+    {
+      "id": "pub-site-logo",
+      "name": "Site Logo",
+      "kind": "blade",
+      "path": "template/resources/views/components/site-logo.blade.php",
+      "origin": "project"
+    },
+    {
+      "id": "pub-site-icon",
+      "name": "Site Icon",
+      "kind": "blade",
+      "path": "template/resources/views/components/site-icon.blade.php",
+      "origin": "project"
+    },
+    {
+      "id": "pub-document-cover",
+      "name": "Editable photo cover",
+      "kind": "blade",
+      "path": "template/resources/views/components/document/cover.blade.php",
+      "origin": "starter-a"
+    }
+  ]
+}

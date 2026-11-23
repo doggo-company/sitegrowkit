@@ -1,0 +1,269 @@
+{
+  "phase": 4,
+  "started_at": "2026-08-08T19:02:15+09:00",
+  "ended_at_local_implementation": "2026-08-08T19:38:00+09:00",
+  "duration_minutes_local_implementation": 36,
+  "status": "Phase 4 完了 — DoD 20/20（2026-08-09 01:53）。Staging 稼働 + Manual Acceptance（Contact 実送信 / iPhone 実機 PWA・Push・タップ遷移・offline）全項目成功",
+  "staging_deployment_result": {
+    "completed_at": "2026-08-08T23:46:00+09:00",
+    "url": "https://staging.example.com",
+    "healthy_rollback_point": "20260808234128（Phase 4 初。previous 20260808225052 は既知の 500 のため healthy とは扱わない）",
+    "deploy_attempts": [
+      "1回目: DB backup で安全停止（真因: MySQL 5.7 世代の専用 DB ホスト mysqlXXXX.xserver.jp。remote.dbHost 追加 + setup 修復 action で解決）",
+      "2回目: 全工程完走も health check が全 PHP 500 を検出（真因: dev PHP 8.5 で解決した lock の Symfony 8.1 が PHP>=8.4.1 要求、Web PHP 8.3）。初回デプロイのため切り戻し先なしを明示して停止",
+      "3回目: composer platform.php=8.3.0 固定 + Symfony 7.4 LTS 降格後、全工程完走・health 17 項目 PASS"
+    ],
+    "health_check": "17/17 PASS（laravel_root = DirectoryIndex 奪取なし検証含む）",
+    "verify_staging": "PASS",
+    "doctor_final": "全 PASS（MySQL 実接続含む）",
+    "lighthouse_staging": {
+      "urls": 6,
+      "desktop": {
+        "performance": "100 (全URL)",
+        "accessibility": 100,
+        "best_practices": "96–100",
+        "seo": "58–66"
+      },
+      "mobile": {
+        "performance": "98–100",
+        "accessibility": 100,
+        "best_practices": "96–100",
+        "seo": "58–66"
+      },
+      "notes": "SEO 減点は staging noindex（is-crawlable / robots.txt disallow）による意図した結果。contact の bp 96 は Turnstile サードパーティ由来。条件変更・スコア操作なし"
+    },
+    "unverified_separated": [
+      "Contact 実送信・実メール（TURNSTILE_*/MAIL_* 未設定。実メール送信なし）",
+      "iPhone 実機 PWA installability / offline / Push 受信（VAPID 未設定。手順書 §11）"
+    ],
+    "xserver_specific_findings": [
+      "API servername は初期ドメイン形式（<ID>.xsrv.jp）",
+      "DB ユーザーパスワードは 16 文字以内（公式リファレンス未記載）",
+      "grant 一覧 API は文字列配列 {databases:[...]}",
+      "MySQL 5.7 世代サーバーは DB_HOST=mysqlXXXX.xserver.jp（パネル表示値）",
+      "PHP 切替はドメイン単位のみ（サブドメイン個別不可）",
+      "DirectoryIndex: index.html > htm > shtml > cgi > php（初期ページ退避が必須）"
+    ]
+  },
+  "api_control_plane_round": {
+    "measured_at": "2026-08-08T20:45:00+09:00",
+    "trigger": "ユーザー提供情報: 公式 XServer API（2026-04-16 提供開始）の存在",
+    "research_subagent_tokens": 53050,
+    "decision": "Control Plane = XServer API / Deployment = SSH（公式 AI Skill と同一構成）。公式 CLI/MCP は不採用（ADR-0009 に理由）",
+    "implemented": [
+      "providers/xserver-api.ts（Bearer クライアント。キーは env XSERVER_API_KEY のみ・redact・削除系非実装）",
+      "providers/xserver-setup.ts + `agentcms deploy setup`（subdomain/SSL/DB/user/grant/shared-.env/Cron/PHP。冪等・作成のみ・confirm 付き・手動 fallback）",
+      "doctor へ API 検査統合（SSL 発行状態 / Cron 登録状態）",
+      "config validation: API キーの設定ファイル記入を拒否"
+    ],
+    "tests": "vitest 56 passed（API 統合 20 件新規・初回グリーン）/ verify 9/9 維持 / キー未設定 fallback を実行確認",
+    "real_api_writes": "未実施（承認境界で停止）",
+    "known_issue_out_of_scope": "packages/cli に ESLint 設定が無く pnpm lint が元から失敗（既存問題・未修正）"
+  },
+  "staging_doctor_plan_results": {
+    "measured_at": "2026-08-08T20:14:00+09:00",
+    "target": "xserver svXXXXX (xsXXXXXX) / https://staging.example.com",
+    "doctor": {
+      "pass": [
+        "ssh",
+        "php (/usr/bin/php8.5 = 8.5.5)",
+        "php_ext (必須すべて)",
+        "composer (1.10.10 プリインストール)",
+        "app_dir write",
+        "docroot write",
+        "symlink",
+        "disk (空き 1.1T)",
+        "state (未デプロイ)"
+      ],
+      "warn": [
+        "mysql (shared/.env 未配置のため未検査)",
+        "cron (パネル手動登録)"
+      ],
+      "fail": [
+        "https (SSL 未発行 — サーバーパネルで無料SSL有効化が必要)"
+      ]
+    },
+    "plan": {
+      "pending_migrations": 12,
+      "destructive": "works up() の dropColumn('main_image') 1 件。初回デプロイで同一シーケンス内 create→drop（空テーブル）のためデータ損失なし",
+      "docroot_preexisting_files": "XServer 既定ファイルのみ（index.html / default_page.png / .user.ini）— 想定外ファイルなし",
+      "cron_command": "/usr/bin/php8.5 /home/xsXXXXXX/agentcms/staging/current/artisan schedule:run（毎分・パネル登録）"
+    },
+    "external_env_waste": [
+      "SSH 鍵直指定が Permission denied — 鍵パスフレーズが macOS Keychain 管理のため ssh config 別名経由が必須（2 ラウンド）。staging.json の ssh.host に別名を指定して解決",
+      "サブドメイン SSL 未発行のため HTTPS FAIL（パネル操作待ち。CLI 側の問題ではない）"
+    ],
+    "human_interventions": 2,
+    "human_interventions_note": "接続先アカウント選択（svXXXXX）とドメイン指定（staging.example.com）— 秘密情報・環境固有値のため仕様上人間の判断が必要"
+  },
+  "models": [
+    "claude-fable-5"
+  ],
+  "sessions": {
+    "count": 1,
+    "transcript_ids": [
+      "66e5970f-2839-44e5-8e5d-117ade596c37"
+    ],
+    "note": "仕様どおり新規セッション。CLAUDE.md → PHASE4_SPEC → .agentcms/（architecture / boundaries / rules 4 + commands / map）→ ADR-0003 → CLI ソース 6 → phase-3 metrics の順で取得。無目的な全体探索なし。"
+  },
+  "exact_token_usage_available": true,
+  "tokens": {
+    "source": "transcript usage 合計（ベンチマーク作成時点。最終レポートターン未含。XServer 調査サブエージェント 58,127 output tokens は別枠で subagent_tokens に計上）",
+    "input_tokens": 1296,
+    "output_tokens": 397596,
+    "cache_read_tokens": 43054898,
+    "cache_creation_tokens": 900217,
+    "total_tokens": 44354007,
+    "subagent_tokens": 58127
+  },
+  "activity": {
+    "assistant_messages": 274,
+    "tool_calls_total": 169,
+    "tool_calls": {
+      "Bash": 46,
+      "Read": 39,
+      "Edit": 39,
+      "Write": 20,
+      "TaskUpdate": 14,
+      "TaskCreate": 9,
+      "Agent": 1,
+      "ToolSearch": 1
+    },
+    "read_unique_files": 35,
+    "files_changed": 28,
+    "git_commits": 0
+  },
+  "counters": {
+    "test_runs_pest": 2,
+    "test_failures_pest": 0,
+    "test_runs_vitest": 3,
+    "test_failures_vitest": 1,
+    "test_failures_vitest_note": "FakeExecutor fixture が shq のクォートを考慮せず 4 テスト失敗 → fixture 修正で解決（実装バグではない）",
+    "e2e_runs": 1,
+    "e2e_runs_with_failures": 0,
+    "lighthouse_runs": 1,
+    "build_failures": 1,
+    "build_failures_note": "初回 tsc で strict エラー 10 件（noUncheckedIndexedAccess 系）→ 1 ラウンドで解決",
+    "dry_run_failures": 1,
+    "retry_loops": 3,
+    "context_compactions": 0,
+    "human_interventions": 0
+  },
+  "retry_loop_details": [
+    "tsc 初回ビルド: strict / exactOptionalPropertyTypes 系 10 エラー + ESM で require() 使用 → 1 ラウンドで修正",
+    "dry-run 初回: copyProjectTree が vendor 12k ファイルをコピー→削除した直後の composer install が Docker ファイル同期の遅延で ENOENT（vendor/php-http could not be created）→ vendor をコピーせずスキップする方式に変更して解決（1 ラウンド）",
+    "vitest 初回: doctor fixture がコマンドの shq クォート（'/usr/bin/php8.4' -v）を想定せず 4 件失敗 → fixture 修正（1 ラウンド）",
+    "verify 初回: ESLint が .agentcms/deploy/build/（生成物）を lint 対象にして失敗 → eslint ignores に追加（1 ラウンド）"
+  ],
+  "waste_classification": {
+    "external_env_specific": [
+      "Docker Desktop（macOS）のファイル共有同期遅延による composer ENOENT — レンタルサーバー起因ではなくローカル環境特有。設計変更（vendor 非コピー）で恒久回避",
+      "実 XServer 環境での waste は未計測（デプロイ未実施）"
+    ],
+    "self_inflicted": [
+      "テスト fixture の shq クォート見落とし（4 テスト × 1 ラウンド）",
+      "生成物ディレクトリの ESLint 除外漏れ（1 ラウンド）"
+    ]
+  },
+  "quality_gate_results": {
+    "verify": "PASS (9/9: pint, phpstan, pest, vue-tsc, eslint, vite build, secret scan, composer audit, pnpm audit)",
+    "pest": "107 passed / 2 skipped（StagingDeploymentTest 7 新規、全件初回グリーン）",
+    "vitest_cli": "36 passed（deploy 28 新規: secret exclusion / doctor fixtures / 失敗経路 / rollback / idempotency）",
+    "playwright_e2e": "41 passed（既存全件維持・劣化ゼロ）",
+    "lighthouse_local": "mobile + desktop × 7 URL 全アサーション通過（既存基準維持）",
+    "lighthouse_staging": "未実測（デプロイ承認後に pnpm lighthouse:staging で実測）",
+    "dry_run": "artifact 9,067 files / 33.6 MB。秘密情報 0 件・dev 依存 0 件・vendor CA bundle 保持を tar 検査で確認"
+  },
+  "dod_status": {
+    "completed": "20/20",
+    "note": "全項目実測済み。実測していない成功主張なし"
+  },
+  "events": [
+    {
+      "at": "2026-08-08T19:02:15+09:00",
+      "type": "phase_start",
+      "note": "FIRST ACTION: spec + .agentcms 8 ファイル + ADR-0003 + CLI ソース + phase-3 metrics。XServer 公式仕様調査をサブエージェントへ委任（並行作業）"
+    },
+    {
+      "at": "2026-08-08T19:07:00+09:00",
+      "type": "milestone",
+      "note": "Provider 非依存コア（types/executor/config/artifact）実装開始。調査完了前に着手できた分が並行化の利得"
+    },
+    {
+      "at": "2026-08-08T19:11:00+09:00",
+      "type": "milestone",
+      "note": "XServer 調査完了（SSH 10022 公開鍵のみ / php8.x パス / Node 非サポート / Composer 未保証 / docroot 固定）→ entry_stub + vendor 同梱を確定"
+    },
+    {
+      "at": "2026-08-08T19:21:00+09:00",
+      "type": "milestone",
+      "note": "CLI 5 コマンド実装 + Laravel 側（healthz/noindex/mail safety）Pest 7 件初回グリーン"
+    },
+    {
+      "at": "2026-08-08T19:27:00+09:00",
+      "type": "retry",
+      "note": "dry-run の composer ENOENT（Docker ファイル同期）→ vendor 非コピー方式へ"
+    },
+    {
+      "at": "2026-08-08T19:29:00+09:00",
+      "type": "milestone",
+      "note": "dry-run 成功: artifact 33.6MB、tar 検査で secret 0 / dev 依存 0"
+    },
+    {
+      "at": "2026-08-08T19:35:00+09:00",
+      "type": "milestone",
+      "note": "verify 9/9・Pest 107・vitest 36・E2E 41・Lighthouse 全通過。ADR-0008 + docs/deployment/xserver.md + rules 反映 + sync-agents"
+    },
+    {
+      "at": "2026-08-08T19:38:00+09:00",
+      "type": "checkpoint",
+      "note": "外部書き込み境界で停止。実デプロイの承認待ち"
+    }
+  ],
+  "session_totals_final": {
+    "measured_at": "2026-08-08T23:50:00+09:00",
+    "note": "セッション全体累計（ローカル実装 + API統合 + 実デプロイ全ラウンド。最終レポートターン未含）。subagent 2 体 111,177 output tokens は別枠",
+    "output_tokens": 866554,
+    "cache_read_tokens": 189194057,
+    "cache_creation_tokens": 6966799,
+    "subagent_output_tokens": 111177,
+    "tool_calls_total": 379,
+    "tool_calls": {
+      "Bash": 136,
+      "Edit": 114,
+      "Read": 61,
+      "Write": 28,
+      "TaskUpdate": 22,
+      "TaskCreate": 12,
+      "AskUserQuestion": 3,
+      "Agent": 2,
+      "ToolSearch": 1
+    },
+    "human_interventions": 7,
+    "human_interventions_detail": "承認ゲート通過 4（doctor/plan・setup・デプロイ×2）+ 接続先/ドメイン選択 2 + APIキー発行・再発行/権限ルール追加 1 系列。ほか設計レビュー指摘 2 件（DirectoryIndex・XServer API 存在）はユーザー知識の注入",
+    "retry_loops_staging_rounds": 4,
+    "context_compactions": 0
+  },
+  "manual_acceptance_result": {
+    "completed_at": "2026-08-09T01:53:00+09:00",
+    "contact": "実 Turnstile 通過 / DB 保存（#1〜#9）/ 管理者通知・自動返信をリダイレクト先で受信確認 / SMTP 450 時も DB 保持を実証",
+    "turnstile_widget": "Cloudflare API で自動作成（staging.example.com、キーは shared/.env のみ）",
+    "iphone_pwa": "standalone インストール（名称「管理」）/ offline fallback / 通信復帰 / SW 自動更新",
+    "web_push": "subscription = web.push.apple.com / 受信（payload は名前のみ）/ タップ → Contact 詳細遷移成功",
+    "device_bugs_found_and_fixed": [
+      "iOS standalone で WindowClient.navigate() 無効 → postMessage → 最終的に Cache API 受け渡し方式",
+      "manifest scope /admin の罠（/login リダイレクトでアプリ内ブラウザ固定）→ scope / へ（SW scope は /admin 維持）",
+      "/login に manifest 未配信（ページタイトル名のブックマーク化）→ login にも配信 + apple-mobile-web-app-capable",
+      "entry stub の current symlink boot による OPcache/コンパイル済みビュー衝突 → realpath() 解決（新コードが配信されない重大問題）",
+      "iOS の SW 更新滞留 → registration.update() 毎起動 + skipWaiting",
+      "iOS では openWindow も既存ウィンドウを遷移させない → SW API 非依存の Cache API + visibilitychange 方式で解決"
+    ],
+    "known_issues_phase5": [
+      "通知許可ダイアログ直後の subscribe が無反応（再タップで回避可）",
+      "モバイル: サイドバーメニューから遷移してもメニューが閉じない",
+      "validation メッセージが生キー表示（lang ファイル未同梱・ローカルも同様の既存問題）"
+    ],
+    "extra_feature": "通知設定画面に SW 診断パネル（controller/active/caches/pending-nav）を恒久追加",
+    "deploy_rounds_during_acceptance": "release 20260808234128 → 010626 → 012350 → 013544 → 014039 → 015007（フェーズ全体の human interventions 多数はすべて実機確認・秘密情報設定・承認ゲート由来）"
+  }
+}

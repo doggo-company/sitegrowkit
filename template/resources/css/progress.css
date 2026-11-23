@@ -1,0 +1,95 @@
+/*
+ * Inertia の進捗バーの CSS（F-50 / B-24）。
+ *
+ * ## なぜ自前で持つのか
+ *
+ * @inertiajs/core は既定でこの CSS を **<style> 要素として実行時に差し込む**。
+ * 管理画面の CSP は style-src で inline を許していないので、**毎頁 1 件ブロックされていた**。
+ * nonce を DOM へ晒す道もあるが、それは「インラインを許さない」という守りの形を一段崩す。
+ * だから progress: { includeCSS: false }（resources/js/app.ts）で差し込みを止め、
+ * **同じ CSS を Vite 経由（= 'self'）で配る**。
+ *
+ * ## 触るときは
+ *
+ * **中身は上流が組み立てる文字列と一字一句同じ**でなければならない。手で直さない。
+ * 上流が変われば packages/cli/tests/inertia-progress-css.test.ts が赤くなるので、
+ * `node scripts/regenerate-progress-css.mjs` で作り直す。
+ */
+#nprogress {
+      pointer-events: none;
+      background: none;
+      border: none;
+      margin: 0;
+      padding: 0;
+      overflow: visible;
+      inset: unset;
+      width: 100%;
+      height: 0;
+      position: fixed;
+      top: 0;
+      left: 0;
+    }
+
+    #nprogress::backdrop {
+      display: none;
+    }
+
+    #nprogress .bar {
+      background: #4B5563;
+
+      position: fixed;
+      z-index: 1031;
+      top: 0;
+      left: 0;
+
+      width: 100%;
+      height: 2px;
+    }
+
+    #nprogress .peg {
+      display: block;
+      position: absolute;
+      right: 0px;
+      width: 100px;
+      height: 100%;
+      box-shadow: 0 0 10px #4B5563, 0 0 5px #4B5563;
+      opacity: 1.0;
+
+      transform: rotate(3deg) translate(0px, -4px);
+    }
+
+    #nprogress .spinner {
+      display: block;
+      position: fixed;
+      z-index: 1031;
+      top: 15px;
+      right: 15px;
+    }
+
+    #nprogress .spinner-icon {
+      width: 18px;
+      height: 18px;
+      box-sizing: border-box;
+
+      border: solid 2px transparent;
+      border-top-color: #4B5563;
+      border-left-color: #4B5563;
+      border-radius: 50%;
+
+      animation: nprogress-spinner 400ms linear infinite;
+    }
+
+    .nprogress-custom-parent {
+      overflow: hidden;
+      position: relative;
+    }
+
+    .nprogress-custom-parent #nprogress .spinner,
+    .nprogress-custom-parent #nprogress .bar {
+      position: absolute;
+    }
+
+    @keyframes nprogress-spinner {
+      0%   { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }

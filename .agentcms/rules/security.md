@@ -1,0 +1,16 @@
+# Security Rules (MUST follow)
+
+- "It's Laravel so it's safe" is not an argument. Prefer Laravel standard features; custom auth is forbidden (Fortify only).
+- Secrets live in `.env` only. Never hardcode keys/passwords; never commit `.env*` (except `.env.example`). Turnstile production secret never enters the repo — dev/test use Cloudflare official test keys.
+- `.agentcms/local/` is local-only secret storage (admin credentials etc.), gitignored, chmod-restricted. It is NOT AI context: never read, print, log, or commit its contents. Admin passwords are generated per project by `agentcms create`/`dev` — a shared default password must never exist. When a human needs the credential, point them to `.agentcms/local/admin-credentials.json` instead of echoing the value.
+- Contact form: server-side Turnstile siteverify is mandatory; widget alone is not verification. DB save happens before mail; mail failure must not lose the submission.
+- Uploads: enforce `config/agentcms.php` and `Uploads/UploadValidator` allow-lists (jpg/png/gif/webp/avif and sanitized SVG). SVG must pass `Uploads/SvgSanitizer` before storage: reject DTD/ENTITY, remove active content and external references, never save the unprocessed input. Regenerate filenames. Store images under the configured public disk (never an executable path). Validate MIME by content, not extension alone. 一般ファイルは別の許可リスト・公開範囲・ダウンロード経路を守る。
+- Admin routes: `auth` + Fortify 2FA available + login rate limiting (Fortify defaults). No public registration — admins are seeded/CLI-created.
+- Sessions: http_only, same_site=lax, secure in production. HTTPS forced in production.
+- Security headers middleware on public + admin: X-Frame-Options DENY, X-Content-Type-Options nosniff, Referrer-Policy strict-origin-when-cross-origin, CSP on public site.
+- Output escaping: Blade `{{ }}` / Vue default escaping. Raw HTML only via core purifier helper.
+- SQL: Eloquent / Query Builder / bound parameters only.
+- Local mail goes to Mailpit only; never point local/.env.example at a real SMTP.
+- Web Push: VAPID private key lives in `.env` only (generate: `php artisan notifications:vapid-keys`); never sent to the client. Push payloads are lock-screen-visible — name + minimal context only, never message bodies / emails. Subscriptions: owner-scoped queries only; don't log endpoints. Expired (404/410) subscriptions get deleted, not retried.
+- Template Import assets (Reference-Based Asset Allowlist): copy candidates to `public/imported/` are **only files actually referenced** from HTML/CSS (attributes, `url()`, non-page links) **and** in web-deliverable formats (jpg/jpeg/png/webp/avif/gif/svg/ico/woff/woff2/ttf/otf/css/js). Never copy production/document/script files (psd/ai/af*/doc(x)/xls(x)/ppt(x)/py/sh/bak/env/archives/source maps/…) — real-world source dirs double as working dirs and contain client documents. pdf needs explicit approval. Unreferenced assets are never auto-copied (and never deleted). The plan must record every exclusion with a reason (`assets.excluded`). Media Library registration is limited to content images of CMS-integrated repeats; SVG stays a static asset in the template import path; registering it through the Media Library must always use the upload sanitizer.
+- `agentcms verify` runs secret scan + `composer audit` + `pnpm audit` — keep them green.

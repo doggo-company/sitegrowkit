@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "file_key": "REPLACE_WITH_FILE_KEY",
+  "file_name": "example",
+  "file_type": "design",
+  "entry_nodes": ["1:2", "1:3"]
+}

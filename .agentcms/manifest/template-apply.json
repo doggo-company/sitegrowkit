@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "manifest_fingerprint": "2ec20387b570c282e18e2e3c6f89e5ab2269cc99734bc79354996ece2586ac7a",
+  "plan_sha256": "4f87be868d78eb6c3dc4aea76bad5b339cacce6bb6827f9b2b921cf78b1149ee",
+  "applied_at": "2026-08-08T18:34:41.202Z",
+  "files": [
+    {
+      "target": "database/seeders/template-import/work1.png",
+      "sha256": "daeaa213a15f0b693ff7d05504e9abfd83594efa3812c367c671dadae669600a",
+      "source": "images/work1.png"
+    },
+    {
+      "target": "database/seeders/template-import/work2.png",
+      "sha256": "5474471d3d5d711626a4ceeec0fc76dd7e11a3e3cc98591cfec1431df3ba3798",
+      "source": "images/work2.png"
+    },
+    {
+      "target": "database/seeders/template-import/work3.png",
+      "sha256": "58b004b895859bab5fe1fa90e09454a542e31aa84164c59806e69c65cf1f572b",
+      "source": "images/work3.png"
+    },
+    {
+      "target": "database/seeders/template-import/work4.png",
+      "sha256": "4dea9f0a0efbafd38d58044adbe7ffa789917ef635dbff951a61b7b9cde67073",
+      "source": "images/work4.png"
+    },
+    {
+      "target": "database/seeders/template-import/work5.png",
+      "sha256": "0789642cc975f28426e1d50cf76c98f47ad0786b3b1fc96f9c689df3a75c7c77",
+      "source": "images/work5.png"
+    },
+    {
+      "target": "database/seeders/template-import/work6.png",
+      "sha256": "4c1750ef5af147500decd23e680fcd254ab179808fbc7cf4d76ae0b7508b26b9",
+      "source": "images/work6.png"
+    },
+    {
+      "target": "database/seeders/TemplateContentSeeder.php",
+      "sha256": "5682d28db11a09a35ae52f61c8f4e98c43ba4e972bd819b8b2fcedd5dfd41aa2",
+      "source": "manifest repeats（カード / ニュース抽出データ）"
+    },
+    {
+      "target": "modules/Contact/views/form.blade.php",
+      "sha256": "ef50c3840cf7b73b67c2824f9be07a1dd8b837dd7b5319273fb3769b587aba29",
+      "source": "contact.html"
+    },
+    {
+      "target": "modules/Works/views/index.blade.php",
+      "sha256": "418d1f1deefb73da8f294d64674fc5d7d3aba3a6d1c5f826f3befdfc59051e51",
+      "source": "works.html"
+    },
+    {
+      "target": "public/imported/css/style.css",
+      "sha256": "1af5c42cd78abf72e669647894bbca2c058c302999f4f64571193af668457e2a",
+      "source": "css/style.css"
+    },
+    {
+      "target": "public/imported/fonts/leaf-icons.woff2",
+      "sha256": "839c412a25790dee3bb8a324d44942a724d2cd4e2790a7ba3d3973b21f155f85",
+      "source": "fonts/leaf-icons.woff2"
+    },
+    {
+      "target": "public/imported/images/hero-bg.png",
+      "sha256": "40348c0b70686f93f48cf9875d040d3505621a987cb75ff0c5eb5c7fc53fd119",
+      "source": "images/hero-bg.png"
+    },
+    {
+      "target": "public/imported/images/logo.png",
+      "sha256": "4593c6549faff043c018afef95fb10598001e7d229fa2cd38328e0bd4fdc682b",
+      "source": "images/logo.png"
+    },
+    {
+      "target": "public/imported/js/main.js",
+      "sha256": "1f878416df378c2b9955ec778acf6325de8fe3da593f6b2fca657943d65257c7",
+      "source": "js/main.js"
+    },
+    {
+      "target": "resources/views/components/imported/cta.blade.php",
+      "sha256": "5f7bc872def7a855c47ff9fc3397aaaa669258c836618996d3106be68391446f",
+      "source": "service.html section.cta"
+    },
+    {
+      "target": "resources/views/layouts/imported.blade.php",
+      "sha256": "76df19da80f70e43e8d1ba48d6bac35ddf3d80c10c61a1a66fe8f3ce1e1c24b3",
+      "source": "index.html"
+    },
+    {
+      "target": "resources/views/public/about.blade.php",
+      "sha256": "bf896e411096f9b36ac0979259c3de6cbda21c3be6608ce2b166c25a4f85185a",
+      "source": "about.html"
+    },
+    {
+      "target": "resources/views/public/home.blade.php",
+      "sha256": "4abac89eeda0f78f2ec0079c27015e92de58d20e2af04db3d40b689051162c5f",
+      "source": "index.html"
+    },
+    {
+      "target": "resources/views/public/service.blade.php",
+      "sha256": "2e0b3e101c224265e3ae86cac90ae4361cf24358796249705629be3dc7d98c5b",
+      "source": "service.html"
+    }
+  ]
+}

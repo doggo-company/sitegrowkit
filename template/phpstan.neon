@@ -1,0 +1,35 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+    - vendor/nesbot/carbon/extension.neon
+
+parameters:
+    paths:
+        - app/
+        - bootstrap/app.php
+        - config/
+        - core/src/
+        - database/
+        - modules/
+        - routes/
+
+    level: 7
+
+    # about / service の view は template import で増減する（Project isolation — ADR-0010 Rev.1）。
+    # view が存在しない状態では larastan が literal を view-string と認めないため、
+    # この 1 箇所だけ状態非依存で無視する（存在チェックは直前の importedViewExists で実施済み）
+    ignoreErrors:
+        -
+            message: '#Parameter \#1 \$view of function view expects view-string\|null, string given#'
+            path: app/Http/Controllers/PublicSiteController.php
+            reportUnmatched: false
+
+    # コンテンツモデルの属性は content/schemas/*.json が定義する（Schema First）。
+    # per-model docblock で二重管理しないため、動的プロパティを許容する。
+    #
+    # **モデルを 1 つずつ並べない**（Phase 9.7 / STAGE 20F）。ここへ型名を書くと、
+    # その module を配らない生成サイトへ「在るはずのないクラス」を指す設定が届く。
+    # 契約（SchemaModel）で覆えば、kit の例も、利用者が管理画面で作った型も、
+    # 同じ 1 行で説明できる。Media だけは schema 駆動ではないので個別に残す。
+    universalObjectCratesClasses:
+        - AgentCms\Core\Content\SchemaModel
+        - Modules\Media\Models\Media

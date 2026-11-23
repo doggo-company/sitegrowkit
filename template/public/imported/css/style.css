@@ -1,0 +1,791 @@
+/* Agent CMS Kit sample site — stylesheet (imported base) */
+
+:root {
+  --green: #2e7d32;
+  --green-dark: #1b5e20;
+  --green-pale: #eef5ee;
+  --text: #222;
+  --text-muted: #666;
+  --border: #ddd;
+  --max-width: 1000px;
+}
+
+@font-face {
+  font-family: "LeafIcons";
+  src: url("../fonts/leaf-icons.woff2") format("woff2");
+  font-display: swap;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  /* 外部から取ってこなくても日本語が読める stack。CDN のフォントに依存しない */
+  font-family:
+    "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans",
+    "BIZ UDPGothic", Meiryo, sans-serif;
+  color: var(--text);
+  line-height: 1.8;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+a {
+  color: var(--green-dark);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Header */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: rgba(255, 255, 255, 0.95);
+  border-bottom: 1px solid var(--border);
+}
+
+.header.is-scrolled {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.header-inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+}
+
+.logo {
+  display: inline-flex;
+  align-items: center;
+}
+
+.gnav ul {
+  display: flex;
+  list-style: none;
+  gap: 1.5rem;
+  margin: 0;
+  padding: 0;
+}
+
+.gnav a {
+  text-decoration: none;
+  font-weight: 700;
+  color: var(--text);
+}
+.gnav a:hover {
+  color: var(--green);
+}
+
+.nav-toggle {
+  display: none;
+}
+
+/* Hero */
+.hero {
+  text-align: center;
+  padding: 6rem 1rem;
+  background: var(--green-pale) url("../images/hero-bg.png") center / cover
+    no-repeat;
+}
+
+.hero h1 {
+  font-size: 2.25rem;
+  margin: 0 0 1rem;
+}
+.hero p {
+  margin: 0 0 2rem;
+  color: var(--text-muted);
+}
+.hero-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* Buttons */
+.btn {
+  display: inline-block;
+  background: var(--green);
+  color: #fff;
+  padding: 0.75rem 2rem;
+  border-radius: 4px;
+  border: 2px solid var(--green);
+  text-decoration: none;
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.btn:hover {
+  background: var(--green-dark);
+  border-color: var(--green-dark);
+}
+
+.btn-outline {
+  background: transparent;
+  color: var(--green);
+}
+.btn-outline:hover {
+  background: var(--green-pale);
+  color: var(--green-dark);
+}
+
+/* Sections */
+.section {
+  padding: 4rem 1rem;
+}
+.section-inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+
+.section-title {
+  font-size: 1.5rem;
+  margin: 0 0 2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.icon-leaf::before {
+  font-family: "LeafIcons", sans-serif;
+  content: "\2618";
+  color: var(--green);
+}
+
+.section-more {
+  text-align: right;
+  margin: 1.5rem 0 0;
+}
+
+/* Page title */
+.page-title {
+  background: var(--green-pale);
+  padding: 3rem 1rem;
+}
+
+.page-title-inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+.page-title h1 {
+  margin: 0;
+  font-size: 2rem;
+}
+.page-title-sub {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+}
+
+/* Breadcrumb */
+.breadcrumb {
+  padding: 1rem;
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+
+.breadcrumb ol {
+  display: flex;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.breadcrumb li + li::before {
+  content: "/";
+  margin-right: 0.5rem;
+  color: var(--border);
+}
+
+/* Work cards */
+.card-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1.5rem;
+}
+
+.work-card img {
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  display: block;
+}
+.work-card h3 {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 1rem;
+}
+.work-card-meta {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+/* News */
+.news-items {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.news-item {
+  display: flex;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.news-item time {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.news-item a {
+  text-decoration: none;
+  color: var(--text);
+}
+.news-item a:hover {
+  color: var(--green);
+  text-decoration: underline;
+}
+
+/* Services */
+.service-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1.5rem;
+}
+
+.service-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+}
+
+.service-item h3 {
+  margin: 0 0 0.5rem;
+  color: var(--green-dark);
+}
+.service-item p {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+/* Plans */
+.plan-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.5rem;
+}
+
+.plan {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.plan-featured {
+  border: 2px solid var(--green);
+  background: var(--green-pale);
+}
+.plan-name {
+  margin: 0;
+  font-size: 1.125rem;
+  color: var(--green-dark);
+}
+.plan-price {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0.5rem 0;
+}
+.plan-desc {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+/* FAQ */
+.faq-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 1.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.faq-item summary {
+  padding: 1rem 0;
+  font-weight: 700;
+  cursor: pointer;
+}
+.faq-item p {
+  margin: 0 0 1rem;
+}
+
+/* CTA */
+.cta {
+  background: var(--green-dark);
+  color: #fff;
+  text-align: center;
+  padding: 4rem 1rem;
+}
+
+.cta h2 {
+  margin: 0 0 0.5rem;
+}
+.cta p {
+  margin: 0 0 1.5rem;
+}
+.cta .btn {
+  background: #fff;
+  color: var(--green-dark);
+  border-color: #fff;
+}
+
+/* Tables */
+.company-table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 600px;
+}
+
+.company-table th,
+.company-table td {
+  border: 1px solid var(--border);
+  padding: 0.5rem 1rem;
+  text-align: left;
+}
+
+.company-table th {
+  background: var(--green-pale);
+  white-space: nowrap;
+}
+
+/* Contact form */
+.contact-lead {
+  margin: 0 0 2rem;
+}
+
+.contact-form {
+  max-width: 600px;
+  display: grid;
+  gap: 1rem;
+}
+
+/* 必須の印（WP 一周 7 周目 2026-09-03）。この form は novalidate なので、
+   押す前に分かる手がかりはこれだけになる */
+.field__required {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.4rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #ffffff;
+    background: #a8302a;
+    border-radius: 2px;
+}
+
+.field label {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+/* 日付・数値・電話・URL の欄も同じ大きさにする（UX 一周 11 周目 R11-3: 日付と数値だけ小さく枠も違った） */
+.field input[type="text"],
+.field input[type="email"],
+.field input[type="tel"],
+.field input[type="url"],
+.field input[type="number"],
+.field input[type="date"],
+.field input[type="datetime-local"],
+.field select,
+.field textarea {
+  width: 100%;
+  padding: 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.field-checkbox label {
+  font-weight: 400;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.field-checkbox input {
+  width: auto;
+}
+
+/* Footer */
+.footer {
+  background: #f5f5f2;
+  margin-top: 4rem;
+}
+
+.footer-inner {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 3rem 1rem 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 2rem;
+}
+
+.footer-logo {
+  margin: 0 0 0.5rem;
+  font-weight: 700;
+}
+.footer-address {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.footer-nav {
+  display: flex;
+  list-style: none;
+  gap: 1.5rem;
+  margin: 0;
+  padding: 0;
+}
+
+.footer-nav a {
+  text-decoration: none;
+  color: var(--text);
+}
+.footer-nav a:hover {
+  color: var(--green);
+}
+
+.copyright {
+  width: 100%;
+  margin: 1rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* Responsive */
+@media (max-width: 767px) {
+  .hero {
+    padding: 4rem 1rem;
+  }
+  .hero h1 {
+    font-size: 1.625rem;
+  }
+
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: #fff;
+    cursor: pointer;
+    position: relative;
+  }
+
+  .nav-toggle-bar,
+  .nav-toggle-bar::before,
+  .nav-toggle-bar::after {
+    display: block;
+    width: 20px;
+    height: 2px;
+    background: var(--text);
+    position: absolute;
+    content: "";
+  }
+
+  .nav-toggle-bar::before {
+    top: -6px;
+  }
+  .nav-toggle-bar::after {
+    top: 6px;
+  }
+
+  .gnav {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+    padding: 1rem;
+  }
+
+  .gnav.is-open {
+    display: block;
+  }
+
+  .gnav ul {
+    flex-direction: column;
+    gap: 0;
+  }
+  .gnav li {
+    border-bottom: 1px solid var(--border);
+  }
+  .gnav a {
+    display: block;
+    padding: 0.75rem 0.5rem;
+  }
+
+  .footer-inner {
+    flex-direction: column;
+  }
+  .footer-nav {
+    flex-wrap: wrap;
+  }
+}
+
+/* --- Agent CMS Kit productization (v0.8.0-rc5): text wordmark + sample note --- */
+.logo-text {
+  font-weight: 700;
+  font-size: 1.35rem;
+  /* 元テンプレートのロゴ画像 (140x32) と同じ行高にし、header の高さ・
+     以下の全要素の縦位置を import 元デザインと一致させる */
+  line-height: 32px;
+  letter-spacing: 0.02em;
+  color: var(--green-dark);
+  text-decoration: none;
+}
+.logo-text:hover {
+  color: var(--green);
+}
+.footer-note {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  opacity: 0.75;
+}
+
+/* --- SiteGrowKit: グローバルナビ / フッターの 2 階層目（R03 / R05・2026-09-09） ---
+   `MenuTree` が返す children を描くための最小限の追加。既存の `.gnav ul` / `.gnav a` /
+   `.footer-nav` の見た目は変えず、入れ子の <ul> にだけ BEM の class で当てる。
+   開閉状態は .is-open と aria-expanded を同期する。CSSだけで開くとEscapeで閉じられない。 */
+.gnav__item {
+  position: relative;
+}
+.gnav__item--has-children {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+/* 親リンクの隣の開閉ボタン（矢印）。hover の無い端末でも子へ届くように置く */
+.gnav__toggle {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  position: relative;
+}
+.gnav__toggle::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translate(-50%, -70%) rotate(45deg);
+  transition: transform 0.15s;
+}
+.gnav__toggle:hover,
+.gnav__toggle:focus-visible {
+  color: var(--green);
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
+}
+.gnav__item.is-open > .gnav__toggle::before {
+  transform: translate(-50%, -30%) rotate(-135deg);
+}
+/* 2 階層目: PC では親の下に浮かべる。`.gnav ul` の横並びを打ち消す */
+.gnav .gnav__sub {
+  display: none;
+  flex-direction: column;
+  gap: 0;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 12rem;
+  max-width: min(24rem, calc(100vw - 2rem));
+  margin: 0;
+  padding: 0.5rem 0;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  z-index: 20;
+}
+.gnav__item.is-open > .gnav__sub {
+  display: flex;
+}
+.gnav .gnav__sub a {
+  display: block;
+  padding: 0.5rem 1rem;
+  font-weight: 400;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.gnav .gnav__sub a[aria-current="page"] {
+  color: var(--green);
+}
+
+/* フッター: 2 階層目は常に見せる（開閉しない） */
+.footer-nav__sub {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0 0 0 0.75rem;
+  font-size: 0.875rem;
+}
+.footer-nav__sub-item + .footer-nav__sub-item {
+  margin-top: 0.125rem;
+}
+
+@media (max-width: 767px) {
+  /* スマホ: nav-toggle で開いた中に、子は親の下へ常に並べる（ボタンは要らない） */
+  .gnav__item--has-children {
+    display: block;
+  }
+  .gnav__toggle {
+    display: none;
+  }
+  .gnav .gnav__sub,
+  .gnav__item.is-open > .gnav__sub {
+    display: block;
+    position: static;
+    min-width: 0;
+    padding: 0 0 0.25rem;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .gnav .gnav__sub li {
+    border-bottom: 0;
+  }
+  .gnav .gnav__sub a {
+    padding: 0.5rem 0.5rem 0.5rem 1.5rem;
+    white-space: normal;
+  }
+}
+
+/* 記事が増えても古い記事へ進めるページ送り。タッチでも押せる大きさにする。 */
+.pagination { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 2rem 0; padding: 0; list-style: none; }
+.pagination a, .pagination span { display: grid; place-items: center; min-width: 44px; min-height: 44px; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 4px; text-decoration: none; }
+.pagination [aria-current="page"] { background: var(--green); color: #fff; }
+.pagination a:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+/* 公開検索は狭い画面で折り返し、入力と送信を44px以上の高さにする。 */
+.search-form { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-block: 1.5rem; }
+.search-form label { flex-basis: 100%; font-weight: 700; }
+.search-form input { flex: 1 1 12rem; min-width: 0; max-width: 100%; min-height: 44px; padding: 0.5rem 0.75rem; border: 1px solid var(--color-border, #ccc); border-radius: 4px; font: inherit; background: #fff; color: #222; }
+.search-form button { min-height: 44px; padding: 0.5rem 1rem; border: 1px solid transparent; border-radius: 4px; font: inherit; background: var(--color-accent, #225c37); color: #fff; cursor: pointer; }
+.search-form :focus-visible { outline: 2px solid var(--color-accent, #225c37); outline-offset: 2px; }
+
+/* ロゴの縦横比を保ち、スマホのメニュー操作領域を押し出さない。 */
+.site-brand__image { display: block; width: auto; height: auto; max-width: min(220px, 50vw); max-height: 48px; object-fit: contain; }
+
+/* 本文へスキップ（フォーカスしたときだけ見える） */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0.5rem;
+  z-index: 100;
+  padding: 0.5rem 1rem;
+  background: #fff;
+  color: var(--text);
+  border: 2px solid var(--text);
+  border-radius: 4px;
+}
+.skip-link:focus {
+  left: 0.5rem;
+}
+
+/* フッターの SNS とサイト内検索（UX 一周 2026-09-28） */
+.footer-links {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+.footer-links a {
+  color: inherit;
+}
+
+/* 見本トップの案内と、写真を入れる場所（UX 一周 2026-09-28） */
+.hero .hero-guide {
+  font-size: 0.875rem;
+}
+.hero-photo-slot {
+  max-width: 36rem;
+  margin: 2.5rem auto 0;
+  padding: 2.5rem 1.5rem;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.7);
+}
+.hero .hero-photo-slot p {
+  margin: 0;
+}
+.hero .hero-photo-slot__title {
+  font-weight: 700;
+  color: var(--text);
+}
+.hero .hero-photo-slot__guide {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+}
+
+/* Keep the bundled navigation usable with long names, keyboard and no scripts. */
+.header :is(a, button):focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+@media (prefers-reduced-motion: reduce) {
+  .gnav__toggle::before { transition: none; }
+}
+@media (max-width: 767px) {
+  .nav-toggle { flex-shrink: 0; }
+  .header .logo { max-width: calc(100% - 4rem); overflow-wrap: anywhere; }
+  .gnav { max-height: calc(100svh - 5rem); overflow-y: auto; }
+  .header:not(.header--interactive) .nav-toggle { display: none; }
+  .header:not(.header--interactive) .header-inner { flex-wrap: wrap; }
+  .header:not(.header--interactive) .gnav { display: block; position: static; flex-basis: 100%; max-height: none; }
+}
+
+/* Hero heading entrance — CSS only (no third-party animation library).
+   Ends fully visible and also runs without JavaScript. */
+@keyframes hero-rise {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: none; }
+}
+.hero h1 { animation: hero-rise 0.8s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .hero h1 { animation: none; }
+}

@@ -1,0 +1,12 @@
+{
+  "$comment": "Registry only. Taxonomy definitions live in content/taxonomies/<key>.json — single source, do not duplicate here. Runtime ULIDs live in the DB and are never written back to these files. Sync with `php artisan agentcms:taxonomy-sync` (explicit setup/update/dev step only).",
+  "taxonomies": [
+    {
+      "key": "news_category",
+      "managed_by": "code",
+      "hierarchical": true,
+      "definition": "content/taxonomies/news_category.json",
+      "consumers": ["news"]
+    }
+  ]
+}

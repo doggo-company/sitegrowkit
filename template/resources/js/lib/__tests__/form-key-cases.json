@@ -1,0 +1,50 @@
+{
+  "__": "フォーム識別子の規則を、画面（TS）と保存（PHP）で突き合わせる表。片方だけ触ると、どちらかの試験が落ちる",
+  "cases": [
+    {
+      "name": "Contact Us",
+      "slug": "contact-us",
+      "note": "英字の名前からは読める識別子を作る"
+    },
+    {
+      "name": "  Contact / Us!!  ",
+      "slug": "contact-us",
+      "note": "記号は 1 つの区切りにまとめ、前後は落とす"
+    },
+    {
+      "name": "C",
+      "slug": "",
+      "note": "1 文字は使えない（手で打つと断られるものを、作りもしない — 指摘 41）"
+    },
+    {
+      "name": "ab",
+      "slug": "ab",
+      "note": "2 文字はちょうど使える（境界の内側）"
+    },
+    {
+      "name": "お問い合わせ",
+      "slug": "",
+      "note": "日本語からは作らない（無理に音訳しない）"
+    },
+    {
+      "name": "2024 campaign",
+      "slug": "",
+      "note": "数字始まりは使えない"
+    },
+    {
+      "name": "ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ",
+      "slug": "ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab",
+      "note": "60 文字で切った端に区切りを残さない（指摘 42）"
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "slug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "note": "60 文字ちょうどはそのまま"
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "slug": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "note": "61 文字は 60 で切る"
+    }
+  ]
+}

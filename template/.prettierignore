@@ -1,0 +1,5 @@
+resources/js/components/ui/*
+resources/views/mail/*
+# 上流（@inertiajs/core）が組み立てる文字列と**一字一句同じ**でなければならない。
+# 整形すると packages/cli/tests/inertia-progress-css.test.ts が赤くなる（F-50 / B-24）
+resources/css/progress.css

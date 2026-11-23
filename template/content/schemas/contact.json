@@ -1,0 +1,16 @@
+{
+  "id": "contact",
+  "label": "お問い合わせ",
+  "kind": "submissions",
+  "fields": [
+    { "key": "name", "type": "text", "label": "お名前", "required": true, "max": 100 },
+    { "key": "email", "type": "email", "label": "メールアドレス", "required": true, "max": 255 },
+    { "key": "company", "type": "text", "label": "会社名", "max": 120 },
+    { "key": "subject", "type": "select", "label": "件名", "required": true, "choices": ["estimate", "consultation", "other"] },
+    { "key": "message", "type": "textarea", "label": "お問い合わせ内容", "required": true, "max": 5000 }
+  ],
+  "admin": {
+    "list": ["name", "email", "subject"],
+    "search": ["name", "email", "message"]
+  }
+}

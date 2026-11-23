@@ -1,0 +1,15 @@
+{
+  "type": "ghost",
+  "label": "宣言と bindable が食い違ったもの",
+  "category": "basic",
+  "since": 1,
+  "propsSchema": {
+    "text": { "type": "string", "label": "文字" }
+  },
+  "styleSchema": [],
+  "bindable": ["missing"],
+  "allowedChildren": [],
+  "allowedParents": ["page"],
+  "renderer": { "kind": "blade", "view": "components.document.text" },
+  "capabilities": { "responsive": [], "container": false }
+}

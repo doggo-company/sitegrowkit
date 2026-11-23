@@ -1,0 +1,25 @@
+{
+    "provider": "xserver",
+    "target": "production",
+    "ssh": {
+        "host": "サーバーID.xsrv.jp",
+        "port": 10022,
+        "user": "サーバーID",
+        "identityFile": "~/.ssh/xserver_production"
+    },
+    "remote": {
+        "appDir": "/home/サーバーID/agentcms/production",
+        "docroot": "/home/サーバーID/ドメイン名/public_html",
+        "phpBin": "auto"
+    },
+    "app": {
+        "url": "https://ドメイン名",
+        "healthPath": "/healthz"
+    },
+    "keepReleases": 5,
+    "api": {
+        "servername": "サーバーID.xsrv.jp",
+        "dbSuffix": "agcms",
+        "parentDomain": ""
+    }
+}

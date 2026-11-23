@@ -1,0 +1,96 @@
+{
+  "id": "site",
+  "label": "サイト設定",
+  "kind": "settings",
+  "fields": [
+    {
+      "key": "site_name",
+      "type": "text",
+      "label": "サイト名",
+      "required": true,
+      "max": 60
+    },
+    {
+      "key": "tagline",
+      "type": "text",
+      "label": "キャッチコピー",
+      "max": 120
+    },
+    {
+      "key": "site_logo_id",
+      "type": "media",
+      "label": "サイトのロゴ",
+      "help": "公開サイトのヘッダーに表示します。横長で余白の少ない画像がおすすめです。未設定の場合はサイト名を表示します。"
+    },
+    {
+      "key": "site_icon_id",
+      "type": "media",
+      "label": "サイトのアイコン",
+      "help": "ブラウザのタブに表示します。正方形のPNGまたはSVG画像を選んでください。"
+    },
+    {
+      "key": "seo_description",
+      "type": "textarea",
+      "label": "サイト説明（meta description）",
+      "max": 200
+    },
+    {
+      "key": "social_image_id",
+      "type": "media",
+      "label": "SNSで共有するときの画像",
+      "help": "記事にメイン画像がない場合に使用します。公開してよい画像を選んでください。"
+    },
+    {
+      "key": "contact_email",
+      "type": "email",
+      "label": "問い合わせ通知先メール",
+      "max": 255
+    },
+    {
+      "key": "tel",
+      "type": "text",
+      "label": "電話番号",
+      "max": 20
+    },
+    {
+      "key": "address",
+      "type": "text",
+      "label": "所在地",
+      "max": 200
+    },
+    {
+      "key": "x_url",
+      "type": "text",
+      "label": "X (Twitter) URL",
+      "max": 255,
+      "help": "URL か、@ から始まるアカウント名（例: @komorebi_cafe）。公開サイトのフッターにリンクが出ます。"
+    },
+    {
+      "key": "instagram_url",
+      "type": "text",
+      "label": "Instagram URL",
+      "max": 255,
+      "help": "URL か、@ から始まるアカウント名（例: @komorebi_cafe）。公開サイトのフッターにリンクが出ます。"
+    },
+    {
+      "key": "front_page_id",
+      "type": "page",
+      "label": "トップページ",
+      "help": "選ぶと、そのページがサイトのトップページになります。選ばないときは、これまでどおりテーマのトップページを表示します。",
+      "validation": {
+        "managedBy": "document"
+      }
+    },
+    {
+      "key": "show_comments_menu",
+      "type": "boolean",
+      "default": true,
+      "label": "コメントを管理メニューに出す",
+      "help": "オフにすると、サイドバーから「コメント」が消えます。コメント機能そのものは止まりません（URL を直接開けば管理画面は使えます）。このサイトでコメントを使わないときに、迷わないようにするための設定です。"
+    }
+  ],
+  "admin": {
+    "list": [],
+    "search": []
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "id": "post",
+  "label": "投稿",
+  "kind": "collection",
+  "table": "post",
+  "managedBy": "cms",
+  "fields": [
+    { "key": "title", "type": "text", "label": "タイトル", "required": true, "max": 120, "searchable": true, "sortable": true },
+    { "key": "slug", "type": "slug", "label": "URL の文字列", "from": "title", "required": true, "unique": true, "max": 120, "help": "この記事のページの住所になります（半角の英数字とハイフン）。空のままにすると見出しから作ります。日本語だけの見出しのときは日付から作ります（例: 2026-09-03-1）。あとから直せます" },
+    { "key": "main_image_id", "type": "media", "label": "アイキャッチ画像", "help": "記事の一覧・詳細とSNSでの共有に使います。" },
+    { "key": "excerpt", "type": "textarea", "label": "抜粋", "max": 300, "help": "一覧に表示する短い紹介文です。空のままでも保存できます。" },
+    { "key": "body", "type": "richtext", "label": "本文", "searchable": true },
+    { "key": "status", "type": "status", "label": "公開の状態", "required": true, "filterable": true },
+    { "key": "published_at", "type": "datetime", "label": "公開日時", "sortable": true }
+  ],
+  "admin": {
+    "list": ["title", "status", "published_at"],
+    "search": ["title", "body"]
+  }
+}

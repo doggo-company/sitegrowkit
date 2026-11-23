@@ -1,0 +1,385 @@
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --text: #1f2430;
+  --muted: #5f6673;
+  --line: #e2e5ea;
+  --accent: #1f6feb;
+  --ok: #1a7f4b;
+  --warn: #9a6700;
+  --danger: #b3261e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    system-ui,
+    -apple-system,
+    "Hiragino Sans",
+    "Noto Sans JP",
+    sans-serif;
+  line-height: 1.7;
+}
+
+.shell {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+
+.shell__header {
+  margin-bottom: 1.5rem;
+}
+
+.brand {
+  margin: 0;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+}
+
+.screen {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1.75rem;
+}
+
+h1 {
+  margin: 0 0 0.75rem;
+  font-size: 1.5rem;
+  line-height: 1.4;
+}
+
+h2 {
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.lead {
+  margin: 0 0 1.25rem;
+  color: var(--muted);
+}
+
+.notes {
+  margin: 0 0 1.5rem;
+  padding-left: 1.25rem;
+  color: var(--muted);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.actions--stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.65rem 1.1rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: #c9cfd8;
+}
+
+/*
+ * 押した瞬間に分かるように（UX 一周 15 周目 T2: 「はじめる」は次の画面まで 498ms、見た目が何も変わらなかった）。
+ * 押している間は沈んで少し暗くなる。送っている間は aria-busy で待ちの印を出す（app.js）。
+ */
+.btn {
+  transition:
+    transform 0.08s,
+    filter 0.08s,
+    border-color 0.15s;
+  white-space: nowrap;
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+  filter: brightness(0.92);
+}
+
+.btn[aria-busy="true"] {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn {
+    transition: none;
+  }
+
+  .btn:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.btn--quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  padding-left: 0;
+}
+
+.field {
+  margin-bottom: 1.25rem;
+}
+
+label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+input[type="text"] {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+  background: #fff;
+}
+
+input[readonly] {
+  background: #f3f4f6;
+  color: var(--muted);
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 「場所を選ぶ」が 2 行に折れていた（UX 一周 15 周目 T5）。ボタンは縮めない */
+.row .btn {
+  flex: none;
+}
+
+.hint {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.error {
+  margin: 0.35rem 0 0;
+  color: var(--danger);
+  font-size: 0.875rem;
+}
+
+.checks,
+.stages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.checks li,
+.stages li {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.checks li:last-child,
+.stages li:last-child {
+  border-bottom: none;
+}
+
+.mark {
+  flex: 0 0 1.4rem;
+  text-align: center;
+  font-weight: 700;
+}
+
+.mark--pass {
+  color: var(--ok);
+}
+
+.mark--warn {
+  color: var(--warn);
+}
+
+.mark--fail {
+  color: var(--danger);
+}
+
+.mark--pending {
+  color: var(--muted);
+}
+
+.item__body {
+  flex: 1 1 auto;
+}
+
+.item__title {
+  font-weight: 600;
+}
+
+.item__note {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.stages li[data-status="pending"] .item__title {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.status {
+  margin: 1rem 0 0;
+  color: var(--muted);
+  min-height: 1.7em;
+}
+
+.details {
+  margin-top: 1.25rem;
+  background: #11151c;
+  color: #d6dae2;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+}
+
+.details pre {
+  margin: 0;
+  max-height: 22rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+/* AI エージェント連携（Phase 9.1B / STEP 13） */
+.agents {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line, #e2e2e2);
+  text-align: left;
+}
+
+.agents h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.agents__list {
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.agents__item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.agents__name {
+  flex: 1 1 8rem;
+  font-weight: 600;
+}
+
+.btn--small {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+.notice {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+}
+
+.notice--warn {
+  color: var(--warn);
+  background: #fff8e5;
+}
+
+.notice p {
+  margin: 0;
+}
+
+/* 管理画面のログイン情報（UX 一周 3 周目 N1）。角丸・色の帯は付けない */
+.credential {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  text-align: left;
+}
+
+.credential h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.credential__list {
+  margin: 0.75rem 0 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.credential__row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.credential__row dt {
+  flex: 0 0 7rem;
+  font-weight: 600;
+}
+
+.credential__row dd {
+  margin: 0;
+}
+
+.credential__row code {
+  font-size: 1rem;
+  user-select: all;
+  word-break: break-all;
+}

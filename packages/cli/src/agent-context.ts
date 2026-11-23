@@ -1,0 +1,139 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+/**
+ * AI Agent Context の Single Source of Truth 機構（Phase 7 Decision 3）。
+ *
+ * Kit canonical (.agentcms/) → renderForAudience("project") → template/.agentcms/
+ * → `agentcms create` → project の .agentcms/ → sync-agents → CLAUDE.md / AGENTS.md
+ *
+ * template/.agentcms/ を人間が別途手書き管理する二重 SSoT は禁止。
+ * 同期は `agentcms sync-template-context` が行い、`--check` がドリフトを検出する。
+ */
+
+export type Audience = "kit" | "project";
+
+const KIT_ONLY = /<!-- kit-only:start -->([\s\S]*?)<!-- kit-only:end -->/g;
+const PROJECT_ONLY = /<!-- project-only:start([\s\S]*?)project-only:end -->/g;
+
+/** canonical context を対象読者向けに決定論的に変換する */
+export function renderForAudience(content: string, audience: Audience): string {
+  let out = content.replace(KIT_ONLY, (_m, inner: string) =>
+    audience === "kit" ? inner : "",
+  );
+  out = out.replace(PROJECT_ONLY, (_m, inner: string) =>
+    audience === "project" ? inner : "",
+  );
+  if (audience === "project") {
+    // kit repo のパス表記 `template/xxx` は生成プロジェクトでは `xxx`
+    out = out.replace(/template\/(?=[A-Za-z._{])/g, "");
+  }
+  out = out.replace(/[ \t]+$/gm, "");
+  out = out.replace(/\n{3,}/g, "\n\n");
+  out = joinBrokenTables(out);
+  if (!out.endsWith("\n")) out += "\n";
+  return out;
+}
+
+/** marker 除去によりテーブル行間へ入った空行を除く（表の分断を防ぐ） */
+function joinBrokenTables(out: string): string {
+  let prev: string;
+  do {
+    prev = out;
+    out = out.replace(/^(\|[^\n]*)\n{2,}(?=\|)/gm, "$1\n");
+  } while (out !== prev);
+  return out;
+}
+
+/** template/.agentcms へ同期する canonical ファイル（相対パス） */
+export const CONTEXT_FILES = [
+  "architecture.md",
+  "commands.md",
+  "context/map.md",
+  "rules/boundaries.md",
+  "rules/coding.md",
+  "rules/security.md",
+  "rules/testing.md",
+  "rules/deployment.md",
+  "registry/content-types.json",
+  "registry/components.json",
+  "registry/taxonomies.json",
+] as const;
+
+export interface ContextFile {
+  rel: string;
+  content: string;
+}
+
+/** canonical .agentcms/ から生成プロジェクト向け context 一式を構築する */
+export function buildProjectContext(canonicalDir: string): ContextFile[] {
+  const out: ContextFile[] = [];
+  for (const rel of CONTEXT_FILES) {
+    const p = join(canonicalDir, rel);
+    if (!existsSync(p)) continue;
+    out.push({
+      rel,
+      content: renderForAudience(readFileSync(p, "utf8"), "project"),
+    });
+  }
+  return out;
+}
+
+/**
+ * .agentcms/（SSoT）から CLAUDE.md / AGENTS.md の本文を生成する。
+ * 生成物は「入口」であり、ルール本文は .agentcms/ にのみ存在させる（重複コピー禁止）。
+ */
+export function buildEntrypointBody(agentcmsDir: string): string {
+  const audience: Audience = existsSync(join(agentcmsDir, "project.json"))
+    ? "project"
+    : "kit";
+  // 詳細マップは必要なときだけ読む。生成先にも存在する相対参照を使う。
+  const gate = audience === "kit" ? "node scripts/kit-verify.mjs" : "agentcms verify";
+  const sections: string[] = [
+    "# Agent Entrypoint",
+    [
+      "Source of truth: `.agentcms/`. This file is generated; change the context or generator, then run sync-agents.",
+      "",
+      "## Task-specific reading",
+      "- Code changes: read `.agentcms/rules/boundaries.md`, `coding.md`, and `security.md` before editing the affected module.",
+      "- Architecture or unfamiliar ownership: `.agentcms/architecture.md`; locate the relevant module in `.agentcms/context/map.md`.",
+      "- Running or validating a change: `.agentcms/commands.md` and `.agentcms/rules/testing.md`.",
+      "- Deployment work only: `.agentcms/rules/deployment.md`. Keep its approval and backup requirements.",
+      "- Schema/registry work: `.agentcms/registry/content-types.json`, `components.json`, and `taxonomies.json` as relevant.",
+      "- Documentation-only work: check affected references and consistency; do not load all implementation guides.",
+      "",
+      "## Boundaries and completion",
+      "- In generated projects, `core/` is read-only. Extend through published contracts/configuration; kit changes belong in the kit repository.",
+      "- `.agentcms/local/` contains secrets, not agent context. Never read, print, or commit its contents.",
+      "- Preserve First and Manifest First apply to template/Figma imports. Keep Owner Gates and confirmation tokens intact.",
+      "- Continue authorized local implementation through relevant verification and fixes. File count alone is not an approval gate.",
+      `- For implementation changes, run the correct quality gate: \`${gate}\`. Keep phase/release E2E and product acceptance requirements in the referenced rules.`,
+      "- Record what was verified and what remains unverified. A passing build alone does not prove browser behavior, generated-project portability, or installed-artifact behavior.",
+      "- Push, publishing, remote mutations, paid actions, and external messages require authorization for that action in the current task.",
+    ].join("\n"),
+  ];
+  return `${sections.join("\n\n")}\n`;
+}
+
+const GENERATED_HEADER = (file: string): string =>
+  `<!-- GENERATED by \`agentcms sync-agents\` from .agentcms/ — DO NOT EDIT ${file} directly. Edit .agentcms/ and re-run. -->\n\n`;
+
+/** project root へ CLAUDE.md / AGENTS.md を書き出す（sync-agents / create 共用） */
+export function writeAgentEntrypoints(root: string, agentcmsDir: string): void {
+  const body = buildEntrypointBody(agentcmsDir);
+  for (const file of ["CLAUDE.md", "AGENTS.md"]) {
+    writeFileSync(join(root, file), GENERATED_HEADER(file) + body, "utf8");
+  }
+}
+
+/** 生成 context 一式をディレクトリへ書き出す */
+export function writeContextFiles(
+  targetAgentcmsDir: string,
+  files: ContextFile[],
+): void {
+  for (const f of files) {
+    const p = join(targetAgentcmsDir, f.rel);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, f.content, "utf8");
+  }
+}

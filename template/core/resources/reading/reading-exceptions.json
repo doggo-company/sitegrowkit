@@ -1,0 +1,15 @@
+{
+  "_about": "IPADIC（setup は kuromoji）の読みがずれる語の読み（UX 一周 23 周目 #4）。題名の中にこの語があれば、解析にかけずにこの URL の語にする。足したら template/tests/fixtures/reading-examples.json にその語を含む例を足すこと（UxRelease20261106Round23Test が見る）",
+  "谷中": "yanaka",
+  "七五三": "shichi-go-san",
+  "二十歳": "hatachi",
+  "一人": "hitori",
+  "二人": "futari",
+  "一升餅": "isshou-mochi",
+  "十三参り": "juusan-mairi",
+  "一歳": "issai",
+  "八歳": "hassai",
+  "十歳": "jussai",
+  "一周年": "isshuunen",
+  "木村": "kimura"
+}

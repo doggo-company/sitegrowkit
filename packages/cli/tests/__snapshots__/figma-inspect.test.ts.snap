@@ -1,0 +1,81 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`figma inspect — Design Manifest > Manifest snapshot（形式変更の検出） 1`] = `
+{
+  "assets": [
+    "img-imgrefcard:REVIEW",
+    "img-imgrefhero:STATIC_DESIGN_ASSET",
+    "img-imgrefw1:CONTENT_MEDIA",
+    "img-imgrefw2:CONTENT_MEDIA",
+    "img-imgrefw3:CONTENT_MEDIA",
+    "img-imgrefw4:CONTENT_MEDIA",
+    "img-imgrefw5:CONTENT_MEDIA",
+    "img-imgrefw6:CONTENT_MEDIA",
+    "vec-deco-blob-320x320:DECORATION",
+    "vec-icon-leaf-32x32:ICON",
+    "vec-icon-shield-32x32:ICON",
+    "vec-icon-spark-32x32:ICON",
+    "vec-logo-120x32:STATIC_DESIGN_ASSET",
+  ],
+  "cms": [
+    "feature-repeat:REVIEW",
+    "works-repeat:EXISTING_MODULE",
+  ],
+  "components": [
+    "button:COMPONENT_SET:UI_COMPONENT",
+    "feature:CANDIDATE:REVIEW",
+    "footer:COMPONENT:LAYOUT",
+    "header:COMPONENT:LAYOUT",
+    "works-card:COMPONENT:CMS_COMPONENT",
+  ],
+  "screens": [
+    {
+      "id": "home",
+      "pairing": "CONFIDENT",
+      "variants": [
+        "desktop:1440",
+        "mobile:375",
+      ],
+    },
+    {
+      "id": "works",
+      "pairing": "CONFIDENT",
+      "variants": [
+        "desktop:1440",
+        "mobile:375",
+      ],
+    },
+  ],
+  "tokens": {
+    "colors": [
+      "brand-sun=#f2b705(STYLE)",
+      "color-6b6f76=#6b6f76(INFERRED)",
+      "color-accent=#0f4c46(STYLE)",
+      "color-ffffff=#ffffff(INFERRED)",
+      "color-text=#222222(STYLE)",
+    ],
+    "radius": [
+      "radius-8",
+      "radius-12",
+    ],
+    "spacing": [
+      "space-8",
+      "space-12",
+      "space-16",
+      "space-24",
+      "space-48",
+      "space-96",
+    ],
+    "typography": [
+      "font-12-400",
+      "font-14-400",
+      "font-16-700",
+      "font-20-700",
+      "font-48-600",
+      "type-body",
+      "type-heading-m",
+    ],
+  },
+  "warnings": [],
+}
+`;

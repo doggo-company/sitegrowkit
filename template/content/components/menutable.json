@@ -1,0 +1,53 @@
+{
+  "type": "menutable",
+  "label": "メニュー表",
+  "category": "basic",
+  "since": 1,
+  "propsSchema": {
+    "caption": {
+      "type": "string",
+      "max": 60,
+      "default": "",
+      "label": "表の題（なくても可）",
+      "help": "ドリンク・フードのように表を分けるときの題。書かなければ出ません（ページの見出しと同じ言葉を 2 回並べないため）。"
+    },
+    "items": {
+      "type": "string",
+      "required": true,
+      "max": 2000,
+      "label": "品名と値段",
+      "default": "〇〇（品名・コース名）｜〇〇円\n〇〇（品名・コース名）｜〇〇円\n〇〇（品名・コース名）｜〇〇円",
+      "help": "1 行に 1 品。品名と値段のあいだに「｜」を入れます（例: 〇〇コース｜3,000円）。欄を押すと見本が全部選ばれるので、そのまま打てば置き換わります。"
+    },
+    "note": {
+      "type": "string",
+      "max": 200,
+      "default": "",
+      "label": "注意書き（なくても可）",
+      "help": "税込・税抜の別や、季節で変わる品のことなど。書かなければ出ません。"
+    }
+  },
+  "styleSchema": [
+    "spaceTop",
+    "spaceBottom",
+    "visibility"
+  ],
+  "bindable": [],
+  "allowedChildren": [],
+  "allowedParents": [
+    "section",
+    "container"
+  ],
+  "renderer": {
+    "kind": "blade",
+    "view": "components.document.menutable"
+  },
+  "capabilities": {
+    "responsive": [
+      "spaceTop",
+      "spaceBottom",
+      "visibility"
+    ],
+    "container": false
+  }
+}

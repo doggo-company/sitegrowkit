@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SiteGrowKit セットアップ</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231f2937'/%3E%3Cpath d='M9 21l7-12 7 12z' fill='%23fff'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="shell__header">
+        <p class="brand">SiteGrowKit</p>
+      </header>
+
+      <!-- WELCOME -->
+      <section class="screen" data-screen="WELCOME" hidden>
+        <h1>サイト制作の準備をはじめます</h1>
+        <p class="lead">
+          必要な作業はこの画面だけで完結します。ターミナルを使う必要はありません。
+        </p>
+        <ul class="notes">
+          <li>お使いのパソコンの中に、あなた専用のサイトを作ります</li>
+          <li>作成中はインターネット接続が必要です</li>
+          <li>途中で閉じても、続きから再開できます</li>
+        </ul>
+        <div class="actions">
+          <button class="btn btn--primary" data-action="environment-start">
+            はじめる
+          </button>
+        </div>
+      </section>
+
+      <!-- RESUMABLE -->
+      <section class="screen" data-screen="RESUMABLE" hidden>
+        <h1>前回の続きから再開できます</h1>
+        <p class="lead">
+          <span data-bind="resume-site"></span> の準備が途中で止まっています。
+        </p>
+        <div class="actions">
+          <button class="btn btn--primary" data-action="resume">
+            続きから再開する
+          </button>
+          <button class="btn" data-action="resume-discard">
+            最初からやり直す
+          </button>
+        </div>
+        <div
+          data-bind="discard-confirmation"
+          hidden
+          role="group"
+          aria-label="最初からやり直す確認"
+        >
+          <p>
+            やり直しても、作りかけのフォルダ（<span
+              data-bind="resume-path"
+            ></span
+            >）は消えずに残ります。
+          </p>
+          <p>同じサイト名でもう一度作ると、フォルダ名の後ろに -2 などの番号が付いた、別の新しいフォルダになります。</p>
+          <div class="actions">
+            <button
+              class="btn btn--primary"
+              data-action="resume-discard-confirm"
+            >
+              やり直す
+            </button>
+            <button class="btn" data-action="resume-discard-back">戻る</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ENVIRONMENT -->
+      <section class="screen" data-screen="ENVIRONMENT" hidden>
+        <h1>お使いの環境を確認しています</h1>
+        <p class="lead" data-bind="environment-summary"></p>
+        <ul class="checks" data-bind="checks"></ul>
+        <div class="actions">
+          <button class="btn btn--primary" data-action="environment-continue">
+            次へ進む
+          </button>
+          <button class="btn" data-action="environment-recheck">
+            もう一度確認する
+          </button>
+        </div>
+      </section>
+
+      <!-- PROJECT -->
+      <section class="screen" data-screen="PROJECT" hidden>
+        <h1>サイトの情報を入力してください</h1>
+        <div class="field">
+          <label for="siteName">サイト名</label>
+          <input
+            id="siteName"
+            type="text"
+            autocomplete="off"
+            placeholder="例: 山田デザイン事務所"
+          />
+          <p class="hint">
+            公開サイトと管理画面に表示されます。あとから管理画面の「サイト設定」で変更できます。
+          </p>
+          <p class="error" data-error="siteName" hidden></p>
+        </div>
+        <div class="field">
+          <label for="projectName">フォルダ名</label>
+          <input
+            id="projectName"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="例: yamada-design"
+          />
+          <p class="hint">
+            半角の英小文字・数字・ハイフンが使えます。サイト名から候補を入れておくので、そのままで大丈夫です（同じ名前のフォルダがあるときは、後ろに番号を付けます）。
+          </p>
+          <p class="hint" id="projectNameReading" role="status" hidden>
+            読みの辞書を準備しています…（初めてのときだけ少しかかります）
+          </p>
+          <p class="error" data-error="projectName" hidden></p>
+        </div>
+        <div class="field">
+          <label for="location">保存する場所</label>
+          <div class="row">
+            <input id="location" type="text" autocomplete="off" readonly />
+            <button class="btn" data-action="pick-folder">場所を選ぶ</button>
+          </div>
+          <p class="error" data-error="location" hidden></p>
+        </div>
+        <div class="actions">
+          <button class="btn btn--primary" data-action="start">
+            この内容で作成する
+          </button>
+        </div>
+      </section>
+
+      <!-- SETTING_UP -->
+      <section class="screen" data-screen="SETTING_UP" hidden>
+        <h1>サイトを準備しています</h1>
+        <p class="lead">
+          初回は 5〜15 分ほどかかります。この画面を開いたままお待ちください。
+        </p>
+        <ol class="stages" data-bind="stages"></ol>
+        <p class="status" data-bind="status"></p>
+        <div class="actions">
+          <button class="btn btn--quiet" data-action="toggle-details">
+            詳細を表示
+          </button>
+          <button class="btn btn--quiet" data-action="cancel">中止する</button>
+        </div>
+      </section>
+
+      <!-- READY -->
+      <section class="screen" data-screen="READY" hidden>
+        <h1>準備ができました</h1>
+        <p class="lead">下のボタンから、作成したサイトを確認できます。</p>
+        <div class="actions actions--stack">
+          <button class="btn btn--primary" data-action="open-public" hidden>
+            サイトを見る
+          </button>
+          <button class="btn" data-action="open-admin" hidden>
+            管理画面を開く
+          </button>
+          <button class="btn" data-action="open-folder" hidden>
+            プロジェクトフォルダを開く
+          </button>
+        </div>
+        <p class="hint" data-bind="ready-urls"></p>
+
+        <!-- 管理画面のログイン情報（UX 一周 3 周目 N1）。値は /api/credentials から READY のときだけ受け取る -->
+        <section class="credential" data-bind="credential-box" hidden>
+          <h2>管理画面のログイン情報</h2>
+          <p class="hint">
+            「管理画面を開く」を押すと、ログインした状態で開きます（この画面を閉じてしばらくたつと、ログイン画面が開きます。そのときは下のメールアドレスとパスワードで入ります）。次からは、下のメールアドレスとパスワードでログインします。パスワードは、お使いのパスワード管理（ブラウザの保存など）に控えておいてください。
+          </p>
+          <dl class="credential__list">
+            <div class="credential__row">
+              <dt>メールアドレス</dt>
+              <dd><code data-bind="credential-email"></code></dd>
+              <dd>
+                <button class="btn btn--small" data-action="copy-email">
+                  コピー
+                </button>
+              </dd>
+            </div>
+            <div class="credential__row">
+              <dt>パスワード</dt>
+              <dd><code data-bind="credential-password"></code></dd>
+              <dd>
+                <button class="btn btn--small" data-action="copy-password">
+                  コピー
+                </button>
+              </dd>
+            </div>
+          </dl>
+          <p class="hint" data-bind="credential-status" role="status"></p>
+        </section>
+        <p class="hint" data-bind="credentials"></p>
+        <div
+          class="notice notice--warn"
+          data-bind="audit-warning"
+          role="status"
+          hidden
+        >
+          <p data-bind="audit-warning-text"></p>
+        </div>
+
+        <!-- AI エージェント連携（Phase 9.1B / STEP 13）。Terminal 入力を求めない -->
+        <section class="agents" data-bind="agents" hidden>
+          <h2>AIエージェント連携</h2>
+          <p class="hint">
+            お使いの AI エージェントから、この CMS
+            の記事作成・更新を頼めるようになります。
+            設定ファイルはプロジェクトフォルダに保存されます。
+          </p>
+          <ul class="agents__list" data-bind="agent-list"></ul>
+          <p class="hint" data-bind="agent-status" role="status"></p>
+        </section>
+      </section>
+
+      <!-- ERROR -->
+      <section class="screen" data-screen="ERROR" hidden>
+        <h1 data-bind="error-title"></h1>
+        <p class="lead" data-bind="error-message"></p>
+        <div class="actions" data-bind="error-actions"></div>
+      </section>
+
+      <section class="details" data-bind="details" hidden>
+        <h2>詳細</h2>
+        <pre data-bind="details-log"></pre>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

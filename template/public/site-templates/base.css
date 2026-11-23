@@ -1,0 +1,132 @@
+/*
+ * 初期テンプレートの土台（2026-11-05）。型を選んでいなくても読む。
+ * 「大きな写真と見出し」（cover）ブロックと、セクションの飾り文字（eyebrow）の最小の形だけ。
+ * 色・文字・余白の作り込みは a.css / b.css / c.css が持つ。
+ * 🔴 角丸と、カードの上辺・左辺だけの色帯は使わない（メンテナ NG 2026-11-05）。
+ */
+.doc-cover {
+  position: relative;
+  overflow: hidden;
+  --cover-pad: clamp(1.25rem, 4vw, 3rem);
+}
+.doc-cover__inner {
+  position: relative;
+  z-index: 2;
+  max-width: 1120px;
+  margin-inline: auto;
+  padding: var(--cover-pad);
+}
+.doc-cover__bg,
+.doc-cover__bg picture,
+.doc-cover__bg img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.doc-cover__title {
+  margin: 0;
+  line-break: strict;
+  font-feature-settings: "palt" 1;
+}
+/* 見出しは改行で区切った 1 行ずつを塊にする。入り切るなら行の途中では折り返さない */
+.doc-cover__line {
+  display: inline-block;
+  max-width: 100%;
+}
+.doc-cover__line + .doc-cover__line::before {
+  content: none;
+}
+.doc-cover__title .doc-cover__line {
+  display: block;
+  width: fit-content;
+}
+.doc-cover__eyebrow {
+  margin: 0 0 0.75rem;
+}
+.doc-cover__lead {
+  margin: 1.25rem 0 0;
+  max-width: 34em;
+  line-break: strict;
+}
+.doc-cover__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 2rem 0 0;
+}
+.doc-cover__button {
+  display: inline-block;
+  padding: 0.9rem 1.75rem;
+  text-decoration: none;
+  border: 1px solid currentColor;
+}
+.doc-cover__photo {
+  margin: 0;
+}
+.doc-cover__photo picture,
+.doc-cover__photo img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 写真を画面いっぱいに（文字は写真の上） */
+.doc-cover--full {
+  min-height: min(88vh, 860px);
+  display: flex;
+  align-items: flex-end;
+  color: #fff;
+  background: #2a2724;
+}
+.doc-cover--full .doc-cover__inner {
+  width: 100%;
+  max-width: none;
+  padding-bottom: clamp(2.5rem, 7vw, 4.5rem);
+}
+.doc-cover--full::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.3) 0%, rgba(0, 0, 0, 0) 28%, rgba(0, 0, 0, 0) 50%, rgba(0, 0, 0, 0.5) 100%);
+}
+.doc-cover--full.doc-cover--no-photo {
+  min-height: 60vh;
+}
+
+/* 写真の帯（真ん中に文字とボタン） */
+.doc-cover--band {
+  color: #fff;
+  text-align: center;
+  background: #2a2724;
+}
+.doc-cover--band::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: rgba(20, 18, 15, 0.55);
+}
+.doc-cover--band .doc-cover__inner {
+  padding-block: clamp(5rem, 12vw, 9rem);
+}
+.doc-cover--band .doc-cover__title .doc-cover__line,
+.doc-cover--band .doc-cover__lead {
+  margin-inline: auto;
+}
+.doc-cover--band .doc-cover__actions {
+  justify-content: center;
+}
+
+
+/* Editorial is a usable layout even on pages without A's typography. */
+.doc-cover--editorial .doc-cover__inner { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 2rem; }
+.doc-cover--editorial .doc-cover__copy, .doc-cover--editorial .doc-cover__photo { min-width: 0; }
+.doc-cover--editorial .doc-cover__photo > picture { height: auto; }
+.doc-cover--editorial .doc-cover__photo img { height: auto; aspect-ratio: 1; object-fit: cover; }
+.doc-cover--editorial.doc-cover--no-photo:not(:has(.doc-cover__photo)) .doc-cover__inner { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 767px) { .doc-cover--editorial .doc-cover__inner { grid-template-columns: minmax(0, 1fr); } }

@@ -1,0 +1,18 @@
+{
+  "type": "button",
+  "label": "ボタン",
+  "category": "basic",
+  "since": 1,
+  "propsSchema": {
+    "label": { "type": "string", "required": true, "max": 60, "label": "ラベル" },
+    "href": { "type": "url", "required": true, "label": "リンク先" },
+    "variant": { "type": "enum", "values": ["primary", "secondary"], "default": "primary", "label": "見た目", "valueLabels": {"primary": "目立たせる（塗り）", "secondary": "控えめ（枠線）"} }
+  },
+  "styleSchema": ["textAlign", "spaceTop", "spaceBottom", "visibility"],
+  "bindable": ["label", "href"],
+  "allowedChildren": [],
+  "allowedParents": ["section", "container"],
+  "a11y": { "rules": ["control-name"], "name": "label", "destination": "href" },
+  "renderer": { "kind": "blade", "view": "components.document.button" },
+  "capabilities": { "responsive": ["spaceTop", "spaceBottom", "visibility"], "container": false }
+}

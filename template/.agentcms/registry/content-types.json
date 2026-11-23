@@ -1,0 +1,55 @@
+{
+  "$comment": "Registry only. Field definitions live in content/schemas/<type>.json — single source, do not duplicate here.",
+  "$distribution": "distribution: 'default' は新規生成サイトへ配る。'example' は kit の例・検証資産で配らない（PHASE9_7_SPEC.md §C / OG-A）。省略時は 'default' として読む（既存の読み手との互換）。",
+  "types": [
+    {
+      "id": "post",
+      "kind": "collection",
+      "distribution": "default",
+      "schema": "content/schemas/post.json",
+      "module": "modules/Post"
+    },
+    {
+      "id": "news",
+      "kind": "collection",
+      "distribution": "example",
+      "schema": "content/schemas/news.json",
+      "module": "modules/News"
+    },
+    {
+      "id": "works",
+      "kind": "collection",
+      "distribution": "example",
+      "schema": "content/schemas/works.json",
+      "module": "modules/Works"
+    },
+    {
+      "id": "product",
+      "kind": "collection",
+      "distribution": "example",
+      "schema": "content/schemas/product.json",
+      "module": "modules/Products"
+    },
+    {
+      "id": "contact",
+      "kind": "submissions",
+      "distribution": "default",
+      "schema": "content/schemas/contact.json",
+      "module": "modules/Contact"
+    },
+    {
+      "id": "site",
+      "kind": "settings",
+      "distribution": "default",
+      "schema": "content/schemas/site.json",
+      "module": "modules/Site"
+    },
+    {
+      "id": "media",
+      "kind": "collection",
+      "distribution": "default",
+      "schema": "content/schemas/media.json",
+      "module": "modules/Media"
+    }
+  ]
+}

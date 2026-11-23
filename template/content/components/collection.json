@@ -1,0 +1,17 @@
+{
+  "type": "collection",
+  "label": "一覧",
+  "category": "content",
+  "since": 1,
+  "propsSchema": {
+    "layout": { "type": "enum", "values": ["cards", "list"], "default": "cards", "label": "表示形式" },
+    "limit": { "type": "number", "min": 1, "max": 50, "default": 6, "label": "表示件数" },
+    "emptyState": { "type": "string", "max": 120, "default": "まだ登録がありません", "label": "空のときの文言" }
+  },
+  "styleSchema": ["spaceTop", "spaceBottom", "visibility"],
+  "bindable": [],
+  "allowedChildren": [],
+  "allowedParents": ["section", "container"],
+  "renderer": { "kind": "blade", "view": "components.document.collection" },
+  "capabilities": { "responsive": ["spaceTop", "spaceBottom", "visibility"], "container": false, "collection": true }
+}

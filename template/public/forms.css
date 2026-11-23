@@ -1,0 +1,266 @@
+/*
+ * 確認画面・完了画面の見た目（R-12 / 受付の一本化）。
+ *
+ * ## なぜ別ファイルなのか
+ *
+ * フォームの画面は **2 つの layout のどちらにも載る**（`PublicFormLayout`）。
+ * kit 既定（`layouts.public`）は `resources/css/public.css` を読むので困らないが、
+ * 案件の意匠（`layouts.imported`）はそれを読まない。
+ * 🔴 その結果、**入力画面は意匠どおりなのに、確認画面だけ素の HTML** になっていた
+ * （2026-08-30 に実測。ボタンがブラウザ既定の灰色、項目は字下げだけ）。
+ *
+ * ▷ **`public.css` を imported 側にも読ませる案は採らない。** あちらは `body` や
+ *   見出しや nav まで持っているので、案件の意匠を上書きしてしまう。
+ *   **ここに要るのは、確認・完了画面のためだけの数十行**である。
+ *
+ * ## 名前の付け方
+ *
+ * すべて `form-` で始まる class セレクタだけ。**要素セレクタを書かない** —
+ * どちらの layout に載っても、相手の意匠へ染み出さないため。
+ *
+ * ## 二重に当たってよい
+ *
+ * `layouts.public` では `public.css` と同じ規則が 2 度当たるが、**同じ値**なので
+ * 見た目は変わらない。「どちらの layout でも同じに見える」ほうを優先する。
+ */
+
+.form-confirm {
+    margin: 1.5rem 0;
+    border-top: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.form-confirm__row {
+    display: grid;
+    grid-template-columns: 12rem 1fr;
+    gap: 1rem;
+    padding: 0.85rem 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.form-confirm__row dt {
+    margin: 0;
+    font-weight: 600;
+}
+
+.form-confirm__row dd {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+@media (max-width: 640px) {
+    .form-confirm__row {
+        grid-template-columns: 1fr;
+        gap: 0.25rem;
+    }
+}
+
+.form-page__lead {
+    margin-bottom: 1.25rem;
+}
+
+.form-page__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+}
+
+/*
+ * ボタンは**意匠側の `.btn` を先に当てて**、ここは足りない分だけ補う。
+ * 案件の意匠が `.btn` を持っていればそちらが勝ち、無ければこの既定で読める形になる。
+ */
+.form-page__submit,
+.form-page__back {
+    cursor: pointer;
+}
+
+.form-page__complete {
+    margin: 1.25rem 0;
+    padding: 1rem 1.25rem;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 0.5rem;
+}
+
+
+/* ------------------------------------------------------------------
+ * 入力画面とサイト内検索（UX 一周 2026-09-28）。
+ *
+ * 見本の意匠をやめたフォームと、サイト内検索も店の枠に載るようになった。
+ * 枠の CSS は kit の class を知らないので、ここで補う（`parts.css` と同じ値）。
+ * 色は枠の主な色（`--color-primary`、`components/site-frame-head` が枠に合わせて出す）。
+ * ------------------------------------------------------------------ */
+
+.form-page__form {
+    max-width: 42rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.form-page__fields {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+}
+
+.form-page__errors {
+    padding: 0.75rem 1rem;
+    border: 1px solid #a8302a;
+    color: #a8302a;
+    border-radius: 4px;
+}
+
+.form-page__closed {
+    padding: 1rem 1.25rem;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 4px;
+}
+
+.form-field__label {
+    display: block;
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+}
+
+.form-field__required {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.4rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #ffffff;
+    background: #a8302a;
+    border-radius: 2px;
+}
+
+.form-field input[type='text'],
+.form-field input[type='email'],
+.form-field input[type='url'],
+.form-field input[type='tel'],
+.form-field input[type='number'],
+.form-field input[type='date'],
+.form-field input[type='datetime-local'],
+.form-field textarea,
+.form-field select {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 44px;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    font: inherit;
+    background: #ffffff;
+    color: inherit;
+}
+
+.form-field input:focus-visible,
+.form-field textarea:focus-visible,
+.form-field select:focus-visible,
+.site-search input:focus-visible,
+.site-search button:focus-visible,
+.form-page__fields .form-page__submit:focus-visible {
+    outline: 2px solid var(--color-primary, #0f4c46);
+    outline-offset: 2px;
+}
+
+.form-field__group {
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 4px;
+    padding: 0.75rem 1rem 1rem;
+}
+
+.form-field__check {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.4rem;
+    font-weight: 400;
+}
+
+.form-field__help {
+    margin: 0.4rem 0 0;
+    font-size: 0.875rem;
+    opacity: 0.8;
+}
+
+.form-field__error {
+    margin: 0.4rem 0 0;
+    font-size: 0.875rem;
+    color: #a8302a;
+}
+
+/* 入力画面の送信（確認画面の `btn form-page__submit` は枠の .btn に任せる） */
+.form-page__fields .form-page__submit {
+    align-self: flex-start;
+    min-height: 44px;
+    padding: 0.7rem 2rem;
+    border: 2px solid var(--color-primary, #0f4c46);
+    border-radius: 4px;
+    background: var(--color-primary, #0f4c46);
+    color: #ffffff;
+    font: inherit;
+    font-weight: 700;
+}
+
+.form-page__fields .form-page__submit:hover {
+    opacity: 0.9;
+}
+
+.site-search {
+    max-width: 42rem;
+    margin-block: 0 2rem;
+}
+
+.site-search label {
+    display: block;
+    font-weight: 700;
+}
+
+.site-search__controls {
+    display: flex;
+    gap: 0.75rem;
+    margin-block: 0.5rem;
+}
+
+.site-search input {
+    flex: 1;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    font: inherit;
+}
+
+.site-search button {
+    min-height: 44px;
+    padding: 0.625rem 1.25rem;
+    border: 2px solid var(--color-primary, #0f4c46);
+    border-radius: 4px;
+    background: var(--color-primary, #0f4c46);
+    color: #ffffff;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.site-search__result {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+    padding-block: 1.25rem;
+    overflow-wrap: anywhere;
+}
+
+.site-search__result p {
+    margin: 0;
+}
+
+.site-search__result h2 {
+    margin-block: 0.5rem 0;
+    font-size: 1.125rem;
+}

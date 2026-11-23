@@ -1,0 +1,427 @@
+{
+  "version": 1,
+  "generated_by": "agentcms figma plan",
+  "manifest_fingerprint": "c13a44d9d90e75d23f6853220debacb33499ac8363642f8a794c5566c2109002",
+  "source": {
+    "file_key": "FKEYFIXTURE0001",
+    "figma_version": "2001"
+  },
+  "screens": [
+    {
+      "screen_id": "home",
+      "route": "/figma/home",
+      "target": "resources/views/figma/home.blade.php",
+      "breakpoints": [
+        {
+          "breakpoint": "desktop",
+          "node_id": "1:2",
+          "width": 1440
+        },
+        {
+          "breakpoint": "mobile",
+          "node_id": "1:3",
+          "width": 375
+        }
+      ],
+      "responsive_note": "Desktop/Mobile pairing: CONFIDENT",
+      "confidence": "CONFIDENT",
+      "reason": "Frame 名の breakpoint ラベルと幅（desktop:1440px / mobile:375px）が一致。route は figma/ 名前空間（既存 imported サイトと衝突しない）"
+    },
+    {
+      "screen_id": "works",
+      "route": "/figma/works",
+      "target": "resources/views/figma/works.blade.php",
+      "breakpoints": [
+        {
+          "breakpoint": "desktop",
+          "node_id": "1:4",
+          "width": 1440
+        },
+        {
+          "breakpoint": "mobile",
+          "node_id": "1:5",
+          "width": 375
+        }
+      ],
+      "responsive_note": "Desktop/Mobile pairing: CONFIDENT",
+      "confidence": "CONFIDENT",
+      "reason": "Frame 名の breakpoint ラベルと幅（desktop:1440px / mobile:375px）が一致。route は figma/ 名前空間（既存 imported サイトと衝突しない）"
+    }
+  ],
+  "components": [
+    {
+      "component_id": "button",
+      "implementation": "blade",
+      "classification": "UI_COMPONENT",
+      "action": "generate",
+      "existing_target": null,
+      "target": "resources/views/figma/components/button.blade.php",
+      "confidence": "CONFIDENT",
+      "reason": "名前 \"Button\" から UI 部品と判断（variants: 2）。既存 component に一致なし → Blade partial を新規生成（Blade First: SPEC §61）"
+    },
+    {
+      "component_id": "feature",
+      "implementation": "blade",
+      "classification": "REVIEW",
+      "action": "generate",
+      "existing_target": null,
+      "target": "resources/views/figma/components/feature.blade.php",
+      "confidence": "REVIEW",
+      "reason": "同一構造（signature 一致）が 3 回繰り返されるが Component 化されていない。Component 化は人の判断（勝手に作らない） — 生成はするが partial 扱い（Figma 側の Component 化を推奨）"
+    },
+    {
+      "component_id": "footer",
+      "implementation": "blade",
+      "classification": "LAYOUT",
+      "action": "layout",
+      "existing_target": null,
+      "target": "resources/views/figma/layout.blade.php",
+      "confidence": "CONFIDENT",
+      "reason": "名前 \"Footer\" と全 screen での使用（4 instance）から site layout 部品と判断 — 全 screen 共通レイアウトへ統合"
+    },
+    {
+      "component_id": "header",
+      "implementation": "blade",
+      "classification": "LAYOUT",
+      "action": "layout",
+      "existing_target": null,
+      "target": "resources/views/figma/layout.blade.php",
+      "confidence": "CONFIDENT",
+      "reason": "名前 \"Header\" と全 screen での使用（4 instance）から site layout 部品と判断 — 全 screen 共通レイアウトへ統合"
+    },
+    {
+      "component_id": "works-card",
+      "implementation": "blade",
+      "classification": "CMS_COMPONENT",
+      "action": "generate",
+      "existing_target": null,
+      "target": "resources/views/figma/components/works-card.blade.php",
+      "confidence": "CONFIDENT",
+      "reason": "CMS candidate \"works-repeat\"（works）の繰り返しアイテムとして使用されている。既存 component に一致なし → Blade partial を新規生成（Blade First: SPEC §61）"
+    }
+  ],
+  "tokens": [
+    {
+      "name": "brand-sun",
+      "value": "#f2b705",
+      "source": "STYLE",
+      "status": "NEW_CANDIDATE",
+      "existing_name": null,
+      "existing_value": null,
+      "confidence": "CONFIDENT",
+      "reason": "既存 token に無い（source: STYLE、使用 2 回）。figma-tokens.css へ追加候補"
+    },
+    {
+      "name": "color-6b6f76",
+      "value": "#6b6f76",
+      "source": "INFERRED",
+      "status": "MATCH",
+      "existing_name": "color-text-muted",
+      "existing_value": "#6b6f76",
+      "confidence": "CONFIDENT",
+      "reason": "既存 --color-text-muted と値が一致 — 既存 token の別名として扱える"
+    },
+    {
+      "name": "color-accent",
+      "value": "#0f4c46",
+      "source": "STYLE",
+      "status": "MATCH",
+      "existing_name": "color-accent",
+      "existing_value": "#0f4c46",
+      "confidence": "CONFIDENT",
+      "reason": "既存 --color-accent と名前・値が一致 — 既存 token をそのまま使う"
+    },
+    {
+      "name": "color-ffffff",
+      "value": "#ffffff",
+      "source": "INFERRED",
+      "status": "MATCH",
+      "existing_name": "color-bg",
+      "existing_value": "#ffffff",
+      "confidence": "CONFIDENT",
+      "reason": "既存 --color-bg と値が一致 — 既存 token の別名として扱える"
+    },
+    {
+      "name": "color-text",
+      "value": "#222222",
+      "source": "STYLE",
+      "status": "CONFLICT",
+      "existing_name": "color-text",
+      "existing_value": "#1c1d20",
+      "confidence": "REVIEW",
+      "reason": "既存 --color-text=#1c1d20 と名前が同じで値が異なる — 既存を書き換えない（SPEC §41）。figma 名前空間内でのみ Figma 値を使う"
+    },
+    {
+      "name": "space-8",
+      "value": "8px",
+      "source": "INFERRED",
+      "status": "NEW_CANDIDATE",
+      "existing_name": null,
+      "existing_value": null,
+      "confidence": "REVIEW",
+      "reason": "既存 token に無い（source: INFERRED、使用 6 回）。figma-tokens.css へ追加候補"
+    },
+    {
+      "name": "space-12",
+      "value": "12px",
+      "source": "INFERRED",
+      "status": "NEW_CANDIDATE",
+      "existing_name": null,
+      "existing_value": null,
+      "confidence": "REVIEW",
+      "reason": "既存 token に無い（source: INFERRED、使用 12 回）。figma-tokens.css へ追加候補"
+    },
+    {
+      "name": "space-16",
+      "value": "16px",
+      "source": "INFERRED",
+      "status": "NEW_CANDIDATE",
+      "existing_name": null,
+      "existing_value": null,
+      "confidence": "REVIEW",
+      "reason": "既存 token に無い（source: INFERRED、使用 30 回）。figma-tokens.css へ追加候補"
+    },
+    {
+      "name": "space-24",
+      "value": "24px",
+      "source": "INFERRED",
+      "status": "NEW_CANDIDATE",
+      "existing_name": null,
+      "existing_value": null,
+      "confidence": "REVIEW",
+      "reason": "既存 token に無い（source: INFERRED、使用 41 回）。figma-tokens.css へ追加候補"
+    },
+    {
+      "name": "space-48",
+      "value": "48px",
+      "source": "INFERRED",
+      "status": "NEW_CANDIDATE",
+      "existing_name": null,
+      "existing_value": null,
+      "confidence": "REVIEW",
+      "reason": "既存 token に無い（source: INFERRED、使用 61 回）。figma-tokens.css へ追加候補"
+    },
+    {
+      "name": "space-96",
+      "value": "96px",
+      "source": "INFERRED",
+      "status": "NEW_CANDIDATE",
+      "existing_name": null,
+      "existing_value": null,
+      "confidence": "REVIEW",
+      "reason": "既存 token に無い（source: INFERRED、使用 16 回）。figma-tokens.css へ追加候補"
+    },
+    {
+      "name": "radius-8",
+      "value": "8px",
+      "source": "INFERRED",
+      "status": "NEW_CANDIDATE",
+      "existing_name": null,
+      "existing_value": null,
+      "confidence": "REVIEW",
+      "reason": "既存 token に無い（source: INFERRED、使用 6 回）。figma-tokens.css へ追加候補"
+    },
+    {
+      "name": "radius-12",
+      "value": "12px",
+      "source": "INFERRED",
+      "status": "NEW_CANDIDATE",
+      "existing_name": null,
+      "existing_value": null,
+      "confidence": "REVIEW",
+      "reason": "既存 token に無い（source: INFERRED、使用 19 回）。figma-tokens.css へ追加候補"
+    },
+    {
+      "name": "shadow-1",
+      "value": "0px 4px 16px rgba(0, 0, 0, 0.12)",
+      "source": "INFERRED",
+      "status": "NEW_CANDIDATE",
+      "existing_name": null,
+      "existing_value": null,
+      "confidence": "REVIEW",
+      "reason": "既存 token に無い（source: INFERRED、使用 19 回）。figma-tokens.css へ追加候補"
+    }
+  ],
+  "cms": [
+    {
+      "candidate_id": "feature-repeat",
+      "action": "review",
+      "module": null,
+      "classification": "REVIEW",
+      "seed_items": 0,
+      "confidence": "REVIEW",
+      "reason": "同一構造の 3 アイテム（テキスト差分あり）。用途を特定できる名前が無いため CMS 化は人の判断が必要 — apply では static のまま扱い、CMS 化は人の承認後"
+    },
+    {
+      "candidate_id": "works-repeat",
+      "action": "existing-module",
+      "module": "works",
+      "classification": "EXISTING_MODULE",
+      "seed_items": 3,
+      "confidence": "CONFIDENT",
+      "reason": "同一構造の 3 アイテムが「Works Grid」内に存在し、名前が既存 works module に対応。検出フィールド（title / date / category / image）が schema へ対応可能。既存 works module を Runtime Content Source にし、Figma のサンプルは Design Fixture seed として使う（SPEC §45）"
+    }
+  ],
+  "assets": [
+    {
+      "asset_id": "img-imgrefcard",
+      "classification": "REVIEW",
+      "action": "static",
+      "target": "public/figma/images/img-imgrefcard.png",
+      "confidence": "REVIEW",
+      "reason": "分類根拠が不足 — 用途を人が確認 — 参照される asset のみ取得（Reference-Based: SPEC §51）"
+    },
+    {
+      "asset_id": "img-imgrefhero",
+      "classification": "STATIC_DESIGN_ASSET",
+      "action": "static",
+      "target": "public/figma/images/img-imgrefhero.png",
+      "confidence": "REVIEW",
+      "reason": "640px 幅の大型画像。CMS 繰り返し外のため static 扱い（hero 等）。用途は人が確認 — 参照される asset のみ取得（Reference-Based: SPEC §51）"
+    },
+    {
+      "asset_id": "img-imgrefw1",
+      "classification": "CONTENT_MEDIA",
+      "action": "media-seed",
+      "target": "database/seeders/figma-import/img-imgrefw1.png",
+      "confidence": "CONFIDENT",
+      "reason": "CMS candidate の繰り返しアイテム内の画像 — CMS から更新される content media 候補 — seeder 経由で Media Library へ取り込む（CMS 更新対象のみ: SPEC §49）"
+    },
+    {
+      "asset_id": "img-imgrefw2",
+      "classification": "CONTENT_MEDIA",
+      "action": "media-seed",
+      "target": "database/seeders/figma-import/img-imgrefw2.png",
+      "confidence": "CONFIDENT",
+      "reason": "CMS candidate の繰り返しアイテム内の画像 — CMS から更新される content media 候補 — seeder 経由で Media Library へ取り込む（CMS 更新対象のみ: SPEC §49）"
+    },
+    {
+      "asset_id": "img-imgrefw3",
+      "classification": "CONTENT_MEDIA",
+      "action": "media-seed",
+      "target": "database/seeders/figma-import/img-imgrefw3.png",
+      "confidence": "CONFIDENT",
+      "reason": "CMS candidate の繰り返しアイテム内の画像 — CMS から更新される content media 候補 — seeder 経由で Media Library へ取り込む（CMS 更新対象のみ: SPEC §49）"
+    },
+    {
+      "asset_id": "img-imgrefw4",
+      "classification": "CONTENT_MEDIA",
+      "action": "media-seed",
+      "target": "database/seeders/figma-import/img-imgrefw4.png",
+      "confidence": "CONFIDENT",
+      "reason": "CMS candidate の繰り返しアイテム内の画像 — CMS から更新される content media 候補 — seeder 経由で Media Library へ取り込む（CMS 更新対象のみ: SPEC §49）"
+    },
+    {
+      "asset_id": "img-imgrefw5",
+      "classification": "CONTENT_MEDIA",
+      "action": "media-seed",
+      "target": "database/seeders/figma-import/img-imgrefw5.png",
+      "confidence": "CONFIDENT",
+      "reason": "CMS candidate の繰り返しアイテム内の画像 — CMS から更新される content media 候補 — seeder 経由で Media Library へ取り込む（CMS 更新対象のみ: SPEC §49）"
+    },
+    {
+      "asset_id": "img-imgrefw6",
+      "classification": "CONTENT_MEDIA",
+      "action": "media-seed",
+      "target": "database/seeders/figma-import/img-imgrefw6.png",
+      "confidence": "CONFIDENT",
+      "reason": "CMS candidate の繰り返しアイテム内の画像 — CMS から更新される content media 候補 — seeder 経由で Media Library へ取り込む（CMS 更新対象のみ: SPEC §49）"
+    },
+    {
+      "asset_id": "vec-deco-blob-320x320",
+      "classification": "DECORATION",
+      "action": "css-only",
+      "target": null,
+      "confidence": "REVIEW",
+      "reason": "装飾 vector — static asset として配置 — vector は CSS プレースホルダで表現（SVG export は追加 API call のため人の承認後）"
+    },
+    {
+      "asset_id": "vec-icon-leaf-32x32",
+      "classification": "ICON",
+      "action": "css-only",
+      "target": null,
+      "confidence": "REVIEW",
+      "reason": "小型 vector — icon（SVG static asset。Media へは入れない） — vector は CSS プレースホルダで表現（SVG export は追加 API call のため人の承認後）"
+    },
+    {
+      "asset_id": "vec-icon-shield-32x32",
+      "classification": "ICON",
+      "action": "css-only",
+      "target": null,
+      "confidence": "REVIEW",
+      "reason": "小型 vector — icon（SVG static asset。Media へは入れない） — vector は CSS プレースホルダで表現（SVG export は追加 API call のため人の承認後）"
+    },
+    {
+      "asset_id": "vec-icon-spark-32x32",
+      "classification": "ICON",
+      "action": "css-only",
+      "target": null,
+      "confidence": "REVIEW",
+      "reason": "小型 vector — icon（SVG static asset。Media へは入れない） — vector は CSS プレースホルダで表現（SVG export は追加 API call のため人の承認後）"
+    },
+    {
+      "asset_id": "vec-logo-120x32",
+      "classification": "STATIC_DESIGN_ASSET",
+      "action": "css-only",
+      "target": null,
+      "confidence": "REVIEW",
+      "reason": "ロゴ vector — static asset（SVG は CMS upload 禁止: Phase 2 policy） — vector は CSS プレースホルダで表現（SVG export は追加 API call のため人の承認後）"
+    }
+  ],
+  "fonts": [
+    {
+      "family": "Clash Display",
+      "weights": [
+        600
+      ],
+      "availability": "MISSING",
+      "action": "review",
+      "confidence": "REVIEW",
+      "reason": "FONT MISSING → REVIEW。fallback は既存 font stack を使う（勝手に類似 font へ置換しない）"
+    },
+    {
+      "family": "Inter",
+      "weights": [
+        400,
+        700
+      ],
+      "availability": "MISSING",
+      "action": "review",
+      "confidence": "REVIEW",
+      "reason": "FONT MISSING → REVIEW。fallback は既存 font stack を使う（勝手に類似 font へ置換しない）"
+    }
+  ],
+  "schema_overrides": [
+    {
+      "schema": "works",
+      "field": "body",
+      "patch": {
+        "required": false
+      },
+      "reason": "Figma design に本文が存在しない。内容を捏造せず、Project Scope Schema Override で必須解除（SPEC §46/§63）"
+    }
+  ],
+  "uncertainties": [
+    {
+      "area": "components",
+      "message": "\"feature\" は Component 化されていない繰り返し。Component 化するかは人の判断（SPEC §31）"
+    },
+    {
+      "area": "cms",
+      "message": "\"feature-repeat\": 同一構造の 3 アイテム（テキスト差分あり）。用途を特定できる名前が無いため CMS 化は人の判断が必要"
+    },
+    {
+      "area": "fonts",
+      "message": "FONT MISSING: \"Clash Display\"（weights: 600）がプロジェクトに無い。似た font への置換はしない — 人が font 導入可否を判断（SPEC §54）"
+    },
+    {
+      "area": "fonts",
+      "message": "FONT MISSING: \"Inter\"（weights: 400,700）がプロジェクトに無い。似た font への置換はしない — 人が font 導入可否を判断（SPEC §54）"
+    },
+    {
+      "area": "tokens",
+      "message": "token \"color-text\" が既存 color-text=#1c1d20 と競合（Figma: #222222）。既存を書き換えない — 人が確認"
+    }
+  ],
+  "warnings": []
+}

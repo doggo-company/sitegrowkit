@@ -1,0 +1,42 @@
+{
+  "id": "product",
+  "label": "商品",
+  "kind": "collection",
+  "table": "products",
+  "fields": [
+    { "id": "01KZTC0000FIELDTITLE00001", "key": "title", "type": "text", "label": "商品名", "required": true, "max": 120, "searchable": true, "sortable": true },
+    { "id": "01KZTC0000FIELDSLUG000002", "key": "slug", "type": "slug", "label": "スラッグ", "from": "title", "required": true, "unique": true, "max": 120, "help": "このページの住所になります（半角の英数字とハイフン）。空のままにすると見出しから作ります。日本語だけの見出しのときは日付から作ります（例: 2026-09-03-1）。あとから直せます" },
+    { "id": "01KZTC0000FIELDSUMMARY03A", "key": "summary", "type": "textarea", "label": "概要", "max": 300 },
+    { "id": "01KZTC0000FIELDDESC000003", "key": "description", "type": "richtext", "label": "説明", "help": "商品の説明です" },
+    { "id": "01KZTC0000FIELDPRICE00004", "key": "price", "type": "number", "label": "価格", "validation": { "min": 0, "max": 10000000 }, "filterable": true, "sortable": true },
+    { "id": "01KZTC0000FIELDRELDATE005", "key": "release_date", "type": "date", "label": "発売日", "sortable": true },
+    { "id": "01KZTC0000FIELDFEATURED06", "key": "featured", "type": "boolean", "label": "おすすめ", "default": false, "filterable": true },
+    { "id": "01KZTC0000FIELDPTYPE00007", "key": "product_type", "type": "select", "label": "種別", "choices": ["physical", "digital"], "filterable": true },
+    { "id": "01KZTC0000FIELDSIZE000008", "key": "size", "type": "radio", "label": "サイズ", "choices": ["s", "m", "l"] },
+    { "id": "01KZTC0000FIELDTAGS000009", "key": "tags", "type": "checkbox", "label": "タグ", "choices": ["new", "sale", "limited"] },
+    { "id": "01KZTC0000FIELDSHOPURL010", "key": "shop_url", "type": "url", "label": "販売ページ" },
+    { "id": "01KZTC0000FIELDCONTACT011", "key": "contact_email", "type": "email", "label": "問い合わせ先" },
+    { "id": "01KZTC0000FIELDTEL0000012", "key": "tel", "type": "tel", "label": "電話番号" },
+    { "id": "01KZTC0000FIELDIMAGE00013", "key": "featured_image", "type": "image", "label": "メイン画像" },
+    { "id": "01KZTC0000FIELDMANUAL0014", "key": "manual", "type": "file", "label": "取扱説明書" },
+    { "id": "01KZTC0000FIELDRELWORK015", "key": "related_work", "type": "relation", "label": "関連実績", "target": "works" },
+    { "id": "01KZTC0000FIELDSTATUS0016", "key": "status", "type": "status", "label": "ステータス", "required": true },
+    { "id": "01KZTC0000FIELDPUBAT00017", "key": "published_at", "type": "datetime", "label": "公開日時" },
+    { "id": "01KZTC0000FIELDGALLERY018", "key": "gallery", "type": "images", "label": "ギャラリー", "validation": { "maxItems": 8 } },
+    { "id": "01KZTC0000FIELDRELITEM019", "key": "related_items", "type": "relations", "label": "関連商品", "target": "works", "validation": { "maxItems": 4 } },
+    { "id": "01KZTC0000FIELDSPECS00020", "key": "specs", "type": "group", "label": "仕様", "fields": [
+      { "id": "01KZTC0000FIELDWEIGHT021", "key": "weight", "type": "number", "label": "重量" },
+      { "id": "01KZTC0000FIELDDIMENS022", "key": "dimensions", "type": "text", "label": "寸法", "max": 60 }
+    ] },
+    { "id": "01KZTC0000FIELDFEATRPT023", "key": "features", "type": "repeater", "label": "特長", "validation": { "maxItems": 5 }, "fields": [
+      { "id": "01KZTC0000FIELDFHEAD00024", "key": "heading", "type": "text", "label": "見出し", "required": true, "max": 60 },
+      { "id": "01KZTC0000FIELDFDETAIL025", "key": "detail", "type": "textarea", "label": "説明", "max": 300 },
+      { "id": "01KZTC0000FIELDFICON00026", "key": "icon_id", "type": "media", "label": "アイコン" }
+    ] },
+    { "id": "01KZTC0000FIELDSEOTTL027", "key": "seo_title", "type": "text", "label": "SEOタイトル", "fieldset": "seo", "max": 120 }
+  ],
+  "admin": {
+    "list": ["title", "price", "status"],
+    "search": ["title"]
+  }
+}

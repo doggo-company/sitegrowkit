@@ -1,0 +1,1848 @@
+{
+  "version": 1,
+  "generated_by": "agentcms figma inspect",
+  "source": {
+    "file_key": "FKEYFIXTURE0001",
+    "file_name": "Northwind Studio Site",
+    "figma_version": "2001",
+    "editor_type": "figma",
+    "selected_nodes": [],
+    "fingerprint": "c13a44d9d90e75d23f6853220debacb33499ac8363642f8a794c5566c2109002"
+  },
+  "capabilities": [
+    {
+      "name": "file_metadata",
+      "state": "PASS",
+      "detail": "GET /v1/files/:key/meta"
+    },
+    {
+      "name": "file_content",
+      "state": "PASS",
+      "detail": "GET /v1/files/:key/nodes"
+    },
+    {
+      "name": "variables",
+      "state": "OPTIONAL",
+      "detail": "NOT REQUESTED — Standard Mode は file_metadata:read + file_content:read のみ使用（Variables は Advanced Capability。--variables で要求可能）"
+    },
+    {
+      "name": "library",
+      "state": "OPTIONAL",
+      "detail": "published component key: 5 件（file response 由来。library endpoints は未使用）"
+    },
+    {
+      "name": "code_connect",
+      "state": "OPTIONAL",
+      "detail": "未使用（Org/Enterprise + Dev seat 限定。publish は行わない）"
+    },
+    {
+      "name": "mcp",
+      "state": "OPTIONAL",
+      "detail": "Assist Mode のみ（Standard Mode は REST。write 系ツールは禁止）"
+    }
+  ],
+  "stats": {
+    "raw_bytes": 71386,
+    "raw_nodes": 219,
+    "skipped_hidden_nodes": 0
+  },
+  "screens": [
+    {
+      "screen_id": "home",
+      "name": "Home",
+      "variants": [
+        {
+          "breakpoint": "desktop",
+          "node_id": "1:2",
+          "frame_name": "Home / Desktop",
+          "width": 1440,
+          "height": 2600,
+          "tree": {
+            "id": "1:2",
+            "role": "frame",
+            "name": "Home / Desktop",
+            "layout": "flex-column",
+            "fill_token": "color-ffffff",
+            "width": 1440,
+            "height": 2600,
+            "children": [
+              {
+                "id": "10:1",
+                "role": "instance",
+                "name": "Header",
+                "component": "header",
+                "text_slots": [
+                  "Home",
+                  "Works",
+                  "About",
+                  "Contact"
+                ]
+              },
+              {
+                "id": "10:2",
+                "role": "frame",
+                "name": "Hero",
+                "layout": "flex-row",
+                "gap": 48,
+                "padding": [
+                  96,
+                  96,
+                  96,
+                  96
+                ],
+                "fill_token": "color-ffffff",
+                "width": 1440,
+                "height": 640,
+                "children": [
+                  {
+                    "id": "10:3",
+                    "role": "frame",
+                    "name": "Hero Copy",
+                    "layout": "flex-column",
+                    "gap": 24,
+                    "children": [
+                      {
+                        "id": "10:4",
+                        "role": "text",
+                        "name": "Hero Title",
+                        "text": "Design that ships",
+                        "text_token": "font-48-600",
+                        "fill_token": "color-text"
+                      },
+                      {
+                        "id": "10:5",
+                        "role": "text",
+                        "name": "Hero Lead",
+                        "text": "Northwind Studio は小さなチームの Web 制作スタジオです。",
+                        "text_token": "type-body",
+                        "fill_token": "color-6b6f76"
+                      },
+                      {
+                        "id": "10:6",
+                        "role": "instance",
+                        "name": "Button",
+                        "component": "button",
+                        "variant": {
+                          "Type": "Primary"
+                        },
+                        "text_slots": [
+                          "View Works"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "10:7",
+                    "role": "image",
+                    "name": "Hero Image",
+                    "asset": "img-imgrefhero",
+                    "width": 640,
+                    "height": 480
+                  },
+                  {
+                    "id": "10:8",
+                    "role": "vector",
+                    "name": "Deco Blob",
+                    "asset": "vec-deco-blob-320x320",
+                    "width": 320,
+                    "height": 320
+                  }
+                ]
+              },
+              {
+                "id": "10:10",
+                "role": "frame",
+                "name": "Features",
+                "layout": "flex-row",
+                "gap": 24,
+                "padding": [
+                  48,
+                  48,
+                  48,
+                  48
+                ],
+                "width": 1440,
+                "height": 320,
+                "children": [
+                  {
+                    "id": "10:11",
+                    "role": "frame",
+                    "name": "Feature",
+                    "layout": "flex-column",
+                    "gap": 16,
+                    "children": [
+                      {
+                        "id": "10:11v",
+                        "role": "vector",
+                        "name": "Icon Spark",
+                        "asset": "vec-icon-spark-32x32",
+                        "width": 32,
+                        "height": 32
+                      },
+                      {
+                        "id": "10:11t",
+                        "role": "text",
+                        "name": "Feature Title",
+                        "text": "Fast",
+                        "text_token": "font-20-700",
+                        "fill_token": "color-text"
+                      },
+                      {
+                        "id": "10:11b",
+                        "role": "text",
+                        "name": "Feature Body",
+                        "text": "小さく作ってすぐ出す。",
+                        "text_token": "type-body",
+                        "fill_token": "color-6b6f76"
+                      }
+                    ]
+                  },
+                  {
+                    "id": "10:15",
+                    "role": "frame",
+                    "name": "Feature",
+                    "layout": "flex-column",
+                    "gap": 16,
+                    "children": [
+                      {
+                        "id": "10:15v",
+                        "role": "vector",
+                        "name": "Icon Shield",
+                        "asset": "vec-icon-shield-32x32",
+                        "width": 32,
+                        "height": 32
+                      },
+                      {
+                        "id": "10:15t",
+                        "role": "text",
+                        "name": "Feature Title",
+                        "text": "Solid",
+                        "text_token": "font-20-700",
+                        "fill_token": "color-text"
+                      },
+                      {
+                        "id": "10:15b",
+                        "role": "text",
+                        "name": "Feature Body",
+                        "text": "壊れない土台を作る。",
+                        "text_token": "type-body",
+                        "fill_token": "color-6b6f76"
+                      }
+                    ]
+                  },
+                  {
+                    "id": "10:19",
+                    "role": "frame",
+                    "name": "Feature",
+                    "layout": "flex-column",
+                    "gap": 16,
+                    "children": [
+                      {
+                        "id": "10:19v",
+                        "role": "vector",
+                        "name": "Icon Leaf",
+                        "asset": "vec-icon-leaf-32x32",
+                        "width": 32,
+                        "height": 32
+                      },
+                      {
+                        "id": "10:19t",
+                        "role": "text",
+                        "name": "Feature Title",
+                        "text": "Clear",
+                        "text_token": "font-20-700",
+                        "fill_token": "color-text"
+                      },
+                      {
+                        "id": "10:19b",
+                        "role": "text",
+                        "name": "Feature Body",
+                        "text": "運用しやすく引き継ぐ。",
+                        "text_token": "type-body",
+                        "fill_token": "color-6b6f76"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "10:30",
+                "role": "frame",
+                "name": "Works",
+                "layout": "flex-column",
+                "gap": 24,
+                "padding": [
+                  48,
+                  48,
+                  96,
+                  48
+                ],
+                "width": 1440,
+                "height": 980,
+                "children": [
+                  {
+                    "id": "10:31",
+                    "role": "text",
+                    "name": "Works Heading",
+                    "text": "Works",
+                    "text_token": "type-heading-m",
+                    "fill_token": "color-text"
+                  },
+                  {
+                    "id": "10:32",
+                    "role": "frame",
+                    "name": "Works Grid",
+                    "layout": "grid-candidate",
+                    "gap": 24,
+                    "children": [
+                      {
+                        "id": "10:33",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS A",
+                          "2026.04.01",
+                          "Branding"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw1"
+                        ]
+                      },
+                      {
+                        "id": "10:38",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS B",
+                          "2026.03.10",
+                          "Web"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw2"
+                        ]
+                      },
+                      {
+                        "id": "10:43",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS C",
+                          "2026.02.22",
+                          "Branding"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw3"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "10:50",
+                "role": "frame",
+                "name": "CTA",
+                "layout": "flex-column",
+                "gap": 24,
+                "padding": [
+                  96,
+                  48,
+                  96,
+                  48
+                ],
+                "fill_token": "color-accent",
+                "width": 1440,
+                "height": 360,
+                "children": [
+                  {
+                    "id": "10:51",
+                    "role": "text",
+                    "name": "CTA Title",
+                    "text": "Let's build together",
+                    "text_token": "type-heading-m",
+                    "fill_token": "color-ffffff"
+                  },
+                  {
+                    "id": "10:52",
+                    "role": "instance",
+                    "name": "Button",
+                    "component": "button",
+                    "variant": {
+                      "Type": "Secondary"
+                    },
+                    "text_slots": [
+                      "Contact"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "10:60",
+                "role": "instance",
+                "name": "Footer",
+                "component": "footer",
+                "text_slots": [
+                  "Northwind Studio",
+                  "© 2026 Northwind Studio"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "breakpoint": "mobile",
+          "node_id": "1:3",
+          "frame_name": "Home / Mobile",
+          "width": 375,
+          "height": 3400,
+          "tree": {
+            "id": "1:3",
+            "role": "frame",
+            "name": "Home / Mobile",
+            "layout": "flex-column",
+            "fill_token": "color-ffffff",
+            "width": 375,
+            "height": 3400,
+            "children": [
+              {
+                "id": "11:1",
+                "role": "instance",
+                "name": "Header",
+                "component": "header",
+                "text_slots": [
+                  "Home",
+                  "Works",
+                  "About",
+                  "Contact"
+                ]
+              },
+              {
+                "id": "11:2",
+                "role": "frame",
+                "name": "Hero",
+                "layout": "flex-column",
+                "gap": 48,
+                "padding": [
+                  96,
+                  96,
+                  96,
+                  96
+                ],
+                "fill_token": "color-ffffff",
+                "width": 1440,
+                "height": 640,
+                "children": [
+                  {
+                    "id": "11:3",
+                    "role": "frame",
+                    "name": "Hero Copy",
+                    "layout": "flex-column",
+                    "gap": 24,
+                    "children": [
+                      {
+                        "id": "11:4",
+                        "role": "text",
+                        "name": "Hero Title",
+                        "text": "Design that ships",
+                        "text_token": "font-48-600",
+                        "fill_token": "color-text"
+                      },
+                      {
+                        "id": "11:5",
+                        "role": "text",
+                        "name": "Hero Lead",
+                        "text": "Northwind Studio は小さなチームの Web 制作スタジオです。",
+                        "text_token": "type-body",
+                        "fill_token": "color-6b6f76"
+                      },
+                      {
+                        "id": "11:6",
+                        "role": "instance",
+                        "name": "Button",
+                        "component": "button",
+                        "variant": {
+                          "Type": "Primary"
+                        },
+                        "text_slots": [
+                          "View Works"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "id": "11:7",
+                    "role": "image",
+                    "name": "Hero Image",
+                    "asset": "img-imgrefhero",
+                    "width": 640,
+                    "height": 480
+                  },
+                  {
+                    "id": "11:8",
+                    "role": "vector",
+                    "name": "Deco Blob",
+                    "asset": "vec-deco-blob-320x320",
+                    "width": 320,
+                    "height": 320
+                  }
+                ]
+              },
+              {
+                "id": "11:10",
+                "role": "frame",
+                "name": "Features",
+                "layout": "flex-column",
+                "gap": 24,
+                "padding": [
+                  48,
+                  48,
+                  48,
+                  48
+                ],
+                "width": 1440,
+                "height": 320,
+                "children": [
+                  {
+                    "id": "11:11",
+                    "role": "frame",
+                    "name": "Feature",
+                    "layout": "flex-column",
+                    "gap": 16,
+                    "children": [
+                      {
+                        "id": "11:11v",
+                        "role": "vector",
+                        "name": "Icon Spark",
+                        "asset": "vec-icon-spark-32x32",
+                        "width": 32,
+                        "height": 32
+                      },
+                      {
+                        "id": "11:11t",
+                        "role": "text",
+                        "name": "Feature Title",
+                        "text": "Fast",
+                        "text_token": "font-20-700",
+                        "fill_token": "color-text"
+                      },
+                      {
+                        "id": "11:11b",
+                        "role": "text",
+                        "name": "Feature Body",
+                        "text": "小さく作ってすぐ出す。",
+                        "text_token": "type-body",
+                        "fill_token": "color-6b6f76"
+                      }
+                    ]
+                  },
+                  {
+                    "id": "11:15",
+                    "role": "frame",
+                    "name": "Feature",
+                    "layout": "flex-column",
+                    "gap": 16,
+                    "children": [
+                      {
+                        "id": "11:15v",
+                        "role": "vector",
+                        "name": "Icon Shield",
+                        "asset": "vec-icon-shield-32x32",
+                        "width": 32,
+                        "height": 32
+                      },
+                      {
+                        "id": "11:15t",
+                        "role": "text",
+                        "name": "Feature Title",
+                        "text": "Solid",
+                        "text_token": "font-20-700",
+                        "fill_token": "color-text"
+                      },
+                      {
+                        "id": "11:15b",
+                        "role": "text",
+                        "name": "Feature Body",
+                        "text": "壊れない土台を作る。",
+                        "text_token": "type-body",
+                        "fill_token": "color-6b6f76"
+                      }
+                    ]
+                  },
+                  {
+                    "id": "11:19",
+                    "role": "frame",
+                    "name": "Feature",
+                    "layout": "flex-column",
+                    "gap": 16,
+                    "children": [
+                      {
+                        "id": "11:19v",
+                        "role": "vector",
+                        "name": "Icon Leaf",
+                        "asset": "vec-icon-leaf-32x32",
+                        "width": 32,
+                        "height": 32
+                      },
+                      {
+                        "id": "11:19t",
+                        "role": "text",
+                        "name": "Feature Title",
+                        "text": "Clear",
+                        "text_token": "font-20-700",
+                        "fill_token": "color-text"
+                      },
+                      {
+                        "id": "11:19b",
+                        "role": "text",
+                        "name": "Feature Body",
+                        "text": "運用しやすく引き継ぐ。",
+                        "text_token": "type-body",
+                        "fill_token": "color-6b6f76"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "11:30",
+                "role": "frame",
+                "name": "Works",
+                "layout": "flex-column",
+                "gap": 24,
+                "padding": [
+                  48,
+                  48,
+                  96,
+                  48
+                ],
+                "width": 1440,
+                "height": 980,
+                "children": [
+                  {
+                    "id": "11:31",
+                    "role": "text",
+                    "name": "Works Heading",
+                    "text": "Works",
+                    "text_token": "type-heading-m",
+                    "fill_token": "color-text"
+                  },
+                  {
+                    "id": "11:32",
+                    "role": "frame",
+                    "name": "Works Grid",
+                    "layout": "grid-candidate",
+                    "gap": 24,
+                    "children": [
+                      {
+                        "id": "11:33",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS A",
+                          "2026.04.01",
+                          "Branding"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw1"
+                        ]
+                      },
+                      {
+                        "id": "11:38",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS B",
+                          "2026.03.10",
+                          "Web"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw2"
+                        ]
+                      },
+                      {
+                        "id": "11:43",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS C",
+                          "2026.02.22",
+                          "Branding"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw3"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "11:50",
+                "role": "frame",
+                "name": "CTA",
+                "layout": "flex-column",
+                "gap": 24,
+                "padding": [
+                  96,
+                  48,
+                  96,
+                  48
+                ],
+                "fill_token": "color-accent",
+                "width": 1440,
+                "height": 360,
+                "children": [
+                  {
+                    "id": "11:51",
+                    "role": "text",
+                    "name": "CTA Title",
+                    "text": "Let's build together",
+                    "text_token": "type-heading-m",
+                    "fill_token": "color-ffffff"
+                  },
+                  {
+                    "id": "11:52",
+                    "role": "instance",
+                    "name": "Button",
+                    "component": "button",
+                    "variant": {
+                      "Type": "Secondary"
+                    },
+                    "text_slots": [
+                      "Contact"
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "11:60",
+                "role": "instance",
+                "name": "Footer",
+                "component": "footer",
+                "text_slots": [
+                  "Northwind Studio",
+                  "© 2026 Northwind Studio"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "pairing": "CONFIDENT",
+      "reason": "Frame 名の breakpoint ラベルと幅（desktop:1440px / mobile:375px）が一致",
+      "missing": []
+    },
+    {
+      "screen_id": "works",
+      "name": "Works",
+      "variants": [
+        {
+          "breakpoint": "desktop",
+          "node_id": "1:4",
+          "frame_name": "Works / Desktop",
+          "width": 1440,
+          "height": 2000,
+          "tree": {
+            "id": "1:4",
+            "role": "frame",
+            "name": "Works / Desktop",
+            "layout": "flex-column",
+            "fill_token": "color-ffffff",
+            "width": 1440,
+            "height": 2000,
+            "children": [
+              {
+                "id": "12:1",
+                "role": "instance",
+                "name": "Header",
+                "component": "header",
+                "text_slots": [
+                  "Home",
+                  "Works",
+                  "About",
+                  "Contact"
+                ]
+              },
+              {
+                "id": "12:30",
+                "role": "frame",
+                "name": "Works",
+                "layout": "flex-column",
+                "gap": 24,
+                "padding": [
+                  48,
+                  48,
+                  96,
+                  48
+                ],
+                "width": 1440,
+                "height": 980,
+                "children": [
+                  {
+                    "id": "12:31",
+                    "role": "text",
+                    "name": "Works Heading",
+                    "text": "Works",
+                    "text_token": "type-heading-m",
+                    "fill_token": "color-text"
+                  },
+                  {
+                    "id": "12:32",
+                    "role": "frame",
+                    "name": "Works Grid",
+                    "layout": "grid-candidate",
+                    "gap": 24,
+                    "children": [
+                      {
+                        "id": "12:33",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS A",
+                          "2026.04.01",
+                          "Branding"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw1"
+                        ]
+                      },
+                      {
+                        "id": "12:38",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS B",
+                          "2026.03.10",
+                          "Web"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw2"
+                        ]
+                      },
+                      {
+                        "id": "12:43",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS C",
+                          "2026.02.22",
+                          "Branding"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw3"
+                        ]
+                      },
+                      {
+                        "id": "12:48",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS D",
+                          "2026.01.15",
+                          "Web"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw4"
+                        ]
+                      },
+                      {
+                        "id": "12:53",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS E",
+                          "2025.12.02",
+                          "Branding"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw5"
+                        ]
+                      },
+                      {
+                        "id": "12:58",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS F",
+                          "2025.11.20",
+                          "Web"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw6"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "12:60",
+                "role": "instance",
+                "name": "Footer",
+                "component": "footer",
+                "text_slots": [
+                  "Northwind Studio",
+                  "© 2026 Northwind Studio"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "breakpoint": "mobile",
+          "node_id": "1:5",
+          "frame_name": "Works / Mobile",
+          "width": 375,
+          "height": 2600,
+          "tree": {
+            "id": "1:5",
+            "role": "frame",
+            "name": "Works / Mobile",
+            "layout": "flex-column",
+            "fill_token": "color-ffffff",
+            "width": 375,
+            "height": 2600,
+            "children": [
+              {
+                "id": "13:1",
+                "role": "instance",
+                "name": "Header",
+                "component": "header",
+                "text_slots": [
+                  "Home",
+                  "Works",
+                  "About",
+                  "Contact"
+                ]
+              },
+              {
+                "id": "13:30",
+                "role": "frame",
+                "name": "Works",
+                "layout": "flex-column",
+                "gap": 24,
+                "padding": [
+                  48,
+                  48,
+                  96,
+                  48
+                ],
+                "width": 1440,
+                "height": 980,
+                "children": [
+                  {
+                    "id": "13:31",
+                    "role": "text",
+                    "name": "Works Heading",
+                    "text": "Works",
+                    "text_token": "type-heading-m",
+                    "fill_token": "color-text"
+                  },
+                  {
+                    "id": "13:32",
+                    "role": "frame",
+                    "name": "Works Grid",
+                    "layout": "grid-candidate",
+                    "gap": 24,
+                    "children": [
+                      {
+                        "id": "13:33",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS A",
+                          "2026.04.01",
+                          "Branding"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw1"
+                        ]
+                      },
+                      {
+                        "id": "13:38",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS B",
+                          "2026.03.10",
+                          "Web"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw2"
+                        ]
+                      },
+                      {
+                        "id": "13:43",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS C",
+                          "2026.02.22",
+                          "Branding"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw3"
+                        ]
+                      },
+                      {
+                        "id": "13:48",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS D",
+                          "2026.01.15",
+                          "Web"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw4"
+                        ]
+                      },
+                      {
+                        "id": "13:53",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS E",
+                          "2025.12.02",
+                          "Branding"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw5"
+                        ]
+                      },
+                      {
+                        "id": "13:58",
+                        "role": "instance",
+                        "name": "Works Card",
+                        "component": "works-card",
+                        "text_slots": [
+                          "WORKS F",
+                          "2025.11.20",
+                          "Web"
+                        ],
+                        "image_slots": [
+                          "img-imgrefw6"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "13:60",
+                "role": "instance",
+                "name": "Footer",
+                "component": "footer",
+                "text_slots": [
+                  "Northwind Studio",
+                  "© 2026 Northwind Studio"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "pairing": "CONFIDENT",
+      "reason": "Frame 名の breakpoint ラベルと幅（desktop:1440px / mobile:375px）が一致",
+      "missing": []
+    }
+  ],
+  "components": [
+    {
+      "component_id": "button",
+      "name": "Button",
+      "node_id": "300:1",
+      "component_key": "key-button-set",
+      "kind": "COMPONENT_SET",
+      "classification": "UI_COMPONENT",
+      "confidence": "CONFIDENT",
+      "reason": "名前 \"Button\" から UI 部品と判断（variants: 2）",
+      "variants": [
+        {
+          "name": "Type=Primary",
+          "node_id": "300:2",
+          "properties": {
+            "Type": "Primary"
+          }
+        },
+        {
+          "name": "Type=Secondary",
+          "node_id": "300:3",
+          "properties": {
+            "Type": "Secondary"
+          }
+        }
+      ],
+      "instance_count": 4,
+      "tree": {
+        "id": "300:2",
+        "role": "frame",
+        "name": "Type=Primary",
+        "layout": "flex-row",
+        "gap": 8,
+        "padding": [
+          12,
+          24,
+          12,
+          24
+        ],
+        "fill_token": "color-accent",
+        "width": 160,
+        "height": 48,
+        "children": [
+          {
+            "id": "3002:t",
+            "role": "text",
+            "name": "Label",
+            "text": "Button",
+            "text_token": "font-16-700",
+            "fill_token": "color-ffffff"
+          }
+        ]
+      }
+    },
+    {
+      "component_id": "feature",
+      "name": "Feature",
+      "node_id": "10:11",
+      "component_key": null,
+      "kind": "CANDIDATE",
+      "classification": "REVIEW",
+      "confidence": "REVIEW",
+      "reason": "同一構造（signature 一致）が 3 回繰り返されるが Component 化されていない。Component 化は人の判断（勝手に作らない）",
+      "variants": [],
+      "instance_count": 3,
+      "tree": {
+        "id": "10:11",
+        "role": "frame",
+        "name": "Feature",
+        "layout": "flex-column",
+        "gap": 16,
+        "width": 420,
+        "height": 220,
+        "children": [
+          {
+            "id": "10:11v",
+            "role": "vector",
+            "name": "Icon Spark",
+            "asset": "vec-icon-spark-32x32",
+            "width": 32,
+            "height": 32
+          },
+          {
+            "id": "10:11t",
+            "role": "text",
+            "name": "Feature Title",
+            "text": "Fast",
+            "text_token": "font-20-700",
+            "fill_token": "color-text"
+          },
+          {
+            "id": "10:11b",
+            "role": "text",
+            "name": "Feature Body",
+            "text": "小さく作ってすぐ出す。",
+            "text_token": "type-body",
+            "fill_token": "color-6b6f76"
+          }
+        ]
+      }
+    },
+    {
+      "component_id": "footer",
+      "name": "Footer",
+      "node_id": "100:2",
+      "component_key": "key-footer-0001",
+      "kind": "COMPONENT",
+      "classification": "LAYOUT",
+      "confidence": "CONFIDENT",
+      "reason": "名前 \"Footer\" と全 screen での使用（4 instance）から site layout 部品と判断",
+      "variants": [],
+      "instance_count": 4,
+      "tree": {
+        "id": "100:2",
+        "role": "frame",
+        "name": "Footer",
+        "layout": "flex-column",
+        "gap": 16,
+        "padding": [
+          48,
+          48,
+          48,
+          48
+        ],
+        "fill_token": "color-text",
+        "width": 1440,
+        "height": 180,
+        "children": [
+          {
+            "id": "101:2",
+            "role": "text",
+            "name": "Footer Text",
+            "text": "Northwind Studio",
+            "text_token": "type-body",
+            "fill_token": "color-ffffff"
+          },
+          {
+            "id": "101:3",
+            "role": "text",
+            "name": "Copyright",
+            "text": "© 2026 Northwind Studio",
+            "text_token": "font-14-400",
+            "fill_token": "color-ffffff"
+          }
+        ]
+      }
+    },
+    {
+      "component_id": "header",
+      "name": "Header",
+      "node_id": "100:1",
+      "component_key": "key-header-0001",
+      "kind": "COMPONENT",
+      "classification": "LAYOUT",
+      "confidence": "CONFIDENT",
+      "reason": "名前 \"Header\" と全 screen での使用（4 instance）から site layout 部品と判断",
+      "variants": [],
+      "instance_count": 4,
+      "tree": {
+        "id": "100:1",
+        "role": "frame",
+        "name": "Header",
+        "layout": "flex-row",
+        "gap": 48,
+        "padding": [
+          24,
+          48,
+          24,
+          48
+        ],
+        "fill_token": "color-ffffff",
+        "width": 1440,
+        "height": 88,
+        "children": [
+          {
+            "id": "100:2",
+            "role": "vector",
+            "name": "Logo",
+            "asset": "vec-logo-120x32",
+            "width": 120,
+            "height": 32
+          },
+          {
+            "id": "100:3",
+            "role": "frame",
+            "name": "Nav",
+            "layout": "flex-row",
+            "gap": 24,
+            "width": 400,
+            "height": 32,
+            "children": [
+              {
+                "id": "100:4",
+                "role": "text",
+                "name": "Nav Link",
+                "text": "Home",
+                "text_token": "type-body",
+                "fill_token": "color-text"
+              },
+              {
+                "id": "100:5",
+                "role": "text",
+                "name": "Nav Link",
+                "text": "Works",
+                "text_token": "type-body",
+                "fill_token": "color-text"
+              },
+              {
+                "id": "100:6",
+                "role": "text",
+                "name": "Nav Link",
+                "text": "About",
+                "text_token": "type-body",
+                "fill_token": "color-text"
+              },
+              {
+                "id": "100:7",
+                "role": "text",
+                "name": "Nav Link",
+                "text": "Contact",
+                "text_token": "type-body",
+                "fill_token": "color-text"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "component_id": "works-card",
+      "name": "Works Card",
+      "node_id": "200:10",
+      "component_key": "key-works-card",
+      "kind": "COMPONENT",
+      "classification": "CMS_COMPONENT",
+      "confidence": "CONFIDENT",
+      "reason": "CMS candidate \"works-repeat\"（works）の繰り返しアイテムとして使用されている",
+      "variants": [],
+      "instance_count": 18,
+      "tree": {
+        "id": "200:10",
+        "role": "frame",
+        "name": "Works Card",
+        "layout": "flex-column",
+        "gap": 16,
+        "fill_token": "color-ffffff",
+        "width": 400,
+        "height": 380,
+        "children": [
+          {
+            "id": "200:11",
+            "role": "image",
+            "name": "Thumb",
+            "asset": "img-imgrefcard",
+            "width": 400,
+            "height": 260
+          },
+          {
+            "id": "200:12",
+            "role": "text",
+            "name": "Title",
+            "text": "Works Title",
+            "text_token": "font-20-700",
+            "fill_token": "color-text"
+          },
+          {
+            "id": "200:13",
+            "role": "text",
+            "name": "Date",
+            "text": "2026.01.01",
+            "text_token": "font-14-400",
+            "fill_token": "color-6b6f76"
+          },
+          {
+            "id": "200:14",
+            "role": "text",
+            "name": "Category",
+            "text": "Category",
+            "text_token": "font-12-400",
+            "fill_token": "color-6b6f76"
+          }
+        ]
+      }
+    }
+  ],
+  "tokens": {
+    "colors": [
+      {
+        "name": "brand-sun",
+        "value": "#f2b705",
+        "source": "STYLE",
+        "confidence": "CONFIDENT",
+        "usage_count": 2
+      },
+      {
+        "name": "color-6b6f76",
+        "value": "#6b6f76",
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 46
+      },
+      {
+        "name": "color-accent",
+        "value": "#0f4c46",
+        "source": "STYLE",
+        "confidence": "CONFIDENT",
+        "usage_count": 19
+      },
+      {
+        "name": "color-ffffff",
+        "value": "#ffffff",
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 48
+      },
+      {
+        "name": "color-text",
+        "value": "#222222",
+        "source": "STYLE",
+        "confidence": "CONFIDENT",
+        "usage_count": 56
+      }
+    ],
+    "typography": [
+      {
+        "name": "font-12-400",
+        "family": "Inter",
+        "weight": 400,
+        "size": 12,
+        "line_height": 18,
+        "letter_spacing": 0,
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 19
+      },
+      {
+        "name": "font-14-400",
+        "family": "Inter",
+        "weight": 400,
+        "size": 14,
+        "line_height": 21,
+        "letter_spacing": 0,
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 24
+      },
+      {
+        "name": "font-16-700",
+        "family": "Inter",
+        "weight": 700,
+        "size": 16,
+        "line_height": 24,
+        "letter_spacing": 0,
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 6
+      },
+      {
+        "name": "font-20-700",
+        "family": "Inter",
+        "weight": 700,
+        "size": 20,
+        "line_height": 30,
+        "letter_spacing": 0,
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 25
+      },
+      {
+        "name": "font-48-600",
+        "family": "Clash Display",
+        "weight": 600,
+        "size": 48,
+        "line_height": 72,
+        "letter_spacing": 0,
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 2
+      },
+      {
+        "name": "type-body",
+        "family": "Inter",
+        "weight": 400,
+        "size": 16,
+        "line_height": 24,
+        "letter_spacing": 0,
+        "source": "STYLE",
+        "confidence": "CONFIDENT",
+        "usage_count": 33
+      },
+      {
+        "name": "type-heading-m",
+        "family": "Inter",
+        "weight": 700,
+        "size": 32,
+        "line_height": 48,
+        "letter_spacing": 0,
+        "source": "STYLE",
+        "confidence": "CONFIDENT",
+        "usage_count": 6
+      }
+    ],
+    "spacing": [
+      {
+        "name": "space-8",
+        "value": "8px",
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 6
+      },
+      {
+        "name": "space-12",
+        "value": "12px",
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 12
+      },
+      {
+        "name": "space-16",
+        "value": "16px",
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 30
+      },
+      {
+        "name": "space-24",
+        "value": "24px",
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 41
+      },
+      {
+        "name": "space-48",
+        "value": "48px",
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 61
+      },
+      {
+        "name": "space-96",
+        "value": "96px",
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 16
+      }
+    ],
+    "radius": [
+      {
+        "name": "radius-8",
+        "value": "8px",
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 6
+      },
+      {
+        "name": "radius-12",
+        "value": "12px",
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 19
+      }
+    ],
+    "shadows": [
+      {
+        "name": "shadow-1",
+        "value": "0px 4px 16px rgba(0, 0, 0, 0.12)",
+        "source": "INFERRED",
+        "confidence": "REVIEW",
+        "usage_count": 19
+      }
+    ]
+  },
+  "assets": [
+    {
+      "asset_id": "img-imgrefcard",
+      "name": "Thumb",
+      "kind": "image",
+      "classification": "REVIEW",
+      "confidence": "REVIEW",
+      "reason": "分類根拠が不足 — 用途を人が確認",
+      "node_ids": [
+        "200:11"
+      ],
+      "image_ref": "imgref-card",
+      "width": 400,
+      "height": 260
+    },
+    {
+      "asset_id": "img-imgrefhero",
+      "name": "Hero Image",
+      "kind": "image",
+      "classification": "STATIC_DESIGN_ASSET",
+      "confidence": "REVIEW",
+      "reason": "640px 幅の大型画像。CMS 繰り返し外のため static 扱い（hero 等）。用途は人が確認",
+      "node_ids": [
+        "10:7",
+        "11:7"
+      ],
+      "image_ref": "imgref-hero",
+      "width": 640,
+      "height": 480
+    },
+    {
+      "asset_id": "img-imgrefw1",
+      "name": "Thumb",
+      "kind": "image",
+      "classification": "CONTENT_MEDIA",
+      "confidence": "CONFIDENT",
+      "reason": "CMS candidate の繰り返しアイテム内の画像 — CMS から更新される content media 候補",
+      "node_ids": [
+        "10:33i",
+        "11:33i",
+        "12:33i",
+        "13:33i"
+      ],
+      "image_ref": "imgref-w1",
+      "width": 400,
+      "height": 260
+    },
+    {
+      "asset_id": "img-imgrefw2",
+      "name": "Thumb",
+      "kind": "image",
+      "classification": "CONTENT_MEDIA",
+      "confidence": "CONFIDENT",
+      "reason": "CMS candidate の繰り返しアイテム内の画像 — CMS から更新される content media 候補",
+      "node_ids": [
+        "10:38i",
+        "11:38i",
+        "12:38i",
+        "13:38i"
+      ],
+      "image_ref": "imgref-w2",
+      "width": 400,
+      "height": 260
+    },
+    {
+      "asset_id": "img-imgrefw3",
+      "name": "Thumb",
+      "kind": "image",
+      "classification": "CONTENT_MEDIA",
+      "confidence": "CONFIDENT",
+      "reason": "CMS candidate の繰り返しアイテム内の画像 — CMS から更新される content media 候補",
+      "node_ids": [
+        "10:43i",
+        "11:43i",
+        "12:43i",
+        "13:43i"
+      ],
+      "image_ref": "imgref-w3",
+      "width": 400,
+      "height": 260
+    },
+    {
+      "asset_id": "img-imgrefw4",
+      "name": "Thumb",
+      "kind": "image",
+      "classification": "CONTENT_MEDIA",
+      "confidence": "CONFIDENT",
+      "reason": "CMS candidate の繰り返しアイテム内の画像 — CMS から更新される content media 候補",
+      "node_ids": [
+        "12:48i",
+        "13:48i"
+      ],
+      "image_ref": "imgref-w4",
+      "width": 400,
+      "height": 260
+    },
+    {
+      "asset_id": "img-imgrefw5",
+      "name": "Thumb",
+      "kind": "image",
+      "classification": "CONTENT_MEDIA",
+      "confidence": "CONFIDENT",
+      "reason": "CMS candidate の繰り返しアイテム内の画像 — CMS から更新される content media 候補",
+      "node_ids": [
+        "12:53i",
+        "13:53i"
+      ],
+      "image_ref": "imgref-w5",
+      "width": 400,
+      "height": 260
+    },
+    {
+      "asset_id": "img-imgrefw6",
+      "name": "Thumb",
+      "kind": "image",
+      "classification": "CONTENT_MEDIA",
+      "confidence": "CONFIDENT",
+      "reason": "CMS candidate の繰り返しアイテム内の画像 — CMS から更新される content media 候補",
+      "node_ids": [
+        "12:58i",
+        "13:58i"
+      ],
+      "image_ref": "imgref-w6",
+      "width": 400,
+      "height": 260
+    },
+    {
+      "asset_id": "vec-deco-blob-320x320",
+      "name": "Deco Blob",
+      "kind": "vector",
+      "classification": "DECORATION",
+      "confidence": "CONFIDENT",
+      "reason": "装飾 vector — static asset として配置",
+      "node_ids": [
+        "10:8",
+        "11:8"
+      ],
+      "image_ref": null,
+      "width": 320,
+      "height": 320
+    },
+    {
+      "asset_id": "vec-icon-leaf-32x32",
+      "name": "Icon Leaf",
+      "kind": "vector",
+      "classification": "ICON",
+      "confidence": "CONFIDENT",
+      "reason": "小型 vector — icon（SVG static asset。Media へは入れない）",
+      "node_ids": [
+        "10:19v",
+        "11:19v"
+      ],
+      "image_ref": null,
+      "width": 32,
+      "height": 32
+    },
+    {
+      "asset_id": "vec-icon-shield-32x32",
+      "name": "Icon Shield",
+      "kind": "vector",
+      "classification": "ICON",
+      "confidence": "CONFIDENT",
+      "reason": "小型 vector — icon（SVG static asset。Media へは入れない）",
+      "node_ids": [
+        "10:15v",
+        "11:15v"
+      ],
+      "image_ref": null,
+      "width": 32,
+      "height": 32
+    },
+    {
+      "asset_id": "vec-icon-spark-32x32",
+      "name": "Icon Spark",
+      "kind": "vector",
+      "classification": "ICON",
+      "confidence": "CONFIDENT",
+      "reason": "小型 vector — icon（SVG static asset。Media へは入れない）",
+      "node_ids": [
+        "10:11v",
+        "11:11v"
+      ],
+      "image_ref": null,
+      "width": 32,
+      "height": 32
+    },
+    {
+      "asset_id": "vec-logo-120x32",
+      "name": "Logo",
+      "kind": "vector",
+      "classification": "STATIC_DESIGN_ASSET",
+      "confidence": "CONFIDENT",
+      "reason": "ロゴ vector — static asset（SVG は CMS upload 禁止: Phase 2 policy）",
+      "node_ids": [
+        "h:2",
+        "h:2",
+        "h:2",
+        "h:2",
+        "100:2"
+      ],
+      "image_ref": null,
+      "width": 120,
+      "height": 32
+    }
+  ],
+  "fonts": [
+    {
+      "family": "Clash Display",
+      "weights": [
+        600
+      ],
+      "usage_count": 2
+    },
+    {
+      "family": "Inter",
+      "weights": [
+        400,
+        700
+      ],
+      "usage_count": 113
+    }
+  ],
+  "cms_candidates": [
+    {
+      "candidate_id": "feature-repeat",
+      "screen_id": "home",
+      "node_id": "10:10",
+      "container_node_ids": [
+        "10:10",
+        "11:10"
+      ],
+      "module_hint": null,
+      "classification": "REVIEW",
+      "confidence": "REVIEW",
+      "reason": "同一構造の 3 アイテム（テキスト差分あり）。用途を特定できる名前が無いため CMS 化は人の判断が必要",
+      "item_count": 3,
+      "fields": [
+        {
+          "name": "title",
+          "kind": "text",
+          "samples": [
+            "Fast",
+            "Solid",
+            "Clear"
+          ]
+        },
+        {
+          "name": "feature-body",
+          "kind": "text",
+          "samples": [
+            "小さく作ってすぐ出す。",
+            "壊れない土台を作る。",
+            "運用しやすく引き継ぐ。"
+          ]
+        }
+      ]
+    },
+    {
+      "candidate_id": "works-repeat",
+      "screen_id": "home",
+      "node_id": "10:32",
+      "container_node_ids": [
+        "10:32",
+        "11:32",
+        "12:32",
+        "13:32"
+      ],
+      "module_hint": "works",
+      "classification": "EXISTING_MODULE",
+      "confidence": "CONFIDENT",
+      "reason": "同一構造の 3 アイテムが「Works Grid」内に存在し、名前が既存 works module に対応。検出フィールド（title / date / category / image）が schema へ対応可能",
+      "item_count": 3,
+      "fields": [
+        {
+          "name": "title",
+          "kind": "text",
+          "samples": [
+            "WORKS A",
+            "WORKS B",
+            "WORKS C"
+          ]
+        },
+        {
+          "name": "date",
+          "kind": "date",
+          "samples": [
+            "2026.04.01",
+            "2026.03.10",
+            "2026.02.22"
+          ]
+        },
+        {
+          "name": "category",
+          "kind": "text",
+          "samples": [
+            "Branding",
+            "Web",
+            "Branding"
+          ]
+        },
+        {
+          "name": "image",
+          "kind": "image",
+          "samples": []
+        }
+      ]
+    }
+  ],
+  "warnings": []
+}

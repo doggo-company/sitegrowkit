@@ -1,0 +1,213 @@
+{
+  "phase": 6,
+  "date": "2026-08-09",
+  "mode": "synthetic-fixture + live-smoke-test",
+  "live_smoke_test": {
+    "date": "2026-08-09",
+    "read_only": true,
+    "figma_write_operations": 0,
+    "scopes_used": ["file_metadata:read", "file_content:read"],
+    "api_calls": {
+      "file_meta": 6,
+      "file_meta_note": "401(expired token) 1 / connectivity 1 / inspect 2 / diff 1 / header-capture 1",
+      "file_nodes": 1,
+      "image_renders": 1,
+      "image_fills": 0,
+      "variables": 0,
+      "cdn_download": 1
+    },
+    "second_inspect_tier1_calls": 0,
+    "rate_limit_hits": 0,
+    "retries": 0,
+    "raw_bytes": 296926,
+    "raw_nodes": 316,
+    "manifest_bytes": 180592,
+    "manifest_lines": 3826,
+    "reduction_ratio": 0.608,
+    "ai_raw_json_reads": 0,
+    "deterministic_manifest": "sha256 identical on cached re-inspect",
+    "adapter_changes_required": 0,
+    "visual_baseline": "1 frame render (png, 9.7MB) in gitignored cache",
+    "response_shape_notes": "meta = flat (no wrapper); unmodeled node props ignored without errors (scrollBehavior/blendMode/absoluteRenderBounds/interactions/characterStyleOverrides etc.)",
+    "client_isolation": "isolated workspace outside repo; no client data tracked or recorded in benchmark"
+  },
+  "final_visual_proof": {
+    "date": "2026-08-09",
+    "dod_40": "completed",
+    "environment": "isolated project (agentcms create + sqlite + host php serve), outside kit repo",
+    "plan_validation": {
+      "stop_items": 0,
+      "review_items": 10,
+      "invented_content": 0
+    },
+    "apply": {
+      "generated_files": 22,
+      "downloaded_assets": 17,
+      "core_changes": 0,
+      "figma_writes": 0
+    },
+    "additional_api_calls": {
+      "file_meta": 4,
+      "file_meta_note": "apply stale-check x3 (initial/force/re-applies) + verify 0; plan/diff none",
+      "image_fills": 3,
+      "image_fills_note": "1 per apply run (3 runs during fix iterations)",
+      "cdn_downloads": 51,
+      "variables": 0
+    },
+    "visual": {
+      "viewport": 1728,
+      "baseline_px": "1728x12152",
+      "browser_px": "1728x12347",
+      "pixel_diff_pct": 83.716,
+      "band_diff_pct": { "top": 82.35, "middle": 85.74, "bottom": 83.06 },
+      "threshold": "none (measurement, not gate); no threshold relaxation",
+      "dominant_cause": "absolute-position composition linearized by design policy (no coordinate copy, SPEC §28)",
+      "secondary_causes": [
+        "FONT ENVIRONMENT (3 missing families, fallback stack)",
+        "full-page background layer not tokenizable"
+      ],
+      "implementation_regression": "none detected"
+    },
+    "structural": {
+      "sections": 10,
+      "headings": 42,
+      "heading_order_ok": true,
+      "images_loaded": "22/22",
+      "imgs_without_alt": 0,
+      "h1": 1,
+      "content_parity": "all sections/text/images present in design order; nothing invented"
+    },
+    "responsive": {
+      "viewport_375_overflow": false,
+      "note": "generic fallback (no mobile design in Figma; MOBILE DESIGN: REVIEW)"
+    },
+    "lighthouse_1f": {
+      "mobile": [75, 95, 100, 58],
+      "desktop": [75, 95, 100, 58],
+      "order": "performance/accessibility/best-practices/seo",
+      "reasons": "LCP = unoptimized 1:1 client images (static asset optimization = 6.1 item); color-contrast = linearized palette placement; SEO = intentional noindex + no invented description"
+    },
+    "generalized_fixes": [
+      "layout logo route fallback (no-home projects)",
+      "first image eager (no mechanical lazy — Phase 2 rule)",
+      "display typography mobile clamp min(Npx, 11vw)",
+      "fig-bg-* / fig-c-* color token classes"
+    ],
+    "cli_vitest_after_fixes": "181 passed",
+    "whole_file_fetch_live": 0,
+    "token_revoke_recommended": true,
+    "dod_54_meaning": "pipeline (Figma→Manifest→Plan→Apply→Browser→Visual Comparison) fully measured on real data — NOT visual fidelity achieved; 83.716% diff is a known limitation"
+  },
+  "figma_acquisition": {
+    "mode": "Standard (REST)",
+    "auth": "PAT via env FIGMA_ACCESS_TOKEN (fixture in this phase: AGENTCMS_FIGMA_FIXTURE)",
+    "scopes_required": ["file_metadata:read", "file_content:read"],
+    "scopes_optional": [
+      "file_variables:read",
+      "library_content:read",
+      "library_assets:read"
+    ],
+    "endpoints": {
+      "file_meta": { "tier": 3, "calls_full_pipeline": 3 },
+      "file": { "tier": 1, "calls_full_pipeline": 1 },
+      "file_nodes": { "tier": 1, "calls_full_pipeline": 0 },
+      "image_renders": { "tier": 1, "calls_full_pipeline": 1 },
+      "image_fills": { "tier": 2, "calls_full_pipeline": 1 },
+      "variables": {
+        "tier": 2,
+        "calls_full_pipeline": 0,
+        "result": "OPTIONAL / NOT REQUESTED (Standard Mode default; opt-in via --variables. 403 fallback path covered by unit tests)"
+      }
+    },
+    "cache": {
+      "second_inspect_tier1_calls": 0,
+      "cache_key": "file_key + version + selection hash",
+      "variables_result_cached_per_version": true
+    },
+    "rate_limit_hits": 0,
+    "retries": 0,
+    "figma_write_operations": 0,
+    "mcp_calls": 0,
+    "code_connect_publish": 0
+  },
+  "manifest": {
+    "raw_bytes": 71386,
+    "raw_nodes": 219,
+    "manifest_bytes": 55129,
+    "manifest_lines": 1848,
+    "reduction_ratio": 0.772,
+    "reduction_note": "synthetic fixture の raw は実 Figma file（MB 級 / geometry・transform 込み）より桁違いに小さく、比率は fixture 特性で歪む。実測は Live Smoke Test / Phase 6.1 で行う",
+    "fingerprint": "c13a44d9d90e75d2 (sha256, version+selection+normalized content)"
+  },
+  "ai_context": {
+    "manifest_reads": "inspect 出力の summary + テスト assertion 経由のみ",
+    "raw_figma_json_reads": 0,
+    "raw_cache_direct_reads": 0,
+    "repository_blind_exploration": 0,
+    "exploration_subagents": 1
+  },
+  "components": {
+    "detected": 5,
+    "component_sets": 1,
+    "candidates_not_componentized": 1,
+    "existing_reused": 0,
+    "generated": 3,
+    "layout_merged": 2,
+    "registry_entries": 5,
+    "registry_mapped": 5
+  },
+  "tokens": {
+    "variable_source": 0,
+    "style_source": 5,
+    "inferred_source": 16,
+    "match_with_existing": 3,
+    "conflicts": 1,
+    "new_candidates": 10,
+    "note": "VARIABLE source は Variables fixture の unit test で検証（Enterprise 相当）。fallback 経路が本線"
+  },
+  "cms": {
+    "existing_module_works": {
+      "items": 3,
+      "action": "existing-module + FigmaContentSeeder"
+    },
+    "review": 1,
+    "static": 0,
+    "never_invented_content": true,
+    "schema_overrides": [
+      { "schema": "works", "field": "body", "patch": { "required": false } }
+    ],
+    "schema_choice_additions": { "works.category": ["Branding", "Web"] }
+  },
+  "assets": {
+    "detected": 13,
+    "content_media": 6,
+    "static_design": 3,
+    "icon": 3,
+    "decoration": 1,
+    "deduplicated_by_image_ref": true,
+    "downloaded_reference_based_only": 7,
+    "svg_to_media": 0
+  },
+  "apply": {
+    "generated_files": 17,
+    "reapply_noop": true,
+    "conflict_stop_verified": true,
+    "stale_plan_rejection_verified": true,
+    "provenance_record": ".agentcms/manifest/figma-apply.json"
+  },
+  "quality": {
+    "cli_vitest": "174 passed (Phase 6 新規 43 / 既存 131 green 維持)",
+    "agentcms_verify": "9/9 gates (pint/phpstan/pest/vue-tsc/eslint/vite/secret/composer audit/pnpm audit)",
+    "figma_verify": "8/8 (fingerprint/plan/provenance/registry/secret/gitignore/HTTP)",
+    "playwright_e2e": "70 passed (figma-import 10 + 既存 60)",
+    "lighthouse_figma": {
+      "home": { "mobile": [100, 100, 100, 58], "desktop": [100, 100, 100, 58] },
+      "works": { "mobile": [100, 100, 96, 58], "desktop": [100, 100, 100, 58] },
+      "order": "performance/accessibility/best-practices/seo",
+      "seo_58_reason": "intentional noindex (demo) + no invented meta description",
+      "works_bp_96_reason": "Green Leaf media resolution (Phase 5 data), not figma assets"
+    },
+    "lighthouse_existing_gate": "pass (7 URLs x 3 runs x mobile+desktop, all categories 100)",
+    "visual_threshold_change": "contact mobile 5%→7%（既存ドリフト、Phase 6 非起因を隔離実行で確認。journal #4-6 参照）"
+  }
+}

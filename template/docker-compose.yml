@@ -1,0 +1,81 @@
+# Agent CMS Kit — local development stack
+# ホストへ PHP / MySQL をインストールしない。Mac (Docker Desktop) / Windows 11 + WSL2 共通。
+# compose project 名は固定しない: .env の COMPOSE_PROJECT_NAME（agentcms create / dev が
+# project 固有の値を生成）が identity になる。固定名は別 project の container/volume を
+# 暗黙再利用してしまうため禁止（Phase 7 Decision 9）。
+
+# ローカル専用。Web・DB・テストメールのホスト公開は、このPCだけに限定する。
+services:
+  app:
+    build:
+      context: ./docker/php
+      args:
+        # host ユーザーと container 実行 identity を一致させる（agentcms create/dev が .env に記録）
+        HOST_UID: '${HOST_UID:-1000}'
+        HOST_GID: '${HOST_GID:-1000}'
+    volumes:
+      - .:/var/www/html
+    environment:
+      # .env より優先される接続情報はここに置かない（.env が唯一の設定源）
+      PHP_IDE_CONFIG: serverName=agentcms
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD-SHELL', 'php -v > /dev/null || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  web:
+    image: nginx:1.27-alpine
+    ports:
+      - '127.0.0.1:${APP_PORT:-8180}:80'
+    volumes:
+      - .:/var/www/html:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+
+  mysql:
+    image: mysql:8.4
+    ports:
+      - '127.0.0.1:${DB_FORWARD_PORT:-33060}:3306'
+    environment:
+      MYSQL_DATABASE: '${DB_DATABASE:-agentcms}'
+      MYSQL_USER: '${DB_USERNAME:-agentcms}'
+      MYSQL_PASSWORD: '${DB_PASSWORD:-agentcms}'
+      MYSQL_RANDOM_ROOT_PASSWORD: 'yes'
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-u', '${DB_USERNAME:-agentcms}', '-p${DB_PASSWORD:-agentcms}']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - '127.0.0.1:${MAILPIT_SMTP_PORT:-1026}:1025'
+      - '127.0.0.1:${MAILPIT_UI_PORT:-8026}:8025'
+
+  # フロントエンド tooling 専用（pnpm install / build / vue-tsc / ESLint）。
+  # profiles により `docker compose up` では起動せず、`docker compose run --rm node ...`
+  # のワンショット実行のみで使う（常駐しないので health check も不要）。
+  # 目的: ホストへ Node.js / pnpm をインストールさせない（Phase 8.5-A）。
+  node:
+    profiles: ['tools']
+    build:
+      context: ./docker/node
+      args:
+        HOST_UID: '${HOST_UID:-1000}'
+        HOST_GID: '${HOST_GID:-1000}'
+    volumes:
+      - .:/var/www/html
+      # pnpm store / corepack キャッシュを永続化（再実行時の再ダウンロードを避ける）
+      - node-home:/home/agentcms
+
+volumes:
+  mysql-data:
+  node-home:

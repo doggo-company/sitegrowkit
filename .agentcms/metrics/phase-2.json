@@ -1,0 +1,106 @@
+{
+  "phase": 2,
+  "started_at": "2026-08-08T17:03:01+09:00",
+  "ended_at": "2026-08-08T17:25:00+09:00",
+  "duration_minutes": 22,
+  "models": ["claude-fable-5"],
+  "sessions": {
+    "count": 1,
+    "transcript_ids": ["79718e1d-5706-4269-80b4-c853d732a00a"],
+    "note": "Phase 1 と同一セッションの継続。トークンは開始時累計 (baseline) との差分で実測。同一セッションのため『会話コンテキストの持ち越し』が .agentcms/ の効果に上乗せされるバイアスあり — 純粋な .agentcms 効果の検証には新規セッションでの Phase 3 計測が必要。"
+  },
+  "exact_token_usage_available": true,
+  "baseline_at_start": {
+    "assistant_messages": 594,
+    "tokens": {
+      "input": 1184,
+      "output": 719575,
+      "cache_read": 144234860,
+      "cache_creation": 4255675
+    },
+    "tool_calls_total": 372
+  },
+  "tokens": {
+    "source": "transcript usage 差分（終了時累計 − 開始時累計）",
+    "input_tokens": 244,
+    "output_tokens": 169450,
+    "cache_read_tokens": 61794327,
+    "cache_creation_tokens": 229771,
+    "total_tokens": 62193792
+  },
+  "activity": {
+    "assistant_messages": 124,
+    "tool_calls_total": 84,
+    "tool_calls": {
+      "Bash": 27,
+      "Write": 15,
+      "Edit": 29,
+      "Read": 2,
+      "TaskCreate": 4,
+      "TaskUpdate": 7
+    },
+    "files_changed": 45,
+    "git_commits": 1
+  },
+  "counters": {
+    "test_runs_pest": 4,
+    "test_failures_pest": 0,
+    "e2e_runs": 3,
+    "e2e_runs_with_failures": 0,
+    "lighthouse_runs": 2,
+    "build_failures": 0,
+    "docker_build_failures": 0,
+    "retry_loops": 4,
+    "context_compactions": 0,
+    "human_interventions": 0
+  },
+  "quality_gate_results": {
+    "verify": "PASS (9/9)",
+    "pest": "80 passed / 2 skipped (Media 12 tests new, all green on first run)",
+    "playwright_e2e": "30 passed (spec-required 13 media flows included, green on first run)",
+    "lighthouse": "100/100/100/100 on all 7 URLs (works detail with hero image added) × desktop+mobile. LCP mobile 0.9s / desktop 0.2s"
+  },
+  "phase1_vs_phase2": {
+    "phase1": {
+      "duration_min": 67,
+      "output_tokens": 667968,
+      "tool_calls": 357,
+      "reads": 13,
+      "test_failures": 2,
+      "e2e_failed_runs": 4,
+      "retry_loops": 13
+    },
+    "phase2": {
+      "duration_min": 22,
+      "output_tokens": 169450,
+      "tool_calls": 84,
+      "reads": 2,
+      "test_failures": 0,
+      "e2e_failed_runs": 0,
+      "retry_loops": 4
+    },
+    "note": "作業内容が異なるため削減率の単純比較は不可（仕様の指示通り）。定性分析は docs/benchmarks/phase-2.md"
+  },
+  "events": [
+    {
+      "at": "2026-08-08T17:03:01+09:00",
+      "type": "phase_start",
+      "note": "FIRST ACTION: git clean, verify 9/9 green, Phase 1 DoD 28/28 confirmed."
+    },
+    {
+      "at": "2026-08-08T17:15:00+09:00",
+      "type": "milestone",
+      "note": "Media module + Works integration live. Public output verified via curl (picture/webp/alt/width/height/eager)."
+    },
+    {
+      "at": "2026-08-08T17:18:00+09:00",
+      "type": "retry",
+      "note": "PHPStan 3 rounds of type-annotation fixes (no runtime bugs). Pint gate failed once before auto-format."
+    },
+    {
+      "at": "2026-08-08T17:22:00+09:00",
+      "type": "phase_complete",
+      "note": "verify 9/9, Pest 80, E2E 30, Lighthouse 100×56 (7 URLs × 2 modes × 4 categories)."
+    }
+  ]
+}

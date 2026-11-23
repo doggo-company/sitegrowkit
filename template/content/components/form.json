@@ -1,0 +1,15 @@
+{
+  "type": "form",
+  "label": "フォーム",
+  "category": "basic",
+  "since": 1,
+  "propsSchema": {
+    "formKey": { "type": "string", "max": 100, "default": "", "label": "配置するフォーム" }
+  },
+  "styleSchema": ["spaceTop", "spaceBottom", "visibility"],
+  "bindable": [],
+  "allowedChildren": [],
+  "allowedParents": ["section", "container"],
+  "renderer": { "kind": "blade", "view": "components.document.form" },
+  "capabilities": { "responsive": ["spaceTop", "spaceBottom", "visibility"], "container": false }
+}

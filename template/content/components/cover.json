@@ -1,0 +1,125 @@
+{
+  "type": "cover",
+  "label": "大きな写真と見出し",
+  "category": "layout",
+  "since": 1,
+  "propsSchema": {
+    "variant": {
+      "type": "enum",
+      "values": [
+        "full",
+        "band",
+        "editorial"
+      ],
+      "default": "full",
+      "label": "見せ方",
+      "valueLabels": {
+        "full": "写真を画面いっぱいに（文字は写真の上）",
+        "band": "写真の帯（真ん中に文字とボタン）",
+        "editorial": "文字と写真を左右に（小さなお店の紹介）"
+      }
+    },
+    "mediaId": {
+      "type": "media",
+      "label": "写真"
+    },
+    "alt": {
+      "type": "string",
+      "max": 200,
+      "default": "",
+      "label": "写真の代替テキスト（なくても可）"
+    },
+    "eyebrow": {
+      "type": "string",
+      "max": 60,
+      "default": "",
+      "label": "見出しの上の小さな文字（なくても可）"
+    },
+    "title": {
+      "type": "string",
+      "required": true,
+      "max": 240,
+      "label": "見出し",
+      "help": "改行したところで行が分かれます。スマホでも、1 行の途中では折り返しにくくなります。"
+    },
+    "level": {
+      "type": "enum",
+      "values": [
+        1,
+        2
+      ],
+      "default": 1,
+      "label": "見出しの段",
+      "valueLabels": {
+        "1": "1（ページの最初の見出し）",
+        "2": "2（ページの途中に置くとき）"
+      }
+    },
+    "lead": {
+      "type": "string",
+      "max": 400,
+      "default": "",
+      "label": "短い説明（なくても可）"
+    },
+    "buttonLabel": {
+      "type": "string",
+      "max": 60,
+      "default": "",
+      "label": "ボタンの文字（なくても可）"
+    },
+    "buttonHref": {
+      "type": "url",
+      "label": "ボタンのリンク先"
+    },
+    "button2Label": {
+      "type": "string",
+      "max": 60,
+      "default": "",
+      "label": "2つ目のボタンの文字（なくても可）"
+    },
+    "button2Href": {
+      "type": "url",
+      "label": "2つ目のボタンのリンク先"
+    },
+    "caption": {
+      "type": "string",
+      "max": 200,
+      "default": "",
+      "label": "写真の説明（なくても可）",
+      "help": "「文字と写真を左右に」のとき、写真の下に表示します。差し替えた写真に合わせて、見本の表記も確認してください。"
+    }
+  },
+  "styleSchema": [
+    "spaceTop",
+    "spaceBottom",
+    "visibility"
+  ],
+  "bindable": [],
+  "allowedChildren": [],
+  "allowedParents": [
+    "page"
+  ],
+  "a11y": {
+    "rules": [
+      "image-alt",
+      "heading-order",
+      "heading-empty"
+    ],
+    "src": "mediaId",
+    "alt": "alt",
+    "level": "level",
+    "name": "title"
+  },
+  "renderer": {
+    "kind": "blade",
+    "view": "components.document.cover"
+  },
+  "capabilities": {
+    "responsive": [
+      "spaceTop",
+      "spaceBottom",
+      "visibility"
+    ],
+    "container": false
+  }
+}

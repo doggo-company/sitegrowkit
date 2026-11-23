@@ -1,0 +1,82 @@
+{
+  "phase": "5.1",
+  "title": "Real World Acceptance Test（実制作 HTML への import 適用）",
+  "started_at": "2026-08-09T07:56:00+09:00",
+  "ended_at": "2026-08-09T02:30:00+09:00",
+  "model": "claude-fable-5 (Claude Code, fresh session)",
+  "status": "受け入れ成功 — 変換由来の visual 退行 0 / Lighthouse A/B 同値 / 全品質ゲート PASS。client 固有生成物は kit 未コミット",
+  "manifest_first": {
+    "raw_source_reads_before_plan_decision": 0,
+    "raw_source_reads_for_apply_implementation": 7,
+    "manifest_lines": 1688,
+    "manifest_bytes": 48844,
+    "manifest_vs_html_bytes": "27.8%",
+    "manifest_vs_source_bytes": "0.11%",
+    "inspect_seconds": 0.12,
+    "plan_seconds": 0.08
+  },
+  "source": {
+    "html_pages": 9,
+    "empty_html_excluded": 1,
+    "html_lines": 5354,
+    "html_bytes": 172114,
+    "inline_css_lines_entry": 2139,
+    "source_files_total": 60,
+    "source_bytes_total": 43938008,
+    "non_web_working_files_excluded": 34
+  },
+  "problems_found_and_generalized": 10,
+  "reapplies": 6,
+  "unresolved_failures": 0,
+  "visual_regression": {
+    "note": "全ページ pixel perfect ではない。7 ページは 0.000%、contact / news に構造・データ由来の差分あり",
+    "pixel_identical_pages": {
+      "pages": [
+        "home",
+        "company",
+        "recruit",
+        "works-01",
+        "works-02",
+        "works-03",
+        "works-04"
+      ],
+      "desktop": "0.000%",
+      "mobile": "0.000%"
+    },
+    "contact": {
+      "desktop": "1.535%",
+      "mobile": "3.844%",
+      "reason": "Turnstile widget 挿入（Contact Pipeline 接続に必須）による送信ボタン以下のシフト"
+    },
+    "news": {
+      "desktop": "3.684%",
+      "mobile": "6.003%",
+      "reason": "承認済み CMS data mapping — title 一本化による原本サブページ延長テキストとの差"
+    }
+  },
+  "lighthouse_ab": {
+    "conversion_regression": "none",
+    "works_show_mobile_perf": { "converted": 0.63, "static_original": 0.63 },
+    "works_show_desktop_perf": { "converted": 0.965, "static_original": 0.965 },
+    "home_perf": "両側 NO_LCP（デザイン由来で計測不能）",
+    "seo": { "converted": 0.92, "static_original": 0.91 },
+    "calibrated_thresholds": {
+      "mobile_perf": 0.55,
+      "desktop_perf": 0.8,
+      "seo": 0.9,
+      "a11y": 0.9
+    }
+  },
+  "gates": {
+    "vitest": "131/131",
+    "pest": "115 passed / 2 skipped",
+    "playwright_e2e": "70/70",
+    "agentcms_verify": "9/9",
+    "template_verify": "18/18"
+  },
+  "project_isolation": {
+    "pruned_deleted": 15,
+    "pruned_restored_from_backup": 1,
+    "standard_pages_not_imported": "404 + sitemap 除外"
+  }
+}

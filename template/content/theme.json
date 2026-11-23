@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "colors": {
+    "text": "#1c1d20",
+    "textMuted": "#6b6f76",
+    "bg": "#ffffff",
+    "bgAlt": "#f6f6f4",
+    "primary": "#0f4c46",
+    "primaryContrast": "#ffffff",
+    "border": "#e3e4e2"
+  },
+  "typography": {
+    "baseSize": "1rem",
+    "lineHeight": "1.8",
+    "sans": "'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', 'BIZ UDPGothic', Meiryo, sans-serif"
+  },
+  "spacing": {
+    "section": "clamp(4rem, 10vw, 7rem)",
+    "gap": "1.5rem",
+    "gapSmall": "0.75rem"
+  },
+  "radius": {
+    "sm": "4px",
+    "md": "8px"
+  },
+  "container": {
+    "max": "1080px",
+    "narrow": "720px"
+  },
+  "breakpoints": {
+    "mobile": 0,
+    "tablet": 768,
+    "desktop": 1200
+  }
+}

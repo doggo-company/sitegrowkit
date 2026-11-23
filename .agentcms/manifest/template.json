@@ -1,0 +1,1140 @@
+{
+  "version": 2,
+  "source": "./examples/html-template",
+  "generated_by": "agentcms template inspect",
+  "fingerprint": {
+    "algorithm": "sha256",
+    "total": "2ec20387b570c282e18e2e3c6f89e5ab2269cc99734bc79354996ece2586ac7a",
+    "files": [
+      {
+        "path": "about.html",
+        "sha256": "f3123968fcbb0cbf",
+        "bytes": 3583
+      },
+      {
+        "path": "contact.html",
+        "sha256": "75537d707435ccfa",
+        "bytes": 3917
+      },
+      {
+        "path": "css/style.css",
+        "sha256": "1af5c42cd78abf72",
+        "bytes": 8265
+      },
+      {
+        "path": "fonts/leaf-icons.woff2",
+        "sha256": "839c412a25790dee",
+        "bytes": 18
+      },
+      {
+        "path": "images/hero-bg.png",
+        "sha256": "40348c0b70686f93",
+        "bytes": 3956
+      },
+      {
+        "path": "images/logo.png",
+        "sha256": "4593c6549faff043",
+        "bytes": 206
+      },
+      {
+        "path": "images/work1.png",
+        "sha256": "daeaa213a15f0b69",
+        "bytes": 1392
+      },
+      {
+        "path": "images/work2.png",
+        "sha256": "5474471d3d5d7116",
+        "bytes": 1392
+      },
+      {
+        "path": "images/work3.png",
+        "sha256": "58b004b895859bab",
+        "bytes": 1392
+      },
+      {
+        "path": "images/work4.png",
+        "sha256": "4dea9f0a0efbafd3",
+        "bytes": 1393
+      },
+      {
+        "path": "images/work5.png",
+        "sha256": "0789642cc975f284",
+        "bytes": 1392
+      },
+      {
+        "path": "images/work6.png",
+        "sha256": "4c1750ef5af14750",
+        "bytes": 1392
+      },
+      {
+        "path": "index.html",
+        "sha256": "be991d077e5fa2da",
+        "bytes": 5018
+      },
+      {
+        "path": "js/main.js",
+        "sha256": "1f878416df378c2b",
+        "bytes": 861
+      },
+      {
+        "path": "service.html",
+        "sha256": "99696ccec8d433a0",
+        "bytes": 5649
+      },
+      {
+        "path": "works.html",
+        "sha256": "c673cb45e09ed3ec",
+        "bytes": 4324
+      }
+    ]
+  },
+  "source_stats": {
+    "files": 16,
+    "text_lines": 1108,
+    "bytes": 44150,
+    "by_type": {
+      "css": {
+        "files": 1,
+        "lines": 543,
+        "bytes": 8265
+      },
+      "fonts": {
+        "files": 1,
+        "lines": 0,
+        "bytes": 18
+      },
+      "html": {
+        "files": 5,
+        "lines": 541,
+        "bytes": 22491
+      },
+      "images": {
+        "files": 8,
+        "lines": 0,
+        "bytes": 12515
+      },
+      "js": {
+        "files": 1,
+        "lines": 24,
+        "bytes": 861
+      }
+    }
+  },
+  "pages": [
+    {
+      "path": "about.html",
+      "title": "Green Leaf Design | About",
+      "head": {
+        "lang": "ja",
+        "description": "Green Leaf Design の会社概要。2020 年に京都で設立された小さなデザインスタジオです。",
+        "canonical": null,
+        "robots": null,
+        "og": {}
+      },
+      "h1": "About",
+      "sections": [
+        "section.page-title",
+        "section.section.about-body",
+        "section.section.company"
+      ],
+      "ids": [
+        "global-nav",
+        "site-footer",
+        "site-header"
+      ],
+      "css": [
+        "css/style.css"
+      ],
+      "js": [
+        "js/main.js"
+      ],
+      "images": [
+        "images/logo.png"
+      ],
+      "links_internal": [
+        "about.html",
+        "contact.html",
+        "index.html",
+        "service.html",
+        "works.html"
+      ],
+      "links_anchor": [],
+      "links_external": [],
+      "inline_scripts": {
+        "count": 0,
+        "bytes": 0
+      }
+    },
+    {
+      "path": "contact.html",
+      "title": "Green Leaf Design | Contact",
+      "head": {
+        "lang": "ja",
+        "description": "Green Leaf Design へのお問い合わせフォーム。制作のご相談・お見積もりはこちらからどうぞ。",
+        "canonical": null,
+        "robots": null,
+        "og": {}
+      },
+      "h1": "Contact",
+      "sections": [
+        "section.page-title",
+        "section.section.contact-body"
+      ],
+      "ids": [
+        "email",
+        "global-nav",
+        "message",
+        "name",
+        "site-footer",
+        "site-header",
+        "type"
+      ],
+      "css": [
+        "css/style.css"
+      ],
+      "js": [
+        "js/main.js"
+      ],
+      "images": [
+        "images/logo.png"
+      ],
+      "links_internal": [
+        "about.html",
+        "contact.html",
+        "index.html",
+        "service.html",
+        "works.html"
+      ],
+      "links_anchor": [],
+      "links_external": [],
+      "inline_scripts": {
+        "count": 0,
+        "bytes": 0
+      }
+    },
+    {
+      "path": "index.html",
+      "title": "Green Leaf Design | ホーム",
+      "head": {
+        "lang": "ja",
+        "description": "Green Leaf Design は京都の小さなデザインスタジオです。植物のように育つウェブサイトをつくります。",
+        "canonical": "https://greenleaf.example/",
+        "robots": null,
+        "og": {
+          "og:description": "Green Leaf Design は京都の小さなデザインスタジオです。植物のように育つウェブサイトをつくります。",
+          "og:site_name": "Green Leaf Design",
+          "og:title": "Green Leaf Design | ホーム",
+          "og:type": "website"
+        }
+      },
+      "h1": "自然体のデザインで、 ブランドを育てる。",
+      "sections": [
+        "section.hero",
+        "section.section.works-preview",
+        "section.section.news"
+      ],
+      "ids": [
+        "global-nav",
+        "site-footer",
+        "site-header"
+      ],
+      "css": [
+        "css/style.css"
+      ],
+      "js": [
+        "js/main.js"
+      ],
+      "images": [
+        "images/logo.png",
+        "images/work1.png",
+        "images/work2.png",
+        "images/work3.png",
+        "images/work4.png"
+      ],
+      "links_internal": [
+        "about.html",
+        "contact.html",
+        "index.html",
+        "service.html",
+        "works.html"
+      ],
+      "links_anchor": [
+        "service.html#plans"
+      ],
+      "links_external": [],
+      "inline_scripts": {
+        "count": 0,
+        "bytes": 0
+      }
+    },
+    {
+      "path": "service.html",
+      "title": "Green Leaf Design | Service",
+      "head": {
+        "lang": "ja",
+        "description": "Green Leaf Design のサービス内容と料金プラン。ウェブサイト制作・ブランディング・継続的な育成サポートを提供しています。",
+        "canonical": null,
+        "robots": null,
+        "og": {}
+      },
+      "h1": "Service",
+      "sections": [
+        "section.page-title",
+        "section.section.services",
+        "section#plans",
+        "section.section.faq",
+        "section.cta"
+      ],
+      "ids": [
+        "global-nav",
+        "plans",
+        "site-footer",
+        "site-header"
+      ],
+      "css": [
+        "css/style.css"
+      ],
+      "js": [
+        "js/main.js"
+      ],
+      "images": [
+        "images/logo.png"
+      ],
+      "links_internal": [
+        "about.html",
+        "contact.html",
+        "index.html",
+        "service.html",
+        "works.html"
+      ],
+      "links_anchor": [],
+      "links_external": [],
+      "inline_scripts": {
+        "count": 0,
+        "bytes": 0
+      }
+    },
+    {
+      "path": "works.html",
+      "title": "Green Leaf Design | Works",
+      "head": {
+        "lang": "ja",
+        "description": "Green Leaf Design の制作実績一覧。EC・コーポレートサイト・ブランディングなどの事例を紹介しています。",
+        "canonical": null,
+        "robots": null,
+        "og": {}
+      },
+      "h1": "Works",
+      "sections": [
+        "section.page-title",
+        "section.section.works-list",
+        "section.cta"
+      ],
+      "ids": [
+        "global-nav",
+        "site-footer",
+        "site-header"
+      ],
+      "css": [
+        "css/style.css"
+      ],
+      "js": [
+        "js/main.js"
+      ],
+      "images": [
+        "images/logo.png",
+        "images/work1.png",
+        "images/work2.png",
+        "images/work3.png",
+        "images/work4.png",
+        "images/work5.png",
+        "images/work6.png"
+      ],
+      "links_internal": [
+        "about.html",
+        "contact.html",
+        "index.html",
+        "service.html",
+        "works.html"
+      ],
+      "links_anchor": [],
+      "links_external": [],
+      "inline_scripts": {
+        "count": 0,
+        "bytes": 0
+      }
+    }
+  ],
+  "assets": {
+    "css": [
+      "css/style.css"
+    ],
+    "js": [
+      "js/main.js"
+    ],
+    "images": [
+      "images/hero-bg.png",
+      "images/logo.png",
+      "images/work1.png",
+      "images/work2.png",
+      "images/work3.png",
+      "images/work4.png",
+      "images/work5.png",
+      "images/work6.png"
+    ],
+    "fonts": [
+      "fonts/leaf-icons.woff2"
+    ],
+    "other": []
+  },
+  "external": [
+    {
+      "url": "https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js",
+      "kind": "script",
+      "category": "cdn-script",
+      "library": "gsap",
+      "pages": [
+        "index.html"
+      ]
+    },
+    {
+      "url": "https://fonts.googleapis.com",
+      "kind": "font",
+      "category": "google-fonts",
+      "library": null,
+      "pages": [
+        "index.html"
+      ]
+    },
+    {
+      "url": "https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap",
+      "kind": "style",
+      "category": "google-fonts",
+      "library": null,
+      "pages": [
+        "about.html",
+        "contact.html",
+        "index.html",
+        "service.html",
+        "works.html"
+      ]
+    }
+  ],
+  "shared_candidates": [
+    {
+      "kind": "footer",
+      "selector": "footer#site-footer",
+      "pages": [
+        "about.html",
+        "contact.html",
+        "index.html",
+        "service.html",
+        "works.html"
+      ],
+      "hash": "9a917f459198",
+      "bytes": 577
+    },
+    {
+      "kind": "header",
+      "selector": "header#site-header",
+      "pages": [
+        "about.html",
+        "contact.html",
+        "index.html",
+        "service.html",
+        "works.html"
+      ],
+      "hash": "fff8461bc59f",
+      "bytes": 637
+    },
+    {
+      "kind": "nav",
+      "selector": "nav#global-nav",
+      "pages": [
+        "about.html",
+        "contact.html",
+        "index.html",
+        "service.html",
+        "works.html"
+      ],
+      "hash": "4ae01d5b22ce",
+      "bytes": 239
+    },
+    {
+      "kind": "section",
+      "selector": "section.cta",
+      "pages": [
+        "service.html",
+        "works.html"
+      ],
+      "hash": "1fc3b4473d45",
+      "bytes": 170
+    }
+  ],
+  "common_structures": [
+    {
+      "kind": "breadcrumb",
+      "selector": "nav.breadcrumb",
+      "occurrences": [
+        {
+          "page": "about.html",
+          "count": 1
+        },
+        {
+          "page": "contact.html",
+          "count": 1
+        },
+        {
+          "page": "service.html",
+          "count": 1
+        },
+        {
+          "page": "works.html",
+          "count": 1
+        }
+      ],
+      "confidence": "high",
+      "reason": "class / aria-label のパンくずパターンが 4 ページで検出"
+    },
+    {
+      "kind": "card_grid",
+      "selector": "div.card-list > ARTICLE.work-card",
+      "occurrences": [
+        {
+          "page": "index.html",
+          "count": 4
+        },
+        {
+          "page": "works.html",
+          "count": 6
+        }
+      ],
+      "confidence": "high",
+      "reason": "image + heading を持つカードが index.html:4件 / works.html:6件 繰り返されている"
+    },
+    {
+      "kind": "cta",
+      "selector": "section.cta",
+      "occurrences": [
+        {
+          "page": "service.html",
+          "count": 1
+        },
+        {
+          "page": "works.html",
+          "count": 1
+        }
+      ],
+      "confidence": "high",
+      "reason": "2 ページで正規化 HTML が完全一致（hash 1fc3b4473d45）"
+    },
+    {
+      "kind": "footer",
+      "selector": "footer#site-footer",
+      "occurrences": [
+        {
+          "page": "about.html",
+          "count": 1
+        },
+        {
+          "page": "contact.html",
+          "count": 1
+        },
+        {
+          "page": "index.html",
+          "count": 1
+        },
+        {
+          "page": "service.html",
+          "count": 1
+        },
+        {
+          "page": "works.html",
+          "count": 1
+        }
+      ],
+      "confidence": "high",
+      "reason": "5 ページで正規化 HTML が完全一致（hash 9a917f459198）"
+    },
+    {
+      "kind": "form",
+      "selector": "form.contact-form",
+      "occurrences": [
+        {
+          "page": "contact.html",
+          "count": 1
+        }
+      ],
+      "confidence": "high",
+      "reason": "5 フィールドのフォーム（method=post）"
+    },
+    {
+      "kind": "header",
+      "selector": "header#site-header",
+      "occurrences": [
+        {
+          "page": "about.html",
+          "count": 1
+        },
+        {
+          "page": "contact.html",
+          "count": 1
+        },
+        {
+          "page": "index.html",
+          "count": 1
+        },
+        {
+          "page": "service.html",
+          "count": 1
+        },
+        {
+          "page": "works.html",
+          "count": 1
+        }
+      ],
+      "confidence": "high",
+      "reason": "5 ページで正規化 HTML が完全一致（hash fff8461bc59f）"
+    },
+    {
+      "kind": "navigation",
+      "selector": "nav#global-nav",
+      "occurrences": [
+        {
+          "page": "about.html",
+          "count": 1
+        },
+        {
+          "page": "contact.html",
+          "count": 1
+        },
+        {
+          "page": "index.html",
+          "count": 1
+        },
+        {
+          "page": "service.html",
+          "count": 1
+        },
+        {
+          "page": "works.html",
+          "count": 1
+        }
+      ],
+      "confidence": "high",
+      "reason": "5 ページで正規化 HTML が完全一致（hash 4ae01d5b22ce）"
+    },
+    {
+      "kind": "section_heading",
+      "selector": "h2.section-title",
+      "occurrences": [
+        {
+          "page": "about.html",
+          "count": 2
+        },
+        {
+          "page": "index.html",
+          "count": 2
+        },
+        {
+          "page": "service.html",
+          "count": 3
+        }
+      ],
+      "confidence": "medium",
+      "reason": "同一 class の見出しが 3 ページで使用（共通スタイルの見出しパターン）"
+    }
+  ],
+  "interactive_regions": [
+    {
+      "selector": ".hero h1",
+      "source": "js/main.js",
+      "events": [
+        "DOMContentLoaded",
+        "click",
+        "scroll"
+      ],
+      "pages": [
+        "index.html"
+      ]
+    },
+    {
+      "selector": ".nav-toggle",
+      "source": "js/main.js",
+      "events": [
+        "DOMContentLoaded",
+        "click",
+        "scroll"
+      ],
+      "pages": [
+        "about.html",
+        "contact.html",
+        "index.html",
+        "service.html",
+        "works.html"
+      ]
+    },
+    {
+      "selector": "#global-nav",
+      "source": "js/main.js",
+      "events": [
+        "DOMContentLoaded",
+        "click",
+        "scroll"
+      ],
+      "pages": [
+        "about.html",
+        "contact.html",
+        "index.html",
+        "service.html",
+        "works.html"
+      ]
+    },
+    {
+      "selector": "#site-header",
+      "source": "js/main.js",
+      "events": [
+        "DOMContentLoaded",
+        "click",
+        "scroll"
+      ],
+      "pages": [
+        "about.html",
+        "contact.html",
+        "index.html",
+        "service.html",
+        "works.html"
+      ]
+    }
+  ],
+  "forms": [
+    {
+      "page": "contact.html",
+      "selector": "form.contact-form",
+      "action": "https://example.com/api/contact",
+      "method": "post",
+      "external_action": true,
+      "has_file_upload": false,
+      "fields": [
+        {
+          "name": "email",
+          "type": "email",
+          "required": true,
+          "label": "メールアドレス"
+        },
+        {
+          "name": "message",
+          "type": "textarea",
+          "required": true,
+          "label": "内容"
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "label": "お名前"
+        },
+        {
+          "name": "privacy",
+          "type": "checkbox",
+          "required": true,
+          "label": "プライバシーポリシーに同意する"
+        },
+        {
+          "name": "type",
+          "type": "select",
+          "required": false,
+          "label": "ご用件",
+          "options": [
+            "estimate",
+            "other"
+          ]
+        }
+      ]
+    }
+  ],
+  "repeats": [
+    {
+      "page": "contact.html",
+      "container": "form.contact-form",
+      "item": "DIV.field",
+      "count": 4,
+      "items": [
+        {
+          "heading": null,
+          "image": null,
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": null,
+          "text": "お名前"
+        },
+        {
+          "heading": null,
+          "image": null,
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": null,
+          "text": "メールアドレス"
+        },
+        {
+          "heading": null,
+          "image": null,
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": null,
+          "text": "ご用件 お見積もり その他"
+        },
+        {
+          "heading": null,
+          "image": null,
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": null,
+          "text": "内容"
+        }
+      ]
+    },
+    {
+      "page": "index.html",
+      "container": "div.card-list",
+      "item": "ARTICLE.work-card",
+      "count": 4,
+      "items": [
+        {
+          "heading": "花屋のオンラインストア",
+          "image": "images/work1.png",
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "EC / 2026",
+          "text": "花屋のオンラインストア EC / 2026"
+        },
+        {
+          "heading": "造園会社コーポレート",
+          "image": "images/work2.png",
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "Corporate / 2025",
+          "text": "造園会社コーポレート Corporate / 2025"
+        },
+        {
+          "heading": "植物園イベントLP",
+          "image": "images/work3.png",
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "LP / 2025",
+          "text": "植物園イベントLP LP / 2025"
+        },
+        {
+          "heading": "種苗ブランドサイト",
+          "image": "images/work4.png",
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "Branding / 2024",
+          "text": "種苗ブランドサイト Branding / 2024"
+        }
+      ]
+    },
+    {
+      "page": "index.html",
+      "container": "ul.news-items",
+      "item": "LI.news-item",
+      "count": 3,
+      "items": [
+        {
+          "heading": null,
+          "image": null,
+          "link": "#",
+          "link_text": "夏季休業のお知らせ",
+          "time": "2026-07-01",
+          "meta": null,
+          "text": "2026.07.01夏季休業のお知らせ"
+        },
+        {
+          "heading": null,
+          "image": null,
+          "link": "#",
+          "link_text": "実績を更新しました",
+          "time": "2026-06-15",
+          "meta": null,
+          "text": "2026.06.15実績を更新しました"
+        },
+        {
+          "heading": null,
+          "image": null,
+          "link": "#",
+          "link_text": "サイトをリニューアルしました",
+          "time": "2026-05-30",
+          "meta": null,
+          "text": "2026.05.30サイトをリニューアルしました"
+        }
+      ]
+    },
+    {
+      "page": "service.html",
+      "container": "div.service-items",
+      "item": "DIV.service-item",
+      "count": 3,
+      "items": [
+        {
+          "heading": "ウェブサイト制作",
+          "image": null,
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "コーポレートサイト・EC・LP まで、目的に合わせた設計と実装を行います。",
+          "text": "ウェブサイト制作 コーポレートサイト・EC・LP まで、目的に合わせた設計と実装を行います。"
+        },
+        {
+          "heading": "ブランディング",
+          "image": null,
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "ロゴ・パッケージ・紙媒体まで、ブランドの一貫した体験をデザインします。",
+          "text": "ブランディング ロゴ・パッケージ・紙媒体まで、ブランドの一貫した体験をデザインします。"
+        },
+        {
+          "heading": "育成サポート",
+          "image": null,
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "公開後の更新・分析・改善を伴走します。サイトは公開してからが本番です。",
+          "text": "育成サポート 公開後の更新・分析・改善を伴走します。サイトは公開してからが本番です。"
+        }
+      ]
+    },
+    {
+      "page": "service.html",
+      "container": "div.section-inner",
+      "item": "DETAILS.faq-item",
+      "count": 3,
+      "items": [
+        {
+          "heading": null,
+          "image": null,
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "規模によりますが、コーポレートサイトで 2〜3 ヶ月が目安です。",
+          "text": "制作期間はどのくらいですか？ 規模によりますが、コーポレートサイトで 2〜3 ヶ月が目安です。"
+        },
+        {
+          "heading": null,
+          "image": null,
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "はい。育成サポートプランで更新・分析・改善まで伴走します。",
+          "text": "公開後の更新もお願いできますか？ はい。育成サポートプランで更新・分析・改善まで伴走します。"
+        },
+        {
+          "heading": null,
+          "image": null,
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "オンラインでの打ち合わせを基本としているため、全国からご依頼いただけます。",
+          "text": "遠方でも依頼できますか？ オンラインでの打ち合わせを基本としているため、全国からご依頼いただけます。"
+        }
+      ]
+    },
+    {
+      "page": "works.html",
+      "container": "div.card-list",
+      "item": "ARTICLE.work-card",
+      "count": 6,
+      "items": [
+        {
+          "heading": "花屋のオンラインストア",
+          "image": "images/work1.png",
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "EC / 2026",
+          "text": "花屋のオンラインストア EC / 2026"
+        },
+        {
+          "heading": "造園会社コーポレート",
+          "image": "images/work2.png",
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "Corporate / 2025",
+          "text": "造園会社コーポレート Corporate / 2025"
+        },
+        {
+          "heading": "植物園イベントLP",
+          "image": "images/work3.png",
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "LP / 2025",
+          "text": "植物園イベントLP LP / 2025"
+        },
+        {
+          "heading": "種苗ブランドサイト",
+          "image": "images/work4.png",
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "Branding / 2024",
+          "text": "種苗ブランドサイト Branding / 2024"
+        },
+        {
+          "heading": "盆栽サブスクリプション",
+          "image": "images/work5.png",
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "Service / 2024",
+          "text": "盆栽サブスクリプション Service / 2024"
+        },
+        {
+          "heading": "ハーブティー パッケージ",
+          "image": "images/work6.png",
+          "link": null,
+          "link_text": null,
+          "time": null,
+          "meta": "Package / 2023",
+          "text": "ハーブティー パッケージ Package / 2023"
+        }
+      ]
+    }
+  ],
+  "css_analysis": {
+    "files": [
+      {
+        "path": "css/style.css",
+        "lines": 543,
+        "bytes": 8265,
+        "custom_properties": [
+          "--border",
+          "--green",
+          "--green-dark",
+          "--green-pale",
+          "--max-width",
+          "--text",
+          "--text-muted"
+        ],
+        "media_queries": [
+          "(max-width: 767px)"
+        ],
+        "font_faces": [
+          {
+            "family": "LeafIcons",
+            "src": [
+              "../fonts/leaf-icons.woff2"
+            ]
+          }
+        ],
+        "imports": [],
+        "url_refs": [
+          {
+            "ref": "../fonts/leaf-icons.woff2",
+            "resolved": "fonts/leaf-icons.woff2",
+            "exists": true
+          },
+          {
+            "ref": "../images/hero-bg.png",
+            "resolved": "images/hero-bg.png",
+            "exists": true
+          }
+        ]
+      }
+    ]
+  },
+  "js_analysis": {
+    "files": [
+      {
+        "path": "js/main.js",
+        "lines": 24,
+        "bytes": 861,
+        "dom_selectors": [
+          "#global-nav",
+          "#site-header",
+          ".hero h1",
+          ".nav-toggle"
+        ],
+        "event_listeners": [
+          "DOMContentLoaded",
+          "click",
+          "scroll"
+        ],
+        "libraries": [
+          "gsap"
+        ],
+        "uses_modules": false
+      }
+    ]
+  },
+  "image_classification": {
+    "static_assets": [
+      {
+        "path": "images/hero-bg.png",
+        "reason": "CSS から参照（背景・装飾 asset）",
+        "confidence": "high",
+        "repeat": null
+      },
+      {
+        "path": "images/logo.png",
+        "reason": "共通 header / footer 内で使用（ロゴ等のデザイン asset）",
+        "confidence": "high",
+        "repeat": null
+      }
+    ],
+    "media_candidates": [
+      {
+        "path": "images/work1.png",
+        "reason": "繰り返し構造 ARTICLE.work-card 内で使用（コンテンツ画像）",
+        "confidence": "high",
+        "repeat": "ARTICLE.work-card"
+      },
+      {
+        "path": "images/work2.png",
+        "reason": "繰り返し構造 ARTICLE.work-card 内で使用（コンテンツ画像）",
+        "confidence": "high",
+        "repeat": "ARTICLE.work-card"
+      },
+      {
+        "path": "images/work3.png",
+        "reason": "繰り返し構造 ARTICLE.work-card 内で使用（コンテンツ画像）",
+        "confidence": "high",
+        "repeat": "ARTICLE.work-card"
+      },
+      {
+        "path": "images/work4.png",
+        "reason": "繰り返し構造 ARTICLE.work-card 内で使用（コンテンツ画像）",
+        "confidence": "high",
+        "repeat": "ARTICLE.work-card"
+      },
+      {
+        "path": "images/work5.png",
+        "reason": "繰り返し構造 ARTICLE.work-card 内で使用（コンテンツ画像）",
+        "confidence": "high",
+        "repeat": "ARTICLE.work-card"
+      },
+      {
+        "path": "images/work6.png",
+        "reason": "繰り返し構造 ARTICLE.work-card 内で使用（コンテンツ画像）",
+        "confidence": "high",
+        "repeat": "ARTICLE.work-card"
+      }
+    ]
+  },
+  "warnings": [
+    {
+      "kind": "external-form-action",
+      "file": "contact.html",
+      "message": "フォームが外部 endpoint (https://example.com/api/contact) へ送信している。Contact Pipeline への接続候補"
+    }
+  ]
+}

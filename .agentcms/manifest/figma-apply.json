@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "manifest_fingerprint": "c13a44d9d90e75d23f6853220debacb33499ac8363642f8a794c5566c2109002",
+  "plan_sha256": "0112bb5745430949cff92ff21dce3ed756d30d1676f6a31ed65c20f0d9b706c1",
+  "applied_at": "2026-08-09T08:12:51.542Z",
+  "files": [
+    {
+      "target": "database/seeders/figma-import/img-imgrefw1.png",
+      "sha256": "c7474ab60d3ba4664b06bad2d87e05d6152d97786a22762c2133fc06724fdb85",
+      "source": "figma asset img-imgrefw1"
+    },
+    {
+      "target": "database/seeders/figma-import/img-imgrefw2.png",
+      "sha256": "1023f32df0756596b1e3cb6f31435225562ae22e20c7f33462cf6ae5e3ee513e",
+      "source": "figma asset img-imgrefw2"
+    },
+    {
+      "target": "database/seeders/figma-import/img-imgrefw3.png",
+      "sha256": "2c8c71000351fff6f0ec683aa09274609aecb6ac8c7275172b4b635334dc8d9c",
+      "source": "figma asset img-imgrefw3"
+    },
+    {
+      "target": "database/seeders/figma-import/img-imgrefw4.png",
+      "sha256": "10ba73ef11cde89c6dda826390d36ee1da42a3db4176346bd9ef1482e9204f53",
+      "source": "figma asset img-imgrefw4"
+    },
+    {
+      "target": "database/seeders/figma-import/img-imgrefw5.png",
+      "sha256": "482b83cd818448b37aa5579905f04e793de255eab055b4be4d5bf2b0c2bace61",
+      "source": "figma asset img-imgrefw5"
+    },
+    {
+      "target": "database/seeders/figma-import/img-imgrefw6.png",
+      "sha256": "b29ce89529afb72a2371d827bcecff0eaf28af40ec7feb3e80b0dec67195f7da",
+      "source": "figma asset img-imgrefw6"
+    },
+    {
+      "target": "database/seeders/FigmaContentSeeder.php",
+      "sha256": "05369251e51f0e774111e16a3d334aec4c771bb17f499274af26611e703ac963",
+      "source": "figma cms candidate works-repeat"
+    },
+    {
+      "target": "public/figma/css/figma.css",
+      "sha256": "511c8aa25543b0bc89ade75fafb74b7e0a8c5d0b188b34e79d495014ad11c9ee",
+      "source": "figma tokens + auto layout"
+    },
+    {
+      "target": "public/figma/images/img-imgrefcard.png",
+      "sha256": "26f3571a0d9da3f60c60b128bc5ca2c36965e5b75a4985c1da0265a1a476192c",
+      "source": "figma asset img-imgrefcard"
+    },
+    {
+      "target": "public/figma/images/img-imgrefhero.png",
+      "sha256": "36b8264b8ac863f5cdf57ac0f0a2eda050cabc79208eaf7add835a9ffe466a1e",
+      "source": "figma asset img-imgrefhero"
+    },
+    {
+      "target": "resources/views/figma/components/button.blade.php",
+      "sha256": "cc51176b1026eb0637637f41e2f35e97843f39188416dba9e488e2fe779e7817",
+      "source": "figma component 300:1"
+    },
+    {
+      "target": "resources/views/figma/components/feature.blade.php",
+      "sha256": "a86b719ca92284e86b1655a93a0e70046e411073d6df23b1c4c1a643e7fc5ff3",
+      "source": "figma component 10:11"
+    },
+    {
+      "target": "resources/views/figma/components/works-card.blade.php",
+      "sha256": "39302906370cec0c34b4811518536bc6e674f23d3818cb74b555175eb51ab7cd",
+      "source": "figma component 200:10"
+    },
+    {
+      "target": "resources/views/figma/home.blade.php",
+      "sha256": "9e2448a8c931a5633e3c7b92739b065710c5b442766c9864e0a5735cd942a439",
+      "source": "figma screen 1:2"
+    },
+    {
+      "target": "resources/views/figma/layout.blade.php",
+      "sha256": "1ff0941f43886ce7c7935d16bb5c00a37475523b281f1f612cb619ace892864d",
+      "source": "figma layout components"
+    },
+    {
+      "target": "resources/views/figma/works.blade.php",
+      "sha256": "ba4348e81e2cf7fe1bc35ee5054a208c3d496bac21aff9c175ab504eeb5cb36c",
+      "source": "figma screen 1:4"
+    },
+    {
+      "target": "routes/figma.php",
+      "sha256": "f2e0864a88faad4b6fb3024f0eac6ba9113a5b4462a86bc20441b6c820366428",
+      "source": "figma screens"
+    }
+  ]
+}

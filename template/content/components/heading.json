@@ -1,0 +1,17 @@
+{
+  "type": "heading",
+  "label": "見出し",
+  "category": "basic",
+  "since": 1,
+  "propsSchema": {
+    "text": { "type": "string", "required": true, "max": 200, "label": "テキスト" },
+    "level": { "type": "enum", "values": [1, 2, 3, 4], "default": 2, "label": "見出しレベル", "valueLabels": {"1": "1（いちばん大きい）", "2": "2", "3": "3", "4": "4（いちばん小さい）"} }
+  },
+  "styleSchema": ["textAlign", "color", "spaceTop", "spaceBottom", "visibility"],
+  "bindable": ["text"],
+  "allowedChildren": [],
+  "allowedParents": ["section", "container"],
+  "a11y": { "rules": ["heading-order"], "level": "level", "name": "text" },
+  "renderer": { "kind": "blade", "view": "components.document.heading" },
+  "capabilities": { "responsive": ["textAlign", "spaceTop", "spaceBottom", "visibility"], "container": false }
+}

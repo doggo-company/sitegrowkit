@@ -1,0 +1,6 @@
+{
+  "key": "news_category",
+  "label": "カテゴリ",
+  "hierarchical": true,
+  "managed_by": "code"
+}

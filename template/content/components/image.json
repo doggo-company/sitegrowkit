@@ -1,0 +1,18 @@
+{
+  "type": "image",
+  "label": "画像",
+  "category": "basic",
+  "since": 1,
+  "propsSchema": {
+    "mediaId": { "type": "media", "required": true, "label": "画像" },
+    "alt": { "type": "string", "max": 200, "label": "代替テキスト" },
+    "decorative": { "type": "boolean", "default": false, "label": "装飾目的（読み上げ不要）" }
+  },
+  "styleSchema": ["textAlign", "spaceTop", "spaceBottom", "visibility"],
+  "bindable": ["mediaId", "alt"],
+  "allowedChildren": [],
+  "allowedParents": ["section", "container"],
+  "a11y": { "rules": ["image-alt"], "src": "mediaId", "alt": "alt", "decorative": "decorative" },
+  "renderer": { "kind": "blade", "view": "components.document.image" },
+  "capabilities": { "responsive": ["spaceTop", "spaceBottom", "visibility"], "container": false }
+}

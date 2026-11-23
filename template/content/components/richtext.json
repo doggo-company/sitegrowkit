@@ -1,0 +1,15 @@
+{
+  "type": "richtext",
+  "label": "リッチテキスト",
+  "category": "basic",
+  "since": 1,
+  "propsSchema": {
+    "html": { "type": "string", "format": "html", "required": true, "max": 50000, "label": "本文" }
+  },
+  "styleSchema": ["textAlign", "spaceTop", "spaceBottom", "visibility"],
+  "bindable": ["html"],
+  "allowedChildren": [],
+  "allowedParents": ["section", "container"],
+  "renderer": { "kind": "blade", "view": "components.document.richtext" },
+  "capabilities": { "responsive": ["spaceTop", "spaceBottom", "visibility"], "container": false }
+}

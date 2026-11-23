@@ -1,0 +1,25 @@
+/** 入力項目の種類の呼び名（項目の編集画面と、保存の確認の文で同じ言葉を使う — UX 一周 9 周目 R9-2） */
+export const FIELD_TYPE_LABELS: Record<string, string> = {
+    text: '1 行テキスト',
+    textarea: '複数行テキスト',
+    richtext: 'リッチテキスト',
+    number: '数値',
+    url: 'URL',
+    email: 'メールアドレス',
+    tel: '電話番号',
+    date: '日付',
+    datetime: '日時',
+    boolean: 'オン / オフ',
+    select: 'プルダウン',
+    radio: 'ラジオボタン',
+    checkbox: 'チェックボックス',
+    image: '画像（アップロード）',
+    media: 'メディア',
+    // `file` は ALLOWED_TYPES に在るのに名前が無く、`file` と生で出ていた（R-8A ② 監査 指摘 17）
+    file: 'ファイル',
+    group: 'まとまり',
+    repeater: '繰り返し',
+    relation: '参照（1 件）',
+    relations: '参照（複数）',
+    images: '画像（複数）',
+};

@@ -1,0 +1,185 @@
+{
+  "phase": "6.1",
+  "date": "2026-08-09",
+  "mode": "real-world-acceptance (fresh session)",
+  "acceptance_status": "PARTIAL VISUAL ACCEPTANCE",
+  "source": "Real World Figma A (unknown production design; client identifiers not recorded)",
+  "baseline": "v0.6.0-phase6-figma-manifest (78ac88d)",
+  "source_coverage": {
+    "desktop_screens": 1,
+    "mobile_screens": 1,
+    "alternate_design_frames_not_selected": 2,
+    "components": 2,
+    "component_sets": "NOT COVERED BY THIS SOURCE",
+    "auto_layout": true,
+    "absolute_layout_roots": 2,
+    "images": 17,
+    "vectors": 14,
+    "custom_font_families": 6,
+    "repeated_content_groups": 3,
+    "cms_candidates": 3,
+    "interactions": "NOT COVERED (no prototype data in pipeline)"
+  },
+  "figma_acquisition": {
+    "read_only": true,
+    "figma_write_operations": 0,
+    "scopes_used": [
+      "file_metadata:read",
+      "file_content:read"
+    ],
+    "api_calls": {
+      "file_meta": 5,
+      "file_nodes": 2,
+      "file_nodes_note": "1 per selection (1-screen initial, 2-screen after human-approved mobile inclusion); all re-inspects were raw-cache hits (tier1 = 0)",
+      "image_renders": 1,
+      "image_fills": 1,
+      "svg_exports": 2,
+      "cdn_downloads": 36,
+      "manual_structure_and_auth_triage": 12,
+      "manual_note": "transient 403 right after token creation (propagation; resolved) + 1 depth-limited structure read (Context Gap recorded)"
+    },
+    "rate_limit_hits": 0,
+    "second_inspect_tier1_calls": 0
+  },
+  "manifest_first": {
+    "raw_bytes": 705127,
+    "raw_nodes": 749,
+    "manifest_bytes": 366547,
+    "reduction_ratio": 0.52,
+    "ai_raw_json_reads_whole_file": 0,
+    "targeted_raw_node_reads": 1,
+    "targeted_note": "depth=2 structure only (page/frame list) with Context Gap record; ~2KB text incidentally exposed via TEXT node names",
+    "deterministic_manifest": "sha256 identical across re-inspects for both selections"
+  },
+  "plan": {
+    "screens": 2,
+    "routes": 1,
+    "routes_note": "human decision: single route, mobile paired into desktop screen",
+    "components_reuse": 0,
+    "components_generate": 2,
+    "tokens": 30,
+    "cms_candidates_static": 3,
+    "assets_images": 17,
+    "assets_vectors": 14,
+    "fonts_missing_families": 6,
+    "fonts_resolution": "all web-loadable (approved by human decision, used weights only)",
+    "review_items": 12,
+    "unknown_items": 0
+  },
+  "visual_ab": {
+    "method": "pixelmatch threshold 0.1, white padding, vs Figma Image API render; mobile compared at render scale 0.6822 (API 16384px cap)",
+    "viewports": {
+      "desktop": 1728,
+      "mobile": 402
+    },
+    "design_px": {
+      "desktop": "1728x14374",
+      "mobile": "402x24015 (render 275x16384)"
+    },
+    "resource_parity": "A1 normalized fonts+referenced SVG+images so A→B isolates layout interpretation",
+    "iterations": {
+      "A0_raw_deterministic": {
+        "desktop": 47.627,
+        "mobile": 34.523
+      },
+      "A1_resource_normalized": {
+        "desktop": 47.418,
+        "mobile": 33.868
+      },
+      "B0_initial": {
+        "desktop": 40.378,
+        "mobile": 28.183
+      },
+      "B1_correction1": {
+        "desktop": 37.649,
+        "mobile": 29.563
+      },
+      "B2_correction2": {
+        "desktop": 29.248,
+        "mobile": 28.533
+      },
+      "B3_correction3": {
+        "desktop": 29.535,
+        "mobile": 28.533
+      }
+    },
+    "final_selection": "B2 (correction 3 reverted: no clear region win over its global regression; semantics/a11y/responsive identical)",
+    "final": {
+      "desktop": 29.248,
+      "mobile": 28.533
+    },
+    "improvement_vs_A1": {
+      "desktop_pp": 18.17,
+      "desktop_relative": 0.383,
+      "mobile_pp": 5.34,
+      "mobile_relative": 0.158
+    },
+    "spec36_target": "desktop met (>=15pp absolute); mobile not met (proven constraints: render scale cap 0.6822, ~32% blank frame tail, implementation content height ~91% of design)",
+    "fonts_only_effect_pp": {
+      "desktop": 0.209,
+      "mobile": 0.655
+    },
+    "correction_iterations": 3,
+    "anti_loop_stop": "4th correction skipped (no clear convergence on mobile after 3 flat iterations)"
+  },
+  "quality": {
+    "cli_vitest": "208/208",
+    "isolated_project_gates": {
+      "runtime": "host php (docker-free isolated acceptance)",
+      "pint": "pass",
+      "phpstan": "pass",
+      "pest": "113 passed / 2 skipped",
+      "vue_tsc": "pass",
+      "eslint": "pass",
+      "vite_build": "pass",
+      "composer_audit": "0 advisories",
+      "pnpm_audit": "0 vulnerabilities",
+      "secret_scan": "manual grep (site is intentionally git-less): 0 token hits"
+    },
+    "figma_verify": "7 pass / 1 skip (git-less) / 0 fail — provenance passes via recorded AI interpretation (4 files); tamper re-tested to FAIL",
+    "lighthouse_B": {
+      "desktop": {
+        "performance": 0.95,
+        "accessibility": 0.95,
+        "best_practices": 1.0,
+        "seo": 0.58
+      },
+      "mobile": {
+        "performance": 0.68,
+        "lcp": "8.8s (unoptimized PNG design assets: design-inherent + image cost)"
+      },
+      "font_cost": "90 requests / ~1.6MB (CJK unicode-range)",
+      "seo_note": "0.58 = intentional noindex on figma import screens"
+    },
+    "accessibility": "h1 unique, heading order valid, landmarks complete, alt complete, no horizontal overflow (1728/402), keyboard operable, 23 real links (baseline A had 1)"
+  },
+  "ai_efficiency": {
+    "duration_stage0_6_minutes": 75,
+    "human_decisions": 12,
+    "human_interventions_during_stage3_6": 0,
+    "visual_inspections": 32,
+    "screenshot_captures": 14,
+    "compactions": 0,
+    "client_specific_hacks": 0
+  },
+  "generalized_fixes": [
+    "gap1: desktop/mobile pairing candidates via generic signals (viewport class + shared text/assets), human-approved only",
+    "gap2: vector asset identity through placeholder classes / per-asset CSS size / tracked export target",
+    "gap3: AI interpretation provenance (generated→interpreted) + figma interpret command; verify passes only on recorded interpreted hashes",
+    "gap4: no fake '#' links; <a> only for verified destinations (incl. Figma hyperlinks); nav semantics kept",
+    "gap5: image fill scaleMode/crop transform preserved as design intent; object-fit classes emitted",
+    "gap6: routes emit only used imports (unused use = Pint fail)",
+    "gap7: verify runtime capability (docker OR compatible host php + vendor; else WHAT/WHY/FIX)",
+    "gap8: digit-leading screen ids get identifier-safe route names (Wayfinder TS); URL unchanged",
+    "gap9: verify runtime project isolation — container identity via compose working_dir label; unrelated project's docker never used (found in stage 7, fixed before v0.6.1)"
+  ],
+  "synthetic_regression_tests": 27,
+  "known_limitations": [
+    "mobile pixel target not met (render scale cap + blank frame tail + content height ~91%)",
+    "same-name same-size vectors are not distinguishable from REST metadata alone",
+    "secret-scan requires git; intentionally git-less isolated acceptance projects fall back to manual scan",
+    "image fill crop transform is preserved but not yet applied as generated CSS transform",
+    "(fixed before v0.6.1) compose fixed project name misattribution — resolved by gap9 runtime project isolation"
+  ],
+  "client_isolation": "kit git porcelain stayed 0 lines throughout; all client data (raw cache, manifest, renders, screenshots, generated project, journal) outside repo"
+}

@@ -1,0 +1,13 @@
+{
+  "id": "media",
+  "label": "メディア",
+  "kind": "collection",
+  "fields": [
+    { "key": "name", "type": "text", "label": "管理用名称", "required": true, "max": 120 },
+    { "key": "alt", "type": "text", "label": "alt テキスト", "max": 200 }
+  ],
+  "admin": {
+    "list": ["name"],
+    "search": ["name", "alt"]
+  }
+}

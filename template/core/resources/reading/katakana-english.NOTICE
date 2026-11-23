@@ -1,0 +1,12 @@
+katakana-english.tsv.gz は、JMdict（Electronic Dictionaries Research Group の和英辞書）のカタカナ語から、
+元の英語の表記と音が合うものだけを取り出した表（scripts/build-katakana-english.py）。
+
+This publication has included material from the JMdict (EDICT, etc.) dictionary files in accordance with
+the licence provisions of the Electronic Dictionaries Research Group. See http://www.edrdg.org/ .
+
+JMdict は Creative Commons Attribution-ShareAlike 4.0 International（CC BY-SA 4.0）で提供されている
+（https://www.edrdg.org/edrdg/licence.html）。この表（katakana-english.tsv.gz）も CC BY-SA 4.0 で提供する。
+変更点: カタカナの見出しと、その英語の表記（小文字・ハイフンつなぎ）だけを取り出した。
+
+元にした版: JMdict_e（JMdict created: 2026-11-05）。
+EDRDG の許諾は、データを新しい版から定期的に作り直すことを求めている。SiteGrowKit は、元にした版の日付から 31 日を超えた表のままでは版を切らない（scripts/package-release.mjs）。

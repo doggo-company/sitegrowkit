@@ -1,0 +1,411 @@
+{
+  "version": 1,
+  "generated_by": "agentcms template plan",
+  "source": "./examples/html-template",
+  "manifest_fingerprint": "2ec20387b570c282e18e2e3c6f89e5ab2269cc99734bc79354996ece2586ac7a",
+  "pages": [
+    {
+      "source": "about.html",
+      "title": "Green Leaf Design | About",
+      "target": "resources/views/public/about.blade.php",
+      "route": "about",
+      "url": "/about",
+      "confidence": "CONFIDENT",
+      "reason": "kit 標準ページ規約（/about → about）に一致",
+      "integrations": []
+    },
+    {
+      "source": "contact.html",
+      "title": "Green Leaf Design | Contact",
+      "target": "modules/Contact/views/form.blade.php",
+      "route": "contact.show",
+      "url": "/contact",
+      "confidence": "CONFIDENT",
+      "reason": "kit 標準ページ規約（/contact → contact.show）に一致",
+      "integrations": [
+        "contact-form"
+      ]
+    },
+    {
+      "source": "index.html",
+      "title": "Green Leaf Design | ホーム",
+      "target": "resources/views/public/home.blade.php",
+      "route": "home",
+      "url": "/",
+      "confidence": "CONFIDENT",
+      "reason": "kit 標準ページ規約（/ → home）に一致",
+      "integrations": [
+        "news-list",
+        "works-cards"
+      ]
+    },
+    {
+      "source": "service.html",
+      "title": "Green Leaf Design | Service",
+      "target": "resources/views/public/service.blade.php",
+      "route": "service",
+      "url": "/service",
+      "confidence": "CONFIDENT",
+      "reason": "kit 標準ページ規約（/service → service）に一致",
+      "integrations": []
+    },
+    {
+      "source": "works.html",
+      "title": "Green Leaf Design | Works",
+      "target": "modules/Works/views/index.blade.php",
+      "route": "works.index",
+      "url": "/works",
+      "confidence": "CONFIDENT",
+      "reason": "kit 標準ページ規約（/works → works.index）に一致",
+      "integrations": [
+        "works-cards"
+      ]
+    }
+  ],
+  "layout": {
+    "target": "resources/views/layouts/imported.blade.php",
+    "header_selector": "header#site-header",
+    "footer_selector": "footer#site-footer",
+    "reason": "header / footer / nav が全ページで完全一致するため共通レイアウトへ抽出（header#site-header / footer#site-footer）"
+  },
+  "components": [
+    {
+      "component_id": "imported-section-cta-0",
+      "kind": "blade",
+      "source_pattern": "section.cta",
+      "source_pages": [
+        "service.html",
+        "works.html"
+      ],
+      "target_blade": "resources/views/components/imported/cta.blade.php",
+      "props": [],
+      "confidence": "CONFIDENT",
+      "reason": "2 ページで完全一致する共通セクション（hash 1fc3b4473d45）"
+    }
+  ],
+  "cms_integrations": [
+    {
+      "id": "contact-form",
+      "schema": "contact",
+      "regions": [
+        {
+          "page": "contact.html",
+          "container": "form.contact-form",
+          "item": null
+        }
+      ],
+      "field_mapping": {
+        "email": "email",
+        "message": "message",
+        "name": "name",
+        "type": "subject"
+      },
+      "unmapped_html_fields": [
+        {
+          "name": "privacy",
+          "handling": "マークアップを保持（client-side required のまま。DB へは保存しない）",
+          "reason": "既存 contact schema に対応フィールドが無い（勝手にフィールドを捨てない — spec §26）"
+        }
+      ],
+      "missing_schema_fields": [
+        {
+          "key": "company",
+          "note": "任意フィールドのため HTML には追加しない（Preserve First）"
+        }
+      ],
+      "confidence": "CONFIDENT",
+      "reason": "POST フォーム（5 フィールド）を既存 Contact Pipeline（validate → Turnstile → DB → mail → Push）へ接続。見た目は保持し、@csrf / Turnstile widget / エラー表示 / old() のみ注入。外部 endpoint (https://example.com/api/contact) への送信は route('contact.store') へ置換"
+    },
+    {
+      "id": "news-list",
+      "schema": "news",
+      "regions": [
+        {
+          "page": "index.html",
+          "container": "ul.news-items",
+          "item": "LI.news-item"
+        }
+      ],
+      "field_mapping": {
+        "link_text": "title",
+        "time": "published_at",
+        "link": "news.show への実リンク（元は href=\"#\" プレースホルダー）"
+      },
+      "unmapped_html_fields": [],
+      "missing_schema_fields": [
+        {
+          "key": "body",
+          "note": "一覧のみのため seed はプレースホルダー本文"
+        }
+      ],
+      "confidence": "CONFIDENT",
+      "reason": "index.html の ul.news-items に time + リンクテキストの繰り返し 3 件。既存 news schema（title / published_at）と互換"
+    },
+    {
+      "id": "works-cards",
+      "schema": "works",
+      "regions": [
+        {
+          "page": "index.html",
+          "container": "div.card-list",
+          "item": "ARTICLE.work-card"
+        },
+        {
+          "page": "works.html",
+          "container": "div.card-list",
+          "item": "ARTICLE.work-card"
+        }
+      ],
+      "field_mapping": {
+        "heading": "title",
+        "image": "main_image_id (Media 経由)",
+        "meta (前半)": "category",
+        "meta (後半)": "completed_at (年)"
+      },
+      "unmapped_html_fields": [],
+      "missing_schema_fields": [
+        {
+          "key": "body",
+          "note": "カードに本文が無いため seed はプレースホルダー本文を生成（詳細ページは元デザインに存在せず、導線も生成しない）"
+        }
+      ],
+      "confidence": "CONFIDENT",
+      "reason": "同一 DOM 構造のカードが index.html: 4件 / works.html: 6件 検出され、heading / image / \"category / year\" meta の繰り返しデータとして解析できた。既存 works schema と互換。元デザインのカードは詳細リンクを持たないため、リンクは生成しない（Preserve First）"
+    }
+  ],
+  "keep_static": [
+    {
+      "region": "div.section-inner > DETAILS.faq-item",
+      "page": "service.html",
+      "confidence": "REVIEW",
+      "reason": "繰り返し構造だが、クライアントが CMS で更新する対象か判断できないため static Blade として保持（必要になれば後続 Phase でスキーマ化）"
+    },
+    {
+      "region": "div.service-items > DIV.service-item",
+      "page": "service.html",
+      "confidence": "REVIEW",
+      "reason": "繰り返し構造だが、クライアントが CMS で更新する対象か判断できないため static Blade として保持（必要になれば後続 Phase でスキーマ化）"
+    }
+  ],
+  "javascript": [
+    {
+      "file": "https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js",
+      "action": "keep-external",
+      "confidence": "CONFIDENT",
+      "reason": "外部ライブラリ（gsap）。削除・更新・置換しない（spec §13）。CSP 追加オリジンが必要"
+    },
+    {
+      "file": "js/main.js",
+      "action": "keep",
+      "confidence": "CONFIDENT",
+      "reason": "vanilla JS（セレクタ: #global-nav, #site-header, .hero h1, .nav-toggle / イベント: DOMContentLoaded, click, scroll）。既存のまま保持し Vue 化しない"
+    }
+  ],
+  "assets": {
+    "target_prefix": "imported",
+    "static": [
+      {
+        "from": "css/style.css",
+        "to": "public/imported/css/style.css"
+      },
+      {
+        "from": "fonts/leaf-icons.woff2",
+        "to": "public/imported/fonts/leaf-icons.woff2"
+      },
+      {
+        "from": "images/hero-bg.png",
+        "to": "public/imported/images/hero-bg.png"
+      },
+      {
+        "from": "images/logo.png",
+        "to": "public/imported/images/logo.png"
+      },
+      {
+        "from": "js/main.js",
+        "to": "public/imported/js/main.js"
+      }
+    ],
+    "media": [
+      {
+        "from": "images/work1.png",
+        "name": "花屋のオンラインストア",
+        "alt": "花屋のオンラインストア"
+      },
+      {
+        "from": "images/work2.png",
+        "name": "造園会社コーポレート",
+        "alt": "造園会社コーポレート"
+      },
+      {
+        "from": "images/work3.png",
+        "name": "植物園イベントLP",
+        "alt": "植物園イベントLP"
+      },
+      {
+        "from": "images/work4.png",
+        "name": "種苗ブランドサイト",
+        "alt": "種苗ブランドサイト"
+      },
+      {
+        "from": "images/work5.png",
+        "name": "盆栽サブスクリプション",
+        "alt": "盆栽サブスクリプション"
+      },
+      {
+        "from": "images/work6.png",
+        "name": "ハーブティー パッケージ",
+        "alt": "ハーブティー パッケージ"
+      }
+    ]
+  },
+  "schema_changes": [],
+  "link_map": [
+    {
+      "href": "about.html",
+      "kind": "route",
+      "route": "about",
+      "url": "/about",
+      "fragment": null
+    },
+    {
+      "href": "contact.html",
+      "kind": "route",
+      "route": "contact.show",
+      "url": "/contact",
+      "fragment": null
+    },
+    {
+      "href": "index.html",
+      "kind": "route",
+      "route": "home",
+      "url": "/",
+      "fragment": null
+    },
+    {
+      "href": "service.html",
+      "kind": "route",
+      "route": "service",
+      "url": "/service",
+      "fragment": null
+    },
+    {
+      "href": "service.html#plans",
+      "kind": "anchor",
+      "route": "service",
+      "url": "/service",
+      "fragment": "plans"
+    },
+    {
+      "href": "works.html",
+      "kind": "route",
+      "route": "works.index",
+      "url": "/works",
+      "fragment": null
+    }
+  ],
+  "env_additions": {
+    "AGENTCMS_CSP_SCRIPT_SRC": "https://cdn.jsdelivr.net",
+    "AGENTCMS_CSP_STYLE_SRC": "https://fonts.googleapis.com",
+    "AGENTCMS_CSP_FONT_SRC": "https://fonts.gstatic.com"
+  },
+  "seeds": {
+    "works": [
+      {
+        "title": "花屋のオンラインストア",
+        "slug": "imported-work-1",
+        "category": "EC",
+        "completed_year": 2026,
+        "image": "images/work1.png",
+        "order": 0
+      },
+      {
+        "title": "造園会社コーポレート",
+        "slug": "imported-work-2",
+        "category": "Corporate",
+        "completed_year": 2025,
+        "image": "images/work2.png",
+        "order": 1
+      },
+      {
+        "title": "植物園イベントLP",
+        "slug": "imported-work-3",
+        "category": "LP",
+        "completed_year": 2025,
+        "image": "images/work3.png",
+        "order": 2
+      },
+      {
+        "title": "種苗ブランドサイト",
+        "slug": "imported-work-4",
+        "category": "Branding",
+        "completed_year": 2024,
+        "image": "images/work4.png",
+        "order": 3
+      },
+      {
+        "title": "盆栽サブスクリプション",
+        "slug": "imported-work-5",
+        "category": "Service",
+        "completed_year": 2024,
+        "image": "images/work5.png",
+        "order": 4
+      },
+      {
+        "title": "ハーブティー パッケージ",
+        "slug": "imported-work-6",
+        "category": "Package",
+        "completed_year": 2023,
+        "image": "images/work6.png",
+        "order": 5
+      }
+    ],
+    "news": [
+      {
+        "title": "夏季休業のお知らせ",
+        "slug": "imported-news-1",
+        "date": "2026-07-01",
+        "order": 0
+      },
+      {
+        "title": "実績を更新しました",
+        "slug": "imported-news-2",
+        "date": "2026-06-15",
+        "order": 1
+      },
+      {
+        "title": "サイトをリニューアルしました",
+        "slug": "imported-news-3",
+        "date": "2026-05-30",
+        "order": 2
+      }
+    ],
+    "site": {
+      "site_name": "Green Leaf Design",
+      "seo_description": "Green Leaf Design は京都の小さなデザインスタジオです。植物のように育つウェブサイトをつくります。"
+    }
+  },
+  "uncertainties": [
+    {
+      "subject": "contact form field \"privacy\"",
+      "level": "REVIEW",
+      "note": "既存 contact schema に対応フィールドが無い（勝手にフィールドを捨てない — spec §26） → マークアップを保持（client-side required のまま。DB へは保存しない）"
+    },
+    {
+      "subject": "service.html div.section-inner > DETAILS.faq-item",
+      "level": "REVIEW",
+      "note": "繰り返し構造だが CMS 化せず static 保持（判断保留）"
+    },
+    {
+      "subject": "service.html div.service-items > DIV.service-item",
+      "level": "REVIEW",
+      "note": "繰り返し構造だが CMS 化せず static 保持（判断保留）"
+    }
+  ],
+  "warnings": [
+    {
+      "kind": "external-form-action",
+      "file": "contact.html",
+      "message": "フォームが外部 endpoint (https://example.com/api/contact) へ送信している。Contact Pipeline への接続候補"
+    }
+  ]
+}

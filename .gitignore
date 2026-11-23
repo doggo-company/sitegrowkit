@@ -1,0 +1,44 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+vendor/
+.playwright-mcp/
+
+# Figma Import (Phase 6) — Client Design Data は commit しない（ADR-0011）
+.agentcms/cache/
+.agentcms/figma/project.json
+
+# Release 生成物（配布 bundle・staging・smoke test 作業領域）— Phase 7
+#
+# **成果物そのものは入れない**（数 MB の tgz / zip が履歴に積み上がる）。
+# ただし **どの commit からどの成果物を作ったか**の記録だけは git に残す（F-15）。
+# 記録が無いと、同じ版番号で中身の違う成果物が存在したときに
+# **どちらが何だったかを誰も証明できない**（rc15 で実際に起きた）。
+/release/*
+!/release/*/
+/release/*/*
+!/release/*/SHA256SUMS
+!/release/*/release-manifest.json
+# staging と smoke の作業領域は記録ではない
+/release/work/
+
+# 作業報告（ローカルの受け渡し用）。**配布物にもレビューにも関係しない。**
+# 実案件の名前や作業中の事情が入るので、リポジトリには残さない
+# （`.mira-report.md` は tracked だったので `git rm --cached` で外してある —
+#  ignore 規則は tracked なファイルには効かない）。
+/.mira-report.md
+/.sgk-worker-report.md
+
+# ローカル作業用（配布物にもレビューにも関係しない）。
+# 未追跡のまま置くと scripts/package-release.mjs の clean 判定が通らない
+/.codex/
+/.playwright-cli/
+# skills の正本は `.claude/skills/` のほう。ここに在るのはその複製で、
+# commit すると正本が 2 つになる（`docs/BACKLOG.md` B-34）
+/.agents/
+.bak-20260902/
+
+# ローカルの性能計測レポート。配布物には含めない。
+/.lighthouseci/

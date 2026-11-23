@@ -1,0 +1,30 @@
+packages:
+  - '.'
+
+publicHoistPattern:
+  - '@inertiajs/core'
+
+# build script の実行承認（明示的に確定 — 利用者が pnpm approve-builds を
+# 手動実行しなくても pnpm install が決定論的に成立する。Phase 7 RC2 Blocker 1）
+# pnpm の version は package.json の packageManager pin + corepack で固定される。
+onlyBuiltDependencies:
+  - unrs-resolver
+  - vue-demi
+
+# ネイティブバイナリ（rolldown / lightningcss / esbuild）の解決対象（Phase 8.5-A）。
+# フロントエンドの install / build は docker の node service（linux）で実行するため
+# linux 版が必須。`current` は install を実行した環境を指すので:
+#   - 既定（コンテナで install）    → linux 版のみ入る（build はコンテナなので十分）
+#   - 上級者が host で install した場合 → host 版 + linux 版が入り、host の
+#     `pnpm dev`（HMR）とコンテナ build の両方が同じ node_modules で動く
+# 設定の置き場所は pnpm-workspace.yaml（package.json の "pnpm" フィールドは
+# 新しい pnpm では読まれない）。
+supportedArchitectures:
+  os:
+    - current
+    - linux
+  cpu:
+    - current
+  libc:
+    - current
+    - glibc

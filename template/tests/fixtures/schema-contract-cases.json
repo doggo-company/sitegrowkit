@@ -1,0 +1,171 @@
+{
+  "_comment": "CMS（SchemaRegistry / Field / ContentSchema）と import（loadProjectSchemas）が拒否する定義の共有表。片側だけ緩めると、どちらかのテストが落ちる。",
+  "rejected": [
+    {
+      "label": "壊れた JSON",
+      "files": {
+        "a.json": "{"
+      }
+    },
+    {
+      "label": "id 欠落",
+      "files": {
+        "a.json": "{\"label\":\"x\",\"kind\":\"collection\",\"fields\":[]}"
+      }
+    },
+    {
+      "label": "id 重複",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[]}",
+        "b.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[]}"
+      }
+    },
+    {
+      "label": "field key 重複",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[{\"key\":\"k\",\"type\":\"text\",\"label\":\"K\"},{\"key\":\"k\",\"type\":\"text\",\"label\":\"K\"}]}"
+      }
+    },
+    {
+      "label": "field type 欠落",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[{\"key\":\"k\",\"label\":\"K\"}]}"
+      }
+    },
+    {
+      "label": "未知の field type",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[{\"key\":\"k\",\"type\":\"wysiwyg\",\"label\":\"K\"}]}"
+      }
+    },
+    {
+      "label": "select の choices が空",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[{\"key\":\"k\",\"type\":\"select\",\"label\":\"K\",\"choices\":[]}]}"
+      }
+    },
+    {
+      "label": "select に choices が無い",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[{\"key\":\"k\",\"type\":\"select\",\"label\":\"K\"}]}"
+      }
+    },
+    {
+      "label": "group に入れ子が無い",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[{\"key\":\"k\",\"type\":\"group\",\"label\":\"K\",\"fields\":[]}]}"
+      }
+    },
+    {
+      "label": "repeater に入れ子が無い",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[{\"key\":\"k\",\"type\":\"repeater\",\"label\":\"K\"}]}"
+      }
+    },
+    {
+      "label": "入れ子の key 重複",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[{\"key\":\"k\",\"type\":\"group\",\"label\":\"K\",\"fields\":[{\"key\":\"c\",\"type\":\"text\",\"label\":\"C\"},{\"key\":\"c\",\"type\":\"text\",\"label\":\"C\"}]}]}"
+      }
+    },
+    {
+      "label": "relation に target が無い",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[{\"key\":\"k\",\"type\":\"relation\",\"label\":\"K\"}]}"
+      }
+    },
+    {
+      "label": "予約キー taxonomies を field に使う",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[{\"key\":\"taxonomies\",\"type\":\"text\",\"label\":\"K\"}]}"
+      }
+    },
+    {
+      "label": "admin.list が存在しない field を指す",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[{\"key\":\"k\",\"type\":\"text\",\"label\":\"K\"}],\"admin\":{\"list\":[\"nope\"]}}"
+      }
+    },
+    {
+      "label": "taxonomies が null",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[],\"taxonomies\":null}"
+      }
+    },
+    {
+      "label": "taxonomies が配列でない",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[],\"taxonomies\":{}}"
+      }
+    },
+    {
+      "label": "taxonomies に未知キー",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[],\"taxonomies\":[{\"key\":\"t\",\"multiple\":true,\"required\":false,\"label\":\"x\"}]}"
+      }
+    },
+    {
+      "label": "multiple が boolean でない",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[],\"taxonomies\":[{\"key\":\"t\",\"multiple\":\"true\",\"required\":false}]}"
+      }
+    },
+    {
+      "label": "taxonomy key 重複",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[],\"taxonomies\":[{\"key\":\"t\",\"multiple\":true,\"required\":false},{\"key\":\"t\",\"multiple\":false,\"required\":true}]}"
+      }
+    },
+    {
+      "label": "override が存在しない schema を指す",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[]}",
+        "overrides/zzz.json": "{\"id\":\"zzz\",\"fields\":{}}"
+      }
+    },
+    {
+      "label": "override が存在しない field を指す",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[]}",
+        "overrides/x.json": "{\"id\":\"x\",\"fields\":{\"nope\":{\"required\":false}}}"
+      }
+    },
+    {
+      "label": "override の id が文字列でない",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[]}",
+        "overrides/x.json": "{\"id\":1,\"fields\":{}}"
+      }
+    },
+    {
+      "label": "override の fields がオブジェクトでない",
+      "files": {
+        "a.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[]}",
+        "overrides/x.json": "{\"id\":\"x\",\"fields\":[]}"
+      }
+    },
+    {
+      "label": "override で type を未知の型へ変える",
+      "files": {
+        "a.json": "{\"id\": \"x\", \"label\": \"x\", \"kind\": \"collection\", \"fields\": [{\"key\": \"k\", \"type\": \"text\", \"label\": \"K\"}]}",
+        "overrides/x.json": "{\"id\": \"x\", \"fields\": {\"k\": {\"type\": \"wysiwyg\"}}}"
+      }
+    },
+    {
+      "label": "override で select の choices を空にする",
+      "files": {
+        "a.json": "{\"id\": \"x\", \"label\": \"x\", \"kind\": \"collection\", \"fields\": [{\"key\": \"k\", \"type\": \"select\", \"label\": \"K\", \"choices\": [\"a\"]}]}",
+        "overrides/x.json": "{\"id\": \"x\", \"fields\": {\"k\": {\"choices\": []}}}"
+      }
+    }
+  ],
+  "accepted": [
+    {
+      "label": "通常の定義と override",
+      "files": {
+        "x.json": "{\"id\":\"x\",\"label\":\"x\",\"kind\":\"collection\",\"fields\":[{\"key\":\"title\",\"type\":\"text\",\"label\":\"T\"},{\"key\":\"cat\",\"type\":\"select\",\"label\":\"C\",\"choices\":[\"a\"]}],\"admin\":{\"list\":[\"title\"]},\"taxonomies\":[{\"key\":\"t\",\"multiple\":true,\"required\":false}]}",
+        "overrides/x.json": "{\"id\":\"x\",\"fields\":{\"title\":{\"required\":false}}}"
+      }
+    }
+  ]
+}

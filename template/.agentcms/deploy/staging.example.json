@@ -1,0 +1,24 @@
+{
+    "provider": "xserver",
+    "target": "staging",
+    "ssh": {
+        "host": "サーバーID.xsrv.jp",
+        "port": 10022,
+        "user": "サーバーID",
+        "identityFile": "~/.ssh/xserver_staging"
+    },
+    "remote": {
+        "appDir": "/home/サーバーID/agentcms/staging",
+        "docroot": "/home/サーバーID/ドメイン名/public_html",
+        "phpBin": "auto"
+    },
+    "app": {
+        "url": "https://ドメイン名",
+        "healthPath": "/healthz"
+    },
+    "keepReleases": 3,
+    "api": {
+        "servername": "サーバーID.xsrv.jp",
+        "dbSuffix": "agcms"
+    }
+}

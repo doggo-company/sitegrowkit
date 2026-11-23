@@ -1,0 +1,21 @@
+{
+  "default": 0.02,
+  "overrides": {
+    "/contact": {
+      "ratio": 0.07,
+      "reason": "Contact Pipeline 接続で挿入される Turnstile widget 分の下方シフト（mobile 実測 6.451%。widget 領域 250px / 全高 4352px。static 原本に widget が無いので構造上不可避。Phase 6 の変更を除外した隔離実行でも同値で再現）。加えてパンくずの「Home → ホーム」（F-44。原本もパンくずを持つので差は文字だけ）。evidence: template/tests/e2e/__screenshots__/template-mobile/template-import/contact-diff.png / docs/benchmarks/phase-6-journal.md"
+    },
+    "/news": {
+      "ratio": 0.08,
+      "reason": "CMS では同一記事の title を 1 本化するため、原本サブページ側の延長ダミーテキストとの差が出る（ADR-0010 Rev.1 の dedupe 判断）"
+    },
+    "/works": {
+      "ratio": 0.2,
+      "reason": "原本に無かった検索欄 1 行ぶんの下方シフト（P1 ④）。比べた 5 枚のうち検索欄を得たのは /works だけで、1 行増えるとカード・CTA・footer が丸ごと差分になる。カテゴリ表記 Branding → branding（F-42）も含む。パンくずは理由ではない（works.html は原本もパンくずを持つ。F-45 で取り違えを訂正）。実測 desktop 11.956% / mobile 18.664%。この許容は大きく、本物の崩れが隠れ得る — 足した領域を mask して比べる形が本筋で docs/BACKLOG.md B-21 に残した"
+    },
+    "/about": {
+      "ratio": 0.05,
+      "reason": "Phase 8 F-5 の意図的 productization（架空の設立年・沿革を廃し sample 明示の generic copy へ変更）による段落リフロー + パンくずの「Home → ホーム」（F-44 判断 1: ホーム表記のまま = 恒久的な差分）。mobile 実測 4.050%"
+    }
+  }
+}

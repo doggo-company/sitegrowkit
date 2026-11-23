@@ -1,0 +1,59 @@
+/.phpunit.cache
+/bootstrap/ssr
+/node_modules
+/public/build
+/public/fonts-manifest.dev.json
+/public/hot
+/public/storage
+/storage/*.key
+/storage/pail
+/resources/js/actions
+/resources/js/routes
+/resources/js/wayfinder
+/vendor
+.DS_Store
+.env
+.env.backup
+.env.production
+.phpactor.json
+.phpunit.result.cache
+Homestead.json
+Homestead.yaml
+npm-debug.log
+yarn-error.log
+/auth.json
+/.fleet
+/.idea
+/.nova
+/.vscode
+/.zed
+/tests/e2e/.auth
+/tests/e2e/__screenshots__
+/test-results
+/.lighthouseci
+
+# ローカル秘密情報（管理者認証情報等）— コミット禁止・AI Context 対象外
+/.agentcms/local/
+
+# deploy（接続設定・build 生成物は Git に含めない。example のみコミット）
+#
+# 接続設定（ホスト・ユーザー・鍵パス）はコミットしない。**ひな形は配る** —
+# `distribution.ts` も「コミット対象の example のみ配布する」と決めている。
+# **個別のファイル名でなく形で書く** — staging だけを名指ししていたので、
+# production のひな形を足したときに黙って無視された（2026-08-28）。
+/.agentcms/deploy/*.json
+!/.agentcms/deploy/*.example.json
+/.agentcms/deploy/build
+
+# apply の復旧記録 — **変更前のファイルの中身をそのまま持つ**（.env を含み得る）。
+# 中断したときだけ存在する一時ファイルなので、コミットしない。
+# manifest/ ごと無視すると provenance（apply 記録）まで消えるので、この 2 つだけ。
+/.agentcms/manifest/template-apply-journal.json
+/.agentcms/manifest/figma-apply-journal.json
+
+# Figma Import (Phase 6) — Client Design Data（ADR-0011）
+/.agentcms/cache/
+/.agentcms/figma/project.json
+
+# 27F の実データ規模 fixture は生成物（作り方だけを持つ）
+/tests/fixtures/wxr/*.xml

@@ -1,0 +1,24 @@
+/*
+ * サイトの枠（見本・取り込んだテーマ）に、記事の一覧・詳細などの部品を載せるときの CSS（UX 一周 2026-09-28）。
+ *
+ * 部品は parts.css（kit 既定の枠と同じもの）。色はテーマの変数から取り、
+ * テーマに無ければ kit 既定の色に落ちる。見出し・ヘッダー・フッターはテーマのものを使う。
+ */
+@import './parts.css';
+
+:root {
+    --color-text: var(--text, #1c1d20);
+    --color-text-muted: var(--text-muted, #6b6f76);
+    --color-bg: #ffffff;
+    --color-bg-alt: var(--green-pale, #f6f6f4);
+    --color-accent: var(--green-dark, #0f4c46);
+    --color-accent-contrast: #ffffff;
+    --color-border: var(--border, #e3e4e2);
+    --space-section: clamp(3rem, 8vw, 5rem);
+}
+
+/* 下層の見出し帯は、ページの帯（見本の page-title）と同じ淡い地にする */
+.page-hero {
+    background: var(--green-pale, var(--color-bg-alt));
+    border-bottom: 0;
+}

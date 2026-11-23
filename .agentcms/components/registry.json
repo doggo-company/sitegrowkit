@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "components": [
+    {
+      "component_id": "button",
+      "figma": {
+        "node_id": "300:1",
+        "component_key": "key-button-set"
+      },
+      "code": {
+        "type": "blade",
+        "target": "resources/views/figma/components/button.blade.php"
+      },
+      "variants": [
+        "Type=Primary",
+        "Type=Secondary"
+      ],
+      "props": [
+        "Type"
+      ],
+      "source_hash": "0880a92b65d8fa68",
+      "status": "mapped"
+    },
+    {
+      "component_id": "feature",
+      "figma": {
+        "node_id": "10:11",
+        "component_key": null
+      },
+      "code": {
+        "type": "blade",
+        "target": "resources/views/figma/components/feature.blade.php"
+      },
+      "variants": [],
+      "props": [],
+      "source_hash": "6d72e8608fd595ba",
+      "status": "mapped"
+    },
+    {
+      "component_id": "footer",
+      "figma": {
+        "node_id": "100:2",
+        "component_key": "key-footer-0001"
+      },
+      "code": {
+        "type": "blade",
+        "target": "resources/views/figma/layout.blade.php"
+      },
+      "variants": [],
+      "props": [],
+      "source_hash": "27fc797706a306be",
+      "status": "mapped"
+    },
+    {
+      "component_id": "header",
+      "figma": {
+        "node_id": "100:1",
+        "component_key": "key-header-0001"
+      },
+      "code": {
+        "type": "blade",
+        "target": "resources/views/figma/layout.blade.php"
+      },
+      "variants": [],
+      "props": [],
+      "source_hash": "37dcac5cda942128",
+      "status": "mapped"
+    },
+    {
+      "component_id": "works-card",
+      "figma": {
+        "node_id": "200:10",
+        "component_key": "key-works-card"
+      },
+      "code": {
+        "type": "blade",
+        "target": "resources/views/figma/components/works-card.blade.php"
+      },
+      "variants": [],
+      "props": [],
+      "source_hash": "d2ea354a3179b8bc",
+      "status": "mapped"
+    }
+  ]
+}

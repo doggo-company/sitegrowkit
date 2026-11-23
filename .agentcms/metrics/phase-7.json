@@ -1,0 +1,136 @@
+{
+  "phase": 7,
+  "date": "2026-08-10",
+  "mode": "productization-first-run-acceptance",
+  "baseline": "v0.6.1-phase6.1-real-world",
+  "final_status": "PASS",
+  "acceptances": {
+    "baseline_a": {
+      "artifact": "git archive v0.6.1 (best available baseline artifact)",
+      "platform": "macos",
+      "cache_state": "warm",
+      "status": "PARTIAL",
+      "total_elapsed_s": 388,
+      "active_s": 210,
+      "wait_s": 180,
+      "milestones_s": {
+        "cli_discovery": 45,
+        "doctor": 55,
+        "create": 64,
+        "http_200": 134,
+        "admin_access": 229,
+        "ai_ready": 345
+      },
+      "commands": 33,
+      "failed_commands": 5,
+      "retries": 4,
+      "undocumented_source_reads": 3,
+      "undocumented_recovery": 5,
+      "broad_exploration": 7,
+      "blockers": 3,
+      "security_blockers": 1,
+      "human_interventions": 0,
+      "generated_ai_context": "absent"
+    },
+    "productized_b_macos_rc1": {
+      "artifact": "agent-cms-kit-v0.7.0-rc1.zip",
+      "platform": "macos",
+      "cache_state": "warm",
+      "status": "PASS",
+      "total_elapsed_s": 173,
+      "milestones_s": {
+        "cli_install": 18,
+        "doctor": 24,
+        "create": 33,
+        "http_200": 84,
+        "admin_login": 118,
+        "ai_ready": 133,
+        "verify": 160
+      },
+      "commands": 12,
+      "failed_commands": 0,
+      "retries": 0,
+      "undocumented_source_reads": 0,
+      "undocumented_recovery": 0,
+      "broad_exploration": 3,
+      "blockers": 0,
+      "security_blockers": 0,
+      "human_interventions": 0,
+      "generated_ai_context": "ready",
+      "verify": "9/9"
+    },
+    "windows_rc1": {
+      "artifact": "agent-cms-kit-v0.7.0-rc1.zip",
+      "platform": "windows11-wsl2",
+      "status": "FAIL",
+      "release_blockers": [
+        "pnpm version nondeterminism (no packageManager pin; pnpm 11 hard-fails on build approval)",
+        "wsl2 uid/gid bind-mount permission (host 1000 vs container 82 -> storage unwritable -> HTTP 500)",
+        "undeclared host PHP dependency (vite wayfinder plugin runs php on host)"
+      ],
+      "additional_findings": [
+        "drvfs chmod 0600 not effective under /mnt/c",
+        "unzip not documented for stock ubuntu",
+        "lsof-only port guidance",
+        "registry module path casing (fixed in finalization)"
+      ]
+    },
+    "windows_rc2": {
+      "artifact": "agent-cms-kit-v0.7.0-rc2.zip",
+      "platform": "windows11-wsl2",
+      "environment": "Windows 11 / WSL 2.6.3 / Ubuntu 24.04 / Docker Desktop 4.65 / x86_64",
+      "cache_state": "warm",
+      "cold_first_run_timing": "not measured",
+      "status": "PASS",
+      "total_elapsed_s": 750,
+      "time_to_working_project_s": 96,
+      "golden_path_commands": 12,
+      "product_failures": 0,
+      "undocumented_source_reads": 0,
+      "broad_exploration": 0,
+      "undocumented_recovery": 0,
+      "human_interventions": 0,
+      "verify": "9/9",
+      "host_php": "absent",
+      "root_owned_host_artifacts": 0,
+      "manual_pnpm_approval": 0,
+      "generated_ai_context": "ready"
+    }
+  },
+  "release": {
+    "final_rc": "0.7.0-rc2",
+    "bundle": "agent-cms-kit-v0.7.0-rc2.zip",
+    "outer_checksum": true,
+    "package_scans": [
+      "prohibited-path",
+      "secret",
+      "client-identifier",
+      "unresolved-placeholder"
+    ],
+    "package_scan_files": 577,
+    "real_leaks_caught_by_scan": 2,
+    "proposed_tag": "v0.7.0-productization"
+  },
+  "quality_gates_final": {
+    "cli_vitest": 256,
+    "template_verify": "9/9",
+    "playwright_e2e": 70,
+    "package_smoke": "pass",
+    "macos_host_php_hidden": "dev + verify 9/9 pass"
+  },
+  "generalized_fixes": {
+    "from_baseline_a": 9,
+    "from_windows_rc1": 3,
+    "from_windows_rc2_feedback": 2,
+    "found_by_release_scan": 2,
+    "found_by_packaging": 1
+  },
+  "known_limitations": [
+    "true cold-cache first-run timing not measured",
+    "multi-project concurrent dev not fully accepted (port auto-selection verified live)",
+    "deploy / figma / template-import out of this acceptance scope",
+    "browser UI verification mostly on macOS; Windows via HTTP/curl",
+    "doctor self-project port warning slightly noisy",
+    "composer PSR-4 notices remain (cosmetic)"
+  ]
+}
