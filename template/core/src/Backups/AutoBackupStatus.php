@@ -28,7 +28,7 @@ use Throwable;
  *
  * ## 置き場所
  *
- * `storage/app/private/backup-status/auto.json`（web から見えない・0600）。backup の zip の中にも、
+ * `storage/app/private/backup-status/auto.json`（web から見えない・他人は読めない 0660／ディレクトリ 0770）。backup の zip の中にも、
  * 手元の backup の置き場所にも入れない — 復元で古い結果が戻ってくる、手元の置き場所が
  * 壊れたときに結果も書けない、を起こさないため。
  *
@@ -236,7 +236,9 @@ final class AutoBackupStatus
     }
 
     /**
-     * 原子的に置き換え、0600 にする。書けなければログに残して false。
+     * 原子的に置き換える。cron（schedule:run）と web（管理画面）のどちらが先に作っても、
+     * 同じグループならもう片方が読み書きできるよう 0660／0770 にする（他人には読ませない。
+     * 理由の文は鍵を伏せてある）。書けなければログに残して false。
      *
      * @param  array<string, mixed>  $data
      */
@@ -247,9 +249,11 @@ final class AutoBackupStatus
         $temp = false;
 
         try {
-            if (! is_dir($dir) && ! @mkdir($dir, 0700, true) && ! is_dir($dir)) {
+            if (! is_dir($dir) && ! @mkdir($dir, 0770, true) && ! is_dir($dir)) {
                 throw new BackupFailed('置き場所を作れません');
             }
+
+            @chmod($dir, 0770); // umask で落ちたグループの書き込みを戻す
 
             if (is_link($path)) {
                 throw new BackupFailed('置き場所がシンボリックリンクです');
@@ -258,7 +262,7 @@ final class AutoBackupStatus
             $json = json_encode(['version' => 1, ...$data], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             $temp = @tempnam($dir, '.auto-');
 
-            if ($temp === false || @file_put_contents($temp, $json, LOCK_EX) !== strlen($json) || ! @chmod($temp, 0600) || ! @rename($temp, $path)) {
+            if ($temp === false || @file_put_contents($temp, $json, LOCK_EX) !== strlen($json) || ! @chmod($temp, 0660) || ! @rename($temp, $path)) {
                 throw new BackupFailed('書き込めません');
             }
 

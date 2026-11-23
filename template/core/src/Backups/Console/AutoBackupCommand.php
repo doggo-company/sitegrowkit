@@ -46,7 +46,10 @@ final class AutoBackupCommand extends Command
         AutoBackupStatus $status,
         AutoBackupAlert $alert,
     ): int {
-        $status->started();
+        if (! $status->started()) {
+            // 取ることは続ける。終わりの記録も書けなければ、そこで失敗として知らせる
+            $this->warn('自動バックアップの開始を記録できませんでした（storage の書き込み権限を確かめてください）');
+        }
 
         try {
             $manifest = $builder->create();

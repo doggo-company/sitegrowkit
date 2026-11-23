@@ -150,6 +150,12 @@ final class OffsiteBackups
         $disk = $this->disk();
         $path = $this->archivePath($id);
 
+        /*
+         * 同じ id を送り直すときは、先に古い checksum を消す。残したまま zip を上書きすると、
+         * 送っている間その id は「置き終えた」に数えられ、`--latest` が途中の物を選ぶ。
+         */
+        $this->quietDelete($disk, $this->checksumPath($id));
+
         $stream = @fopen($local, 'rb');
 
         if ($stream === false) {

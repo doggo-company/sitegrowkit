@@ -173,7 +173,12 @@ final class AutoBackupAlertTest extends TestCase
     {
         $this->artisan('agentcms:backup-auto')->assertExitCode(0);
 
-        $this->assertSame('0600', substr(sprintf('%o', fileperms(app(AutoBackupStatus::class)->path())), -4));
+        $path = app(AutoBackupStatus::class)->path();
+
+        // cron と web が同じグループなら互いに読み書きでき、他人（other）には何も許さない
+        $this->assertSame(0, fileperms($path) & 0007);
+        $this->assertSame(0, fileperms(dirname($path)) & 0007);
+        $this->assertSame(0660, fileperms($path) & 0777);
     }
 
     public function test_backupを作れなくても失敗として残る(): void
@@ -215,6 +220,9 @@ final class AutoBackupAlertTest extends TestCase
 
     public function test_結果を記録できなければそれ自体を知らせる(): void
     {
+        Mail::fake();
+        config()->set('agentcms.backup.alert_mail', 'ops@example.org');
+
         // 記録の置き場所が書けない（ディレクトリであるべき所がファイル）
         @mkdir($this->sandbox, 0777, true);
         file_put_contents($this->sandbox.'/backup-status', 'not a directory');
@@ -226,6 +234,9 @@ final class AutoBackupAlertTest extends TestCase
         $this->artisan('agentcms:backup-offsite', ['--list' => true])
             ->expectsOutputToContain('記録できません')
             ->assertExitCode(1);
+
+        // 記録に残せなくても、知らせのメールは届く
+        $this->assertCount(1, Mail::sent(Mailable::class, static fn (Mailable $m): bool => $m->hasTo('ops@example.org')));
     }
 
     public function test_外の古い世代を片付けられないときは送り出しの失敗と言わない(): void

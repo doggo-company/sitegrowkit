@@ -7,9 +7,11 @@ namespace Tests\Feature\Backups;
 use AgentCms\Core\Backups\BackupPaths;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use SplFileInfo;
@@ -227,6 +229,52 @@ final class OffsiteBackupTest extends TestCase
         $this->assertCount(1, glob($this->elsewhere.'/'.self::PREFIX.'/*.zip') ?: []);
         $this->assertFileExists($neighbour.'/20200101-000000-000-aaaaaa.zip');
         $this->assertFileExists($neighbour.'/20200101-000000-000-aaaaaa.zip.sha256');
+    }
+
+    public function test_外の整理は復元前の印のものを消さない(): void
+    {
+        config()->set('agentcms.backup.offsite.keep', 1);
+
+        $pre = BackupPaths::PRE_RESTORE_PREFIX.'20200101-000000-000-aaaaaa';
+        @mkdir($this->elsewhere.'/'.self::PREFIX, 0777, true);
+        file_put_contents($this->elsewhere.'/'.self::PREFIX.'/'.$pre.'.zip', 'pre');
+        file_put_contents($this->elsewhere.'/'.self::PREFIX.'/'.$pre.'.zip.sha256', str_repeat('0', 64)."\n");
+
+        for ($i = 0; $i < 3; $i++) {
+            $this->artisan('agentcms:backup-auto')->assertExitCode(0);
+        }
+
+        $this->assertFileExists($this->elsewhere.'/'.self::PREFIX.'/'.$pre.'.zip');
+        // 通常の世代は 1 つだけ残る
+        $normal = array_filter(
+            glob($this->elsewhere.'/'.self::PREFIX.'/*.zip') ?: [],
+            static fn (string $p): bool => ! str_starts_with(basename($p), BackupPaths::PRE_RESTORE_PREFIX),
+        );
+        $this->assertCount(1, $normal);
+    }
+
+    public function test_同じidを送り直すと古いchecksumは先に消える(): void
+    {
+        $this->artisan('agentcms:backup-auto')->assertExitCode(0);
+
+        $id = basename($this->localArchives()[0], '.zip');
+        $sum = $this->elsewhere.'/'.self::PREFIX.'/'.$id.'.zip.sha256';
+        $this->assertFileExists($sum);
+
+        // 送り直しの途中で落ちる置き場所（zip の書き込みで止まる）
+        $real = Storage::build(['driver' => 'local', 'root' => $this->elsewhere, 'throw' => true]);
+        Storage::extend('dies-mid-upload', static function () use ($real): Filesystem {
+            $disk = \Mockery::mock($real)->makePartial();
+            $disk->shouldReceive('writeStream')->andThrow(new \RuntimeException('connection reset'));
+
+            return $disk;
+        });
+        config()->set('filesystems.disks.'.self::DISK, ['driver' => 'dies-mid-upload']);
+
+        $this->artisan('agentcms:backup-offsite', ['id' => $id])->assertExitCode(1);
+
+        // 古い checksum が残っていると、途中の zip が「置き終えた」に数えられる
+        $this->assertFileDoesNotExist($sum);
     }
 
     public function test_送っている途中で止まったものは戻す候補にも世代にも数えない(): void
