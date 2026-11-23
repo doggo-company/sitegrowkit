@@ -161,11 +161,16 @@ final class OffsiteBackups
         }
 
         /*
-         * 一時的な名前（`<id>.zip.part`）へ送り、大きさを確かめてから本来の名前へ差し替える。
          * 送っている途中で落ちても、外に前からある同じ id の組（zip と checksum）は触らない
          * （送り直しの失敗で、健全な世代を「途中のもの」に格下げしない）。
+         *
+         *   - ディレクトリ（local）: 一時的な名前（`<id>.zip.part`）へ書き、大きさを確かめてから
+         *     rename で差し替える。local の書き込みは途中の物が見えるため
+         *   - S3 互換などそれ以外: 本来の名前へ直接置く。PUT は終わるまで中身が入れ替わらない。
+         *     move（CopyObject＋DeleteObject）は原子的でなく、1 回のコピーに大きさの上限もあるので使わない
          */
-        $part = $path.'.part';
+        $staged = $this->stagesUploads();
+        $part = $staged ? $path.'.part' : $path;
         $stream = @fopen($local, 'rb');
 
         if ($stream === false) {
@@ -175,7 +180,9 @@ final class OffsiteBackups
         try {
             $written = $disk->writeStream($part, $stream);
         } catch (Throwable $e) {
-            $this->quietDelete($disk, $part);
+            if ($staged) {
+                $this->quietDelete($disk, $part);
+            }
 
             throw new BackupFailed('外の置き場所へ送れませんでした（'.$this->describe().'）: '.$e->getMessage(), 0, $e);
         } finally {
@@ -185,7 +192,9 @@ final class OffsiteBackups
         }
 
         if ($written === false) {
-            $this->quietDelete($disk, $part);
+            if ($staged) {
+                $this->quietDelete($disk, $part);
+            }
 
             throw new BackupFailed('外の置き場所へ送れませんでした（'.$this->describe().'）: 書き込みが拒まれました');
         }
@@ -193,28 +202,19 @@ final class OffsiteBackups
         $remoteBytes = $this->remoteSize($disk, $part);
 
         if ($remoteBytes !== $bytes) {
-            $this->quietDelete($disk, $part);
+            // 直接置いたときは、食い違った組を「置き終えた」に数えさせない（checksum を外す）
+            $this->quietDelete($disk, $staged ? $part : $this->checksumPath($id));
 
             throw new BackupFailed(sprintf('外の置き場所へ送れませんでした（%s）: 大きさが合いません（手元 %d / 外 %s）', $this->describe(), $bytes, $remoteBytes === null ? '読めない' : (string) $remoteBytes));
         }
 
         /*
-         * 差し替える。古い checksum を先に外し、新しい zip を置いてから新しい checksum を置く —
+         * 差し替えたら（直接置いたときは置けたら）新しい checksum を置く —
          * どこで落ちても「checksum と zip が食い違ったまま置き終えた扱い」にはならない
          * （checksum が無い id は途中のものとして数えない）。
          */
-        $this->quietDelete($disk, $this->checksumPath($id));
-
-        try {
-            $moved = $disk->move($part, $path);
-        } catch (Throwable $e) {
-            $moved = false;
-        }
-
-        if ($moved === false) {
-            $this->quietDelete($disk, $part);
-
-            throw new BackupFailed('外の置き場所へ送れませんでした（'.$this->describe().'）: 送ったものを本来の名前へ差し替えられません');
+        if ($staged) {
+            $this->replaceStaged($disk, $id, $part, $path);
         }
 
         try {
@@ -536,6 +536,49 @@ final class OffsiteBackups
         }
 
         return rtrim($base, '/').'/';
+    }
+
+    /** 一時的な名前で送ってから差し替えるか（ディレクトリの置き場所だけ — rename が原子的） */
+    private function stagesUploads(): bool
+    {
+        $config = config('filesystems.disks.'.$this->diskName());
+
+        return is_array($config) && ($config['driver'] ?? null) === 'local';
+    }
+
+    /**
+     * 送った一時ファイルを本来の名前へ差し替える。差し替えに失敗したら、前の checksum を書き戻す
+     * （前の zip は残っているので、前の組のまま戻せる）。
+     */
+    private function replaceStaged(Filesystem $disk, string $id, string $part, string $path): void
+    {
+        try {
+            $previous = $disk->exists($this->checksumPath($id)) ? $disk->get($this->checksumPath($id)) : null;
+        } catch (Throwable) {
+            $previous = null;
+        }
+
+        $this->quietDelete($disk, $this->checksumPath($id));
+
+        try {
+            $moved = $disk->move($part, $path);
+        } catch (Throwable) {
+            $moved = false;
+        }
+
+        if ($moved === false) {
+            $this->quietDelete($disk, $part);
+
+            if (is_string($previous)) {
+                try {
+                    $disk->put($this->checksumPath($id), $previous);
+                } catch (Throwable) {
+                    // 書き戻せなければ、その id は途中のものとして数えられる（黙って戻す候補にはしない）
+                }
+            }
+
+            throw new BackupFailed('外の置き場所へ送れませんでした（'.$this->describe().'）: 送ったものを本来の名前へ差し替えられません');
+        }
     }
 
     /** 外に、手元と同じ checksum・同じ大きさの組が既にあるか（読めなければ false） */

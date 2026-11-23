@@ -287,6 +287,64 @@ final class OffsiteBackupTest extends TestCase
         $this->assertFileDoesNotExist($zip.'.part');
     }
 
+    public function test_差し替えに失敗したら前の組のまま残る(): void
+    {
+        $this->artisan('agentcms:backup-auto')->assertExitCode(0);
+
+        $id = basename($this->localArchives()[0], '.zip');
+        $zip = $this->elsewhere.'/'.self::PREFIX.'/'.$id.'.zip';
+        $sum = $zip.'.sha256';
+        file_put_contents($sum, str_repeat('f', 64)."\n");
+        $before = hash_file('sha256', $zip);
+
+        // 一時ファイルまでは置けるが、本来の名前へ差し替えられない（local ドライバのまま）
+        $real = Storage::build(['driver' => 'local', 'root' => $this->elsewhere, 'throw' => true]);
+        // 閉包は Storage の中で呼ばれる（$this は Storage になる）ので、比べる場所は値で渡す
+        $root = $this->elsewhere;
+        $this->app['filesystem']->extend('local', static function ($app, array $config) use ($real, $root) {
+            if (($config['root'] ?? null) !== $root) {
+                return $app['filesystem']->createLocalDriver($config);
+            }
+
+            $disk = \Mockery::mock($real)->makePartial();
+            $disk->shouldReceive('move')->andThrow(new \RuntimeException('rename failed'));
+
+            return $disk;
+        });
+
+        $this->artisan('agentcms:backup-offsite', ['id' => $id, '--force' => true])
+            ->expectsOutputToContain('差し替えられません')
+            ->assertExitCode(1);
+
+        $this->assertSame($before, hash_file('sha256', $zip));
+        $this->assertSame(str_repeat('f', 64), trim((string) file_get_contents($sum)));
+        $this->assertFileDoesNotExist($zip.'.part');
+    }
+
+    public function test_s3互換などには一時的な名前を使わず直接置く(): void
+    {
+        $written = [];
+        $real = Storage::build(['driver' => 'local', 'root' => $this->elsewhere, 'throw' => true]);
+        Storage::extend('object-store', static function () use ($real, &$written): Filesystem {
+            $disk = \Mockery::mock($real)->makePartial();
+            $disk->shouldReceive('writeStream')->andReturnUsing(static function (string $path, $stream) use ($real, &$written): bool {
+                $written[] = $path;
+
+                return $real->writeStream($path, $stream);
+            });
+            $disk->shouldNotReceive('move');
+
+            return $disk;
+        });
+        config()->set('filesystems.disks.'.self::DISK, ['driver' => 'object-store']);
+
+        $this->artisan('agentcms:backup-auto')->assertExitCode(0);
+
+        $this->assertCount(1, $written);
+        $this->assertStringEndsWith('.zip', $written[0]);
+        $this->assertCount(1, glob($this->elsewhere.'/'.self::PREFIX.'/*.zip.sha256') ?: []);
+    }
+
     public function test_同じ中身が外にあれば送り直さず健全な世代を残す(): void
     {
         $this->artisan('agentcms:backup-auto')->assertExitCode(0);
