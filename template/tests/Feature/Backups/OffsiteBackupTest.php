@@ -299,9 +299,14 @@ final class OffsiteBackupTest extends TestCase
         });
         config()->set('filesystems.disks.'.self::DISK, ['driver' => 'dies-mid-upload-2']);
 
-        $this->artisan('agentcms:backup-offsite', ['id' => $id])->assertExitCode(0);
+        $this->artisan('agentcms:backup-offsite', ['id' => $id])
+            ->expectsOutputToContain('送りませんでした')
+            ->assertExitCode(0);
 
         $this->assertSame(hash_file('sha256', $this->localArchives()[0]), trim((string) file_get_contents($sum)));
+
+        // 外の zip を疑うときは --force で必ず送り直す（ここでは書き込みが落ちる置き場所なので失敗で終わる）
+        $this->artisan('agentcms:backup-offsite', ['id' => $id, '--force' => true])->assertExitCode(1);
     }
 
     public function test_作り直したデータベースにも外から戻せてメディアも戻る(): void

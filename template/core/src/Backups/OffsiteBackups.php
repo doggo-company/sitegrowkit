@@ -136,9 +136,10 @@ final class OffsiteBackups
     /**
      * 写す。送った大きさを読み直し、checksum を横に置くまでが 1 回。
      *
-     * @return array{id: string, path: string, bytes: int, sha256: string}
+     * @param  bool  $force  外に同じ checksum の組があっても送り直す
+     * @return array{id: string, path: string, bytes: int, sha256: string, skipped: bool}
      */
-    public function push(string $id): array
+    public function push(string $id, bool $force = false): array
     {
         if (! BackupPaths::isValidId($id) || ! is_file(BackupPaths::archive($id))) {
             throw new BackupFailed('その backup は手元にありません: '.$id);
@@ -154,8 +155,9 @@ final class OffsiteBackups
          * 外に同じ中身が置き終わっているなら、送り直さない（送り直しが途中で落ちて、
          * 健全な世代を「途中のもの」に格下げしない）。
          */
-        if ($this->alreadyThere($disk, $id, $sha256, $bytes)) {
-            return ['id' => $id, 'path' => $path, 'bytes' => $bytes, 'sha256' => $sha256];
+        if (! $force && $this->alreadyThere($disk, $id, $sha256, $bytes)) {
+            // 外の zip そのものは読み直していない（checksum の文字と大きさが同じだけ）。言い分けるために skipped を返す
+            return ['id' => $id, 'path' => $path, 'bytes' => $bytes, 'sha256' => $sha256, 'skipped' => true];
         }
 
         /*
@@ -204,7 +206,7 @@ final class OffsiteBackups
             throw new BackupFailed('外の置き場所へ送れませんでした（'.$this->describe().'）: checksum を置けません');
         }
 
-        return ['id' => $id, 'path' => $path, 'bytes' => $bytes, 'sha256' => $sha256];
+        return ['id' => $id, 'path' => $path, 'bytes' => $bytes, 'sha256' => $sha256, 'skipped' => false];
     }
 
     /**

@@ -23,7 +23,8 @@ final class OffsiteBackupCommand extends Command
 {
     protected $signature = 'agentcms:backup-offsite
         {id? : 写す backup の id（省略すると手元のいちばん新しいもの）}
-        {--list : 写さずに、自動実行の設定と最後の結果、外にある backup を並べる（見てほしいことがあれば exit 1）}';
+        {--list : 写さずに、自動実行の設定と最後の結果、外にある backup を並べる（見てほしいことがあれば exit 1）}
+        {--force : 外に同じ checksum の組があっても送り直す（外の zip が壊れているかもしれないとき）}';
 
     protected $description = '手元の backup を外の置き場所へ写します（--list で外にある世代を表示）';
 
@@ -55,11 +56,17 @@ final class OffsiteBackupCommand extends Command
         }
 
         try {
-            $sent = $offsite->push($id);
+            $sent = $offsite->push($id, (bool) $this->option('force'));
         } catch (BackupFailed $e) {
             $this->error($offsite->redact($e->getMessage()));
 
             return self::FAILURE;
+        }
+
+        if ($sent['skipped']) {
+            $this->info(sprintf('外の置き場所に同じ checksum・同じ大きさの組が既にあるので、送りませんでした: %s%s.zip（外の zip の中身は読み直していません。送り直すなら --force）', $offsite->describe(), $sent['id']));
+
+            return self::SUCCESS;
         }
 
         $this->info(sprintf('外の置き場所へ送りました: %s%s.zip（%d bytes・sha256 一致）', $offsite->describe(), $sent['id'], $sent['bytes']));

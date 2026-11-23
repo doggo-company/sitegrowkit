@@ -71,7 +71,8 @@ Cron が動かす `php artisan schedule:run` は、中の `agentcms:backup-auto`
 ```sh
 php artisan agentcms:backup-auto                 # 取得 → 写す → 古い世代の整理（自動実行と同じ処理）
 php artisan agentcms:backup-offsite --list       # 設定・最後の自動実行の結果・置き場所にある世代。未設定・読めない時刻・読めない置き場所・上の「見てほしいこと」は終了コード 1
-php artisan agentcms:backup-offsite [<id>]       # 手元のバックアップを写す（省略時はいちばん新しいもの）
+php artisan agentcms:backup-offsite [<id>]       # 手元のバックアップを写す（省略時はいちばん新しいもの）。外に同じ checksum・大きさの組があれば送らない
+php artisan agentcms:backup-offsite <id> --force # 外の zip が壊れているかもしれないとき、必ず送り直す
 ```
 
 ### 置き場所から戻す
