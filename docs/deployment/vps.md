@@ -9,14 +9,16 @@ Docker の入った Linux の VPS 1 台に、SiteGrowKit のサイトを出す�
 ```
                     インターネット（80 / 443）
                               │
- ┌──────────── VPS 1 台 ───────┼──────────────────────────────────────┐
- │  Caddy（HTTPS の証明書を Let's Encrypt から取り、自動で更新する）    │
- │    ├─ サイト A の行 → サイト A の PHP-FPM のコンテナ                │
- │    └─ サイト B の行 → サイト B の PHP-FPM のコンテナ                │
- │  MySQL 8.4（1 つ。サイトごとに DB と利用者を分ける・外へポートを出さない）│
- │  各サイトの scheduler のコンテナ（毎分 schedule:run・cron は使わない） │
- └─────────────────────────────────────────────────────────────────────┘
+ ┌──────────── VPS 1 台 ───────┼──────────────────────────────────────────┐
+ │  Caddy（HTTPS の証明書を Let's Encrypt から取り、自動で更新する・転送だけ） │
+ │    ├─ サイト A の行 → サイト A の web（nginx）→ サイト A の PHP-FPM         │
+ │    └─ サイト B の行 → サイト B の web（nginx）→ サイト B の PHP-FPM         │
+ │  MySQL 8.4（1 つ。サイトごとに DB と利用者を分ける・外へポートを出さない）    │
+ │  各サイトの scheduler のコンテナ（毎分 schedule:run・cron は使わない）       │
+ └─────────────────────────────────────────────────────────────────────────┘
 ```
+
+Caddy にはサイトのファイルを見せない（転送だけ）。サイトの web と PHP は、そのサイトの置き場所しか見えない。PHP-FPM は TCP で待たず、サイトの置き場所の中のソケットでだけ待つ。だから、あるサイトが乗っ取られても、ほかのサイトのファイルや PHP には届かない（DB の利用者も分かれている）。
 
 | 置き場所（サーバー） | 中身 |
 | --- | --- |
@@ -107,7 +109,7 @@ agentcms deploy plan -t staging      # 何が起きるかを見る（何も変�
 agentcms deploy staging -t staging   # 出す
 ```
 
-`deploy staging` の流れ：手元で artifact を作る（vite build と composer install --no-dev）→ doctor → **Caddy の行**（別の場所で `caddy validate` してから差し替える。同じドメインを別のサイトが使っていれば何も変えずに止まる）→ 送って展開 → **サイトのコンテナ**（PHP-FPM と scheduler）→ **DB バックアップ** → migration → キャッシュ → `current` の切り替え → health check。
+`deploy staging` の流れ：手元で artifact を作る（vite build と composer install --no-dev）→ doctor → **Caddy の行**（別の場所で `caddy validate` してから差し替える。同じドメインを別のサイトが使っていれば何も変えずに止まる）→ 送って展開 → **サイトのコンテナ**（PHP-FPM・web・scheduler）→ **DB バックアップ** → migration → キャッシュ → `current` の切り替え → health check。
 
 - health check が落ちたら、**自動で前の release へ戻す**（DB は戻さない。戻すなら §8）
 - 途中で落ちたら、`current` は切り替わっていないので前の版のまま動く。**同じコマンドをもう一度流してよい**
@@ -142,42 +144,51 @@ deploy のたびに `backups/<release id>-db.sql.gz` を取っている（その
 
 ```bash
 #!/bin/bash
-# 使い方: bash restore-db.sh <サイト名> <release id>
+# 使い方: bash restore-db.sh <サイト名> <release id> [keep-code]
+#   keep-code … DB を取ったときの release が分からない・消えているときに、コードはそのままで DB だけ戻す
 set -euo pipefail
-site="$1"; id="$2"
+site="$1"; id="$2"; mode="${3:-}"
 dir="/srv/agentcms/sites/$site"   # vps.root を変えたなら、ここも変える
 cd "$dir"
 src="backups/$id-db.sql.gz"
-# 1. 何も変える前に確かめる（無い・壊れている なら、ここで止まる。アプリは動いたまま）
+# 1. 何も変える前に確かめる（ここで止まれば、アプリは動いたまま・DB もそのまま）
 [ -f "$src" ] || { echo "バックアップがありません: $src"; exit 1; }
 gzip -t "$src"
+rel=""
+if [ -f "backups/$id-db.release" ]; then rel=$(cat "backups/$id-db.release"); fi
+if [ "$mode" != keep-code ] && { [ -z "$rel" ] || [ ! -d "releases/$rel" ]; }; then
+  echo "この DB を取ったときの release（${rel:-不明}）がありません。コードを合わせられないので止めます。分かったうえで DB だけ戻すなら、最後に keep-code を付けてください"
+  exit 1
+fi
+# deploy・rollback と同時に動かさない（同じ鍵を取る。取れなければ何も変えずに止まる）
+mkdir .agentcms-deploy.lock 2>/dev/null || { echo "別の deploy / rollback / 戻す作業が動いています: $(cat .agentcms-deploy.lock/info 2>/dev/null)"; exit 1; }
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) restore-db $id" > .agentcms-deploy.lock/info
+trap 'rm -rf "$dir/.agentcms-deploy.lock"' EXIT
 db=$(grep -E '^DB_DATABASE=' shared/.env | cut -d= -f2-)
 user=$(grep -E '^DB_USERNAME=' shared/.env | cut -d= -f2-)
 pw() { grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2-; }
 # パスワードは標準入力の 1 行目で MySQL のコンテナへ渡す（コマンドの引数に載せない）
 in_mysql() { docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec "$@"' sh "$@"; }
 trap 'echo "途中で止まりました。アプリは止めたままです。backups/before-restore-* に戻す前の DB があります。直してからもう一度流すか、docker compose -f $dir/compose.yml start で起こしてください"' ERR
-# 2. アプリと scheduler を止める（書き込みを止める）
+# 2. アプリ・web・scheduler を止める（書き込みを止める）
 docker compose -f compose.yml stop
-# 3. いまの DB を取っておく（取れなければここで止まる。DB はまだ変えていない）
-safe="backups/before-restore-$(date +%Y%m%d%H%M%S)-db.sql.gz"
-pw | in_mysql mysqldump --single-transaction --no-tablespaces -h 127.0.0.1 -u "$user" "$db" | gzip > "$safe"
-gzip -t "$safe"
-[ "$(wc -c < "$safe")" -ge 200 ]
+# 3. いまの DB と、いま出ている release を取っておく（取れなければここで止まる。DB はまだ変えていない）
+safe="backups/before-restore-$(date +%Y%m%d%H%M%S)"
+pw | in_mysql mysqldump --single-transaction --no-tablespaces -h 127.0.0.1 -u "$user" "$db" | gzip > "$safe-db.sql.gz"
+gzip -t "$safe-db.sql.gz"
+[ "$(wc -c < "$safe-db.sql.gz")" -ge 200 ]
+basename "$(readlink current)" > "$safe-db.release"
 # 4. DB を空にしてから戻す（バックアップの後に増えた表も残らない）
 { pw; printf 'DROP DATABASE `%s`;\nCREATE DATABASE `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n' "$db" "$db"; } | in_mysql mysql -h 127.0.0.1 -u "$user"
 { pw; gunzip -c "$src"; } | in_mysql mysql -h 127.0.0.1 -u "$user" "$db"
 # 5. コードを、この DB を取ったときに出ていた release へ合わせてから起こす
-if [ -f "backups/$id-db.release" ] && [ -d "releases/$(cat "backups/$id-db.release")" ]; then
-  ln -sfn "$dir/releases/$(cat "backups/$id-db.release")" current
-fi
+if [ "$mode" != keep-code ]; then ln -sfn "$dir/releases/$rel" current; fi
 docker compose -f compose.yml start
 echo "戻しました: DB は $id の直前 / current は $(basename "$(readlink current)")"
 ```
 
 - 戻したあと、手元で `agentcms verify staging`（本番なら health を見る）で確かめる
-- コードを合わせる元の release が掃除で消えていたら、current はそのまま（最後の 1 行に出る番号を見て、必要なら `agentcms deploy rollback`）
-- 戻す前の DB は `backups/before-restore-*.sql.gz` に残る。同じスクリプトで、その番号を指定すれば元に戻せる（`ls backups` に出る `before-restore-<時刻>-db.sql.gz` の `before-restore-<時刻>` を `<release id>` の代わりに渡す）
+- 戻す前の DB と release は `backups/before-restore-<時刻>-db.sql.gz`・`-db.release` に残る。同じスクリプトに `before-restore-<時刻>` を `<release id>` の代わりに渡せば、DB もコードも戻す前の状態へ戻る
 
 ## 9. 毎日のバックアップ
 
@@ -187,7 +198,7 @@ scheduler のコンテナが毎分 `schedule:run` を流すので、`shared/.env
 
 別のプロジェクト（または別の target）で、**別の `vps.site` と別のドメイン**の設定を作り、§5・§6 を流す。edge（Caddy・MySQL・PHP のイメージ）は共有し、サイトごとに分かれるのは次のもの:
 
-- 置き場所（`/srv/agentcms/sites/<サイト名>/`）・コンテナ（`agentcms-<サイト名>-app` / `-scheduler`）
+- 置き場所（`/srv/agentcms/sites/<サイト名>/`）・コンテナ（`agentcms-<サイト名>-app` / `-web` / `-scheduler`）。ほかのサイトのコンテナからは、この置き場所も PHP-FPM も見えない
 - DB と DB の利用者（自分の DB にしか権限がない）
 - Caddy の行（`edge/sites/<サイト名>.caddy`）
 
@@ -214,7 +225,8 @@ docker exec -it agentcms-mysql sh -c 'MYSQL_PWD="$(cat /run/agentcms/mysql-root)
 | doctor で Docker が FAIL | 出す利用者が docker グループに入っているか（入れたあと ssh を入り直す） |
 | doctor で置き場所が FAIL | §2-3 の `install -d -o deploy -g deploy /srv/agentcms` |
 | health check が「接続できませんでした」 | DNS が VPS を向いているか・80/443 が開いているか。`docker logs agentcms-caddy` に証明書の取得の失敗が出る |
-| 500 が出る | `/srv/agentcms/sites/<サイト名>/shared/storage/logs/` と `docker logs agentcms-<サイト名>-app` |
+| 500 / 502 が出る | `/srv/agentcms/sites/<サイト名>/shared/storage/logs/` と `docker logs agentcms-<サイト名>-app`・`docker logs agentcms-<サイト名>-web` |
+| setup が「edge をこの版のキットの形にそろえる」と言う | キットを上げて Caddy や MySQL の版・設定が変わったとき。確認して流すと、Caddy と MySQL を作り直す（全サイトが数秒止まる。データと証明書は残る）。前の compose は `edge/compose.yml.prev` |
 | setup が「DB か利用者 … が既にある」で止まる | 同じサイト名の DB が、別の置き場所か前の setup の途中で作られている。自分のものなら §11 の手順で DB と利用者を消してから setup をもう一度。他人のものならサイト名を変える |
 | deploy が「別の deploy / rollback が動いています」で止まる | 終わるのを待つ。止まったまま残っているなら、ほかに動いていないことを確かめてから `/srv/agentcms/sites/<サイト名>/.agentcms-deploy.lock` を消す |
 | setup が途中で止まった | もう一度流す。DB を作ったあと `.env` を置く前に止まったときは、`shared/.env.pending`（そのとき作った値・600）を使って続きから作る |

@@ -18,6 +18,7 @@ import {
   cleanupReleasesVps,
   healthyReleases,
   markHealthy,
+  releaseIdIsFree,
   rollbackTargetByHistory,
   releaseSiteLock,
   runScript,
@@ -239,6 +240,7 @@ async function deployLocked(
   const previous = await currentTarget(ctx);
   const rel = `${n.appDir}/releases/${releaseId}`;
   const steps: Array<[string, () => Promise<StepResult>]> = [
+    ["release の番号が空いているか", () => releaseIdIsFree(ctx)],
     ["レイアウト作成 + shared/.env 検査", () => ensureLayout(ctx)],
     ["Caddy のサイトの行（確かめてから差し替え）", () => siteRoute(ctx)],
     ["artifact アップロード + 展開", () => uploadAndExtract(ctx, artifactPath)],
@@ -294,8 +296,12 @@ async function deployLocked(
     warn(
       `release に印を付けられませんでした（rollback の候補に入りません）: ${mark.detail}`,
     );
-  const clean = await cleanupReleasesVps(ctx);
-  if (!clean.ok) warn(`古い release を片付けられませんでした: ${clean.detail}`);
+  // 印を付けられなかったときは掃除しない（記録の無い今の版を、残す数に数えられない）
+  if (mark.ok) {
+    const clean = await cleanupReleasesVps(ctx);
+    if (!clean.ok)
+      warn(`古い release を片付けられませんでした: ${clean.detail}`);
+  }
   cleanupBuilds(root);
   console.log("");
   ok(`deploy 完了: release ${releaseId} が ${cfg.app.url} で稼働中です`);
@@ -351,7 +357,16 @@ async function rollbackLocked(
   }
   // 公開の記録で 1 つ前（health まで通った版だけ・公開した順）。途中で落ちた版へは戻らない
   const curId = cur.split("/").pop() ?? null;
-  const prev = rollbackTargetByHistory(await healthyReleases(exec, cfg), curId);
+  const history = await healthyReleases(exec, cfg);
+  if (history === null) {
+    fail({
+      what: "rollback できません",
+      why: `公開の記録（${n.appDir}/releases.history）を読めませんでした`,
+      fix: "ssh でつながるか・その場所が読めるかを確かめてから、もう一度流してください（何も変えていません）",
+    });
+    return 1;
+  }
+  const prev = rollbackTargetByHistory(history, curId);
   if (!prev) {
     fail({
       what: "rollback 先がありません",

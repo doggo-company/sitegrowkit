@@ -19,6 +19,7 @@ import {
   DB_PASSWORD_PLACEHOLDER,
   edgeCompose,
   phpDockerfile,
+  siteNginx,
   siteCaddy,
   siteCompose,
   vpsNames,
@@ -211,16 +212,31 @@ describe("DB の名前", () => {
 describe("サーバーへ置く中身", () => {
   const n = () => vpsNames(cfgOf());
 
-  it("Caddy の行は symlink を解いてから PHP へ渡す（古い release のコードを返さない）", () => {
+  it("Caddy は転送だけで、サイトのファイルを見ない", () => {
     const c = siteCaddy(n());
-    expect(c).toContain(
-      "root * /srv/agentcms/sites/example-staging/current/public",
-    );
-    expect(c).toMatch(
-      /php_fastcgi unix\/\/srv\/agentcms\/sites\/example-staging\/run\/php-fpm\.sock \{\s*resolve_root_symlink\s*\}/,
-    );
+    expect(c).toContain("reverse_proxy agentcms-example-staging-web:8080");
+    expect(c).not.toMatch(/root \*|file_server|php_fastcgi/);
     expect(c).toContain("# agentcms-domain: staging.example.com");
     expect(c).not.toContain("tls internal");
+    const e = edgeCompose("/srv/agentcms");
+    expect(e).not.toContain("/srv/agentcms/sites");
+    expect(e).toContain('agentcms.root: "/srv/agentcms"');
+    expect(e).toContain("image: caddy:2.11-alpine");
+  });
+
+  it("web は symlink を解いてから PHP へ渡す（古い release のコードを返さない）", () => {
+    const w = siteNginx(n());
+    expect(w).toContain(
+      "root /srv/agentcms/sites/example-staging/current/public;",
+    );
+    expect(w).toContain(
+      "fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;",
+    );
+    expect(w).toContain(
+      "fastcgi_pass unix:/srv/agentcms/sites/example-staging/run/php-fpm.sock;",
+    );
+    expect(w).toContain("fastcgi_param HTTPS on;");
+    expect(w).toContain("real_ip_header X-Forwarded-For;");
   });
 
   it("tls internal のときだけ自前の認証局を使う", () => {
@@ -244,6 +260,11 @@ describe("サーバーへ置く中身", () => {
       "(cd current && php artisan schedule:run --no-interaction)",
     );
     expect(y).not.toContain("schedule:work");
+    // web は読むだけで入れる
+    expect(y).toContain(
+      "- /srv/agentcms/sites/example-staging:/srv/agentcms/sites/example-staging:ro",
+    );
+    expect(y).toContain("image: nginxinc/nginx-unprivileged:1.27-alpine");
   });
 
   it("MySQL はホストへポートを出さず、root パスワードはファイルで渡す", () => {
@@ -321,6 +342,7 @@ describe("サーバーの上の台本", () => {
     const byKey = Object.fromEntries(actions.map((a) => [a.key, a]));
     expect(Object.keys(byKey)).toEqual([
       "edge_files",
+      "edge_upgrade",
       "edge_up",
       "php_image",
       "site_env",
@@ -336,7 +358,8 @@ describe("サーバーの上の台本", () => {
     );
     // 既にある利用者のパスワードを変えない
     // ALTER USER は自分の途中の setup（.env.pending がある）のときだけ
-    expect(env).toContain('if [ "$exists" != "0" ] && [ "$resume" = 0 ]');
+    expect(env).toContain('if [ "$exists" != "0" ]; then');
+    expect(env).not.toContain("ALTER USER");
     expect(env).toContain("| root_sql");
     expect(env).not.toMatch(/mysql[^\n]*-p\S/);
     // 置き換えは builtin の printf（sed の引数に値が載らない）

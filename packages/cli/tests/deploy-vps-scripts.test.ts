@@ -21,6 +21,7 @@ import {
   cleanupReleasesVps,
   edgeFilesScript,
   healthyReleases,
+  releaseIdIsFree,
   releaseSiteLock,
   rollbackTargetByHistory,
   siteEnvScript,
@@ -83,8 +84,9 @@ case "$*" in
   *"caddy validate"*) [ "\${FAKE_VALIDATE:-ok}" = ok ] || { echo "Error: ambiguous site definition"; exit 1; } ;;
   *"caddy reload"*) [ "\${FAKE_RELOAD:-ok}" = ok ] || { echo "Error: reload failed"; exit 1; } ;;
   *"mysql -uroot -N"*)
-    if grep -q "SELECT (SELECT COUNT" "$FAKE_LOG.stdin.$n"; then echo "\${FAKE_EXISTS:-0}";
-    elif [ "\${FAKE_CREATE:-ok}" != ok ]; then echo "ERROR 1396: Operation CREATE USER failed"; exit 1; fi ;;
+    if grep -q "SELECT (SELECT COUNT" "$FAKE_LOG.stdin.$n"; then [ "\${FAKE_QUERY:-ok}" = ok ] || exit 1; echo "\${FAKE_EXISTS:-0}";
+    elif [ "\${FAKE_CREATE:-ok}" != ok ] && grep -q "CREATE" "$FAKE_LOG.stdin.$n"; then echo "ERROR 1396: Operation CREATE USER failed"; exit 1; fi ;;
+  *"SELECT 1"*) [ "\${FAKE_AUTH:-ok}" = ok ] || { echo "ERROR 1045: Access denied"; exit 1; } ;;
   *"volume inspect"*) [ "\${FAKE_VOLUME:-none}" = exists ] || exit 1 ;;
   *mysqldump*) [ "\${FAKE_DUMP:-ok}" = ok ] || exit 2; for i in $(seq 1 400); do echo "INSERT INTO t VALUES ($i, 'row-$i-$RANDOM');"; done ;;
 esac
@@ -136,6 +138,14 @@ function ctx(
     releaseId: "20260101000000",
     log: () => {},
   };
+}
+/** 偽の docker が受け取った標準入力を全部（呼ばれた順に） */
+function allStdin(): string {
+  return readdirSync(root)
+    .filter((f) => f.startsWith("docker.log.stdin."))
+    .sort((a, b) => Number(a.split(".").pop()) - Number(b.split(".").pop()))
+    .map((f) => readFileSync(join(root, f), "utf8"))
+    .join("\n");
 }
 function dockerCalls(): string[] {
   return readFileSync(log, "utf8").split("\n").filter(Boolean);
@@ -238,7 +248,7 @@ run("DB と shared/.env を作る台本", () => {
     expect(dbPass).toMatch(/^[A-Za-z0-9]{32}$/);
     expect(env).not.toContain("__AGENTCMS_");
     // MySQL には標準入力で（SQL の中に）渡り、どの docker の引数にも載らない
-    const sqlIn = readFileSync(`${log}.stdin.1`, "utf8");
+    const sqlIn = allStdin();
     expect(sqlIn).toContain(`IDENTIFIED BY '${dbPass}'`);
     expect(sqlIn).toContain(
       "GRANT ALL PRIVILEGES ON `sgk-shop-a`.* TO 'sgk-shop-a'@'%'",
@@ -408,7 +418,9 @@ run("release の印・掃除・鍵", () => {
     );
     const h = await healthyReleases(new LocalExecutor(), c);
     expect(h).toEqual(["20260101010000", "20260101011000", "20260101005000"]);
-    expect(rollbackTargetByHistory(h, "20260101010000")).toBe("20260101011000");
+    expect(rollbackTargetByHistory(h ?? [], "20260101010000")).toBe(
+      "20260101011000",
+    );
   });
 
   it("掃除は current と公開の記録の新しい順 keep 個を残し、途中で落ちた release を消す", async () => {
@@ -429,6 +441,41 @@ run("release の印・掃除・鍵", () => {
       "20260101000002",
       "20260101000004",
     ]);
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "公開の記録を読めなければ、空と読まずに何も消さない",
+    async () => {
+      const c = cfg();
+      releases(
+        c,
+        [
+          ["20260101000001", true],
+          ["20260101000002", true],
+        ],
+        "20260101000002",
+      );
+      chmodSync(join(c.remote.appDir, "releases.history"), 0o000);
+      const r = await cleanupReleasesVps(ctx(c));
+      chmodSync(join(c.remote.appDir, "releases.history"), 0o644);
+      expect(r.ok).toBe(false);
+      expect(readdirSync(join(c.remote.appDir, "releases")).sort()).toEqual([
+        "20260101000001",
+        "20260101000002",
+      ]);
+    },
+  );
+
+  it("出す release の番号が既にあれば止める（current を消して展開しない）", async () => {
+    const c = cfg();
+    releases(c, [["20260101000000", true]], "20260101000000");
+    const r = await releaseIdIsFree(ctx(c));
+    expect(r.ok).toBe(false);
+    expect(r.detail).toContain("既にあります");
+    rmSync(join(c.remote.appDir, "releases", "20260101000000"), {
+      recursive: true,
+    });
+    expect((await releaseIdIsFree(ctx(c))).ok).toBe(true);
   });
 
   it("keepReleases が 1 以上の整数でなければ何も消さない", async () => {
@@ -472,7 +519,7 @@ run("setup が途中で止まったあと", () => {
       `DB_PASSWORD=Resume0123456789abcdefABCDEF0123\nAPP_KEY=${key}\n`,
     );
     const r = await runScript(
-      new LocalExecutor({ FAKE_EXISTS: "2" }),
+      new LocalExecutor(),
       siteEnvScript(vpsNames(c), envTemplate(c)),
     );
     expect(r.stdout).toContain("site-env-ok");
@@ -481,16 +528,16 @@ run("setup が途中で止まったあと", () => {
     // APP_KEY の末尾の = まで落とさない
     expect(env).toContain(`APP_KEY=${key}\n`);
     expect(existsSync(join(shared, ".env.pending"))).toBe(false);
-    const sqlIn = readFileSync(`${log}.stdin.1`, "utf8");
+    const sqlIn = allStdin();
     expect(sqlIn).toContain(
       "CREATE USER IF NOT EXISTS 'sgk-shop-a'@'%' IDENTIFIED BY 'Resume0123456789abcdefABCDEF0123'",
     );
-    expect(sqlIn).toContain(
-      "ALTER USER 'sgk-shop-a'@'%' IDENTIFIED BY 'Resume0123456789abcdefABCDEF0123'",
-    );
+    // 既にある利用者のパスワードは変えない。その値で入れるかを確かめてから権限を足す
+    expect(sqlIn).not.toContain("ALTER USER");
+    expect(sqlIn).toContain("GRANT ALL PRIVILEGES");
   });
 
-  it("新しく始めるときは、DB に触る前に .env.pending（600）を置く", async () => {
+  it("新しく始めるときは、無いと確かめてから .env.pending（600）を置き、DB に触る", async () => {
     const c = cfg();
     // 利用者を作る段で落ちる（GRANT までいかない）
     const r = await runScript(
@@ -504,6 +551,38 @@ run("setup が途中で止まったあと", () => {
       /^DB_PASSWORD=[A-Za-z0-9]{32}\nAPP_KEY=base64:\S+=\n$/,
     );
     expect(existsSync(join(c.remote.appDir, "shared/.env"))).toBe(false);
+    expect(allStdin()).not.toContain("GRANT");
+  });
+
+  it("在るかどうかを確かめられなければ、.env.pending を置かずに止まる", async () => {
+    const c = cfg();
+    const r = await runScript(
+      new LocalExecutor({ FAKE_QUERY: "fail" }),
+      siteEnvScript(vpsNames(c), envTemplate(c)),
+    );
+    expect(r.code).not.toBe(0);
+    expect(existsSync(join(c.remote.appDir, "shared/.env.pending"))).toBe(
+      false,
+    );
+    expect(allStdin()).not.toMatch(/CREATE|GRANT/);
+  });
+
+  it("続きのとき、その値で利用者に入れなければ（他人の利用者）権限を足さずに止める", async () => {
+    const c = cfg();
+    const shared = join(c.remote.appDir, "shared");
+    mkdirSync(shared, { recursive: true });
+    writeFileSync(
+      join(shared, ".env.pending"),
+      "DB_PASSWORD=Other0123456789abcdefABCDEF01234\nAPP_KEY=base64:AAAA=\n",
+    );
+    const r = await runScript(
+      new LocalExecutor({ FAKE_AUTH: "fail" }),
+      siteEnvScript(vpsNames(c), envTemplate(c)),
+    );
+    expect(r.code).not.toBe(0);
+    expect(r.stdout).toContain("db-owner-mismatch");
+    expect(allStdin()).not.toMatch(/GRANT|ALTER/);
+    expect(existsSync(join(shared, ".env"))).toBe(false);
   });
 });
 

@@ -692,7 +692,29 @@ exit 0`,
     `rm -f /srv/agentcms/sites/${S1.site}/backups/29990101000001-db.sql.gz`,
   );
 
+  // deploy・rollback と同時に動かない（同じ鍵）
+  remote(
+    `mkdir /srv/agentcms/sites/${S1.site}/.agentcms-deploy.lock && echo "e2e-hold" > /srv/agentcms/sites/${S1.site}/.agentcms-deploy.lock/info`,
+  );
+  out = restore(
+    remote(
+      `cd /srv/agentcms/sites/${S1.site}/backups && ls | grep -E '^[0-9]{14}-db.sql.gz$' | tail -1 | cut -c1-14`,
+    ).stdout.trim(),
+  );
+  check(
+    !out.includes("rc=0") && out.includes("e2e-hold"),
+    "deploy などが動いている間は、何も変えずに止まる",
+  );
+  check(
+    appUp() && Number(sql("SELECT COUNT(*) FROM migrations")) === 0,
+    "アプリは動いたまま・DB はそのまま",
+  );
+  remote(`rm -r /srv/agentcms/sites/${S1.site}/.agentcms-deploy.lock`);
+
   // 本物のバックアップで戻す
+  const curBefore = remote(
+    `basename "$(readlink /srv/agentcms/sites/${S1.site}/current)"`,
+  ).stdout.trim();
   const id = remote(
     `cd /srv/agentcms/sites/${S1.site}/backups && ls | grep -E '^[0-9]{14}-db.sql.gz$' | tail -1 | cut -c1-14`,
   ).stdout.trim();
@@ -725,17 +747,46 @@ exit 0`,
     ).stdout.trim() === "1",
     "戻す前の DB を backups/before-restore-* に取っておいた",
   );
-  let hz = 0;
-  for (let i = 0; i < 20 && hz !== 200; i++) {
-    hz = (await get(S1.host, "/healthz")).status;
-    if (hz !== 200) await new Promise((res) => setTimeout(res, 1000));
-  }
-  check(hz === 200, "戻してアプリを起こしたあと /healthz は 200");
-
-  // ------------------------------------------------------------ 6c. PHP-FPM はほかのサイトから届かない
-  step(
-    "6c. PHP-FPM は Caddy からだけ（別のサイトのコンテナから FastCGI を送れない）",
+  const waitHealthy = async () => {
+    let hz = 0;
+    for (let i = 0; i < 20 && hz !== 200; i++) {
+      hz = (await get(S1.host, "/healthz")).status;
+      if (hz !== 200) await new Promise((res) => setTimeout(res, 1000));
+    }
+    return hz;
+  };
+  check(
+    (await waitHealthy()) === 200,
+    "戻してアプリを起こしたあと /healthz は 200",
   );
+
+  // 戻したのを取り消す（before-restore-<時刻> を渡す）→ DB もコードも戻す前へ
+  const undo = remote(
+    `cd /srv/agentcms/sites/${S1.site}/backups && ls | grep -E '^before-restore-[0-9]{14}-db.sql.gz$' | tail -1 | sed 's/-db.sql.gz$//'`,
+  ).stdout.trim();
+  out = restore(undo);
+  check(out.includes("rc=0"), `取り消し（${undo}）も通った`);
+  check(
+    Number(sql("SELECT COUNT(*) FROM migrations")) === 0 &&
+      sql("SHOW TABLES LIKE 'e2e_after_backup'") === "e2e_after_backup",
+    "DB は戻す前（表あり・migrations 0 行）に戻った",
+  );
+  const curUndo = remote(
+    `basename "$(readlink /srv/agentcms/sites/${S1.site}/current)"`,
+  ).stdout.trim();
+  check(
+    curUndo === curBefore,
+    `コードも戻す前の release（${curBefore}）に戻った（current=${curUndo}）`,
+  );
+  // 試験の続きのために、もう一度バックアップから戻しておく
+  out = restore(id);
+  check(
+    out.includes("rc=0") && (await waitHealthy()) === 200,
+    "もう一度戻して、/healthz は 200",
+  );
+
+  // ------------------------------------------------------------ 6c. サイトの分離
+  step("6c. サイトの分離（別のサイトから PHP-FPM にもファイルにも届かない）");
   const probe = remote(
     `docker exec agentcms-${S2.site}-app php -r 'var_dump(@fsockopen("agentcms-${S1.site}-app", 9000, $e, $m, 3));' 2>&1`,
   ).stdout.trim();
@@ -757,6 +808,60 @@ exit 0`,
     /No such file/.test(seen),
     `サイト 2 のコンテナからサイト 1 の置き場所は見えない（${seen.split("\n")[0]}）`,
   );
+
+  // あるサイトの中に、別のサイトの秘密を指す symlink を置かれても、配信されない
+  const s2pw = remote(
+    `grep -E '^DB_PASSWORD=' /srv/agentcms/sites/${S2.site}/shared/.env | cut -d= -f2-`,
+  ).stdout.trim();
+  remote(
+    `ln -sfn /srv/agentcms/sites/${S2.site}/shared/.env /srv/agentcms/sites/${S1.site}/shared/storage/app/public/leak.txt && ` +
+      `ln -sfn /srv/agentcms/sites/${S2.site}/current/bootstrap/cache/config.php /srv/agentcms/sites/${S1.site}/shared/storage/app/public/leak2.txt`,
+  );
+  for (const f of ["leak.txt", "leak2.txt"]) {
+    const g = await get(S1.host, `/storage/${f}`);
+    check(
+      g.status !== 200 && s2pw.length >= 16 && !g.body.includes(s2pw),
+      `サイト 1 に置いた symlink（${f}）からサイト 2 の秘密は配信されない（${g.status}）`,
+    );
+  }
+  remote(
+    `rm -f /srv/agentcms/sites/${S1.site}/shared/storage/app/public/leak.txt /srv/agentcms/sites/${S1.site}/shared/storage/app/public/leak2.txt`,
+  );
+
+  // ------------------------------------------------------------ 6d. edge をそろえる
+  step(
+    "6d. edge の compose が古い形なら、setup がそろえる（サイトは 200 のまま戻る）",
+  );
+  remote("printf '# 古い形のつもり\\n' >> /srv/agentcms/edge/compose.yml");
+  a = agentcms("setup-upgrade", ["deploy", "setup", "-t", S1.target, "-y"]);
+  check(
+    a.code === 0 && a.out.includes("edge_upgrade"),
+    "setup が edge をそろえた（exit 0）",
+  );
+  check(
+    remote(
+      "test -f /srv/agentcms/edge/compose.yml.prev && ! grep -q '古い形のつもり' /srv/agentcms/edge/compose.yml && echo ok",
+    ).stdout.trim() === "ok",
+    "前の compose は compose.yml.prev に残り、今の compose はキットの形",
+  );
+  a = agentcms("setup-after-upgrade", [
+    "deploy",
+    "setup",
+    "-t",
+    S1.target,
+    "-y",
+  ]);
+  check(
+    a.code === 0 && a.out.includes("準備は済んでいます"),
+    "そろえたあとの setup は何もしない",
+  );
+  check((await waitHealthy()) === 200, "サイト 1 は 200 に戻る");
+  let s2ok = 0;
+  for (let i = 0; i < 20 && s2ok !== 200; i++) {
+    s2ok = (await get(S2.host, "/healthz")).status;
+    if (s2ok !== 200) await new Promise((res) => setTimeout(res, 1000));
+  }
+  check(s2ok === 200, "サイト 2 も 200 に戻る");
 
   // ------------------------------------------------------------ 7. 秘密が漏れていない
   step("7. サーバーで生成した秘密が、出力・コンテナ設定・ファイルに出ていない");

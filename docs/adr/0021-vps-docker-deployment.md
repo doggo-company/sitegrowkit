@@ -20,9 +20,10 @@ ADR-0008 は XServer の共用サーバーへ出す道を決め、「VPS など�
 
 - **edge**（サーバーに 1 つ）：Caddy（Let's Encrypt の証明書を自動で取得・更新）と MySQL 8.4。MySQL はホストへポートを出さない。サイトごとに DB と利用者を分け、利用者は自分の DB にしか権限を持たない。名前は `sgk-<サイト名>`（`mysql`・`sys` と重ならない）。サイト名に `_`・`%` を許さない — MySQL の DB 単位の GRANT では `_`・`%` がワイルドカードになり、`shop_a` の権限が `shopxa` にも効くため
 - 1 台の置き場所（`vps.root`）は 1 つ。違う値の設定は doctor と setup が止める（edge は 1 つなので、別の置き場所の同じ名前の DB を「無い」と読み違えないため）
-- **サイト**：PHP-FPM のコンテナと scheduler のコンテナ（毎分 `current` に入り直して `schedule:run`。`schedule:work` のように入ったまま動き続けると、切り替えたあとも古い release で動くため）。どちらも ssh の利用者と同じ uid:gid で動く（`shared/.env` は 600）
-- PHP-FPM は TCP（9000）で待たず、サイトの置き場所の中の Unix ソケット（`<site>/run/php-fpm.sock`）でだけ待つ。Caddy はサイトの置き場所を読めるのでつなげるが、別のサイトのコンテナにはその置き場所が見えない。TCP で待たせると、同じ Docker ネットワークの別のサイトから FastCGI を直接送れる（PHP 公式の注意）
-- Caddy が `current/public` を直接配信し、PHP へは `php_fastcgi … { resolve_root_symlink }` で**symlink を実際の release のパスへ解いてから**渡す。ADR-0008 の entry stub が `realpath()` しているのと同じ理由（同じパスに見えると OPcache が古い release のコードを返す）
+- **Caddy はサイトのファイルを見ない**（転送だけ）。全サイトのディレクトリを Caddy に見せると、あるサイトの中に置かれた symlink を辿って、別のサイトの `.env`・設定のキャッシュ・バックアップを配信できる（Caddy の root は sandbox ではない — 公式の file_server の説明）
+- **サイト**：PHP-FPM のコンテナ、web（nginx。root ではない利用者で動く公式の nginx-unprivileged）のコンテナ、scheduler のコンテナ（毎分 `current` に入り直して `schedule:run`。`schedule:work` のように入ったまま動き続けると、切り替えたあとも古い release で動くため）。どちらも ssh の利用者と同じ uid:gid で動く（`shared/.env` は 600）
+- PHP-FPM は TCP（9000）で待たず、サイトの置き場所の中の Unix ソケット（`<site>/run/php-fpm.sock`）でだけ待つ。そのサイトの web だけがつなぐ。TCP で待たせると、同じ Docker ネットワークの別のサイトから FastCGI を直接送れる（PHP 公式の注意）
+- web は `current/public` を配信し、PHP へは `$realpath_root` で**symlink を実際の release のパスへ解いてから**渡す。ADR-0008 の entry stub が `realpath()` しているのと同じ理由（同じパスに見えると OPcache が古い release のコードを返す）。前に立つのは Caddy の HTTPS だけなので PHP には HTTPS・443 と伝え、利用者の IP は X-Forwarded-For から読む（Docker の内側の宛先だけを信じる）
 - サイトのディレクトリはコンテナへ**同じ絶対パス**で入れる。`current`・`storage`・`.env` の symlink がそのまま解ける
 
 ### 2. 出す道：既存の release 方式に 3 つだけ差し替える
@@ -32,7 +33,7 @@ ADR-0008 は XServer の共用サーバーへ出す道を決め、「VPS など�
 | 工程 | xserver | vps |
 | --- | --- | --- |
 | PHP を流す場所 | ssh の先で `cd release && php8.x artisan` | `docker exec -w release <サイト>-app php artisan`（`inDir()`） |
-| 公開 | docroot へ同期 + index.php スタブ | Caddy のサイトの行（`siteRoute()`） |
+| 公開 | docroot へ同期 + index.php スタブ | Caddy のサイトの行（`siteRoute()`）とサイトの web（nginx） |
 | DB バックアップ | ホストの mysqldump | MySQL のコンテナの中の mysqldump（パスワードは標準入力） |
 
 ### 3. Caddy の行は「確かめてから差し替える」
@@ -47,6 +48,7 @@ ADR-0008 は XServer の共用サーバーへ出す道を決め、「VPS など�
 
 - MySQL の root パスワード・各サイトの DB パスワード・APP_KEY は、サーバーの `/dev/urandom` から作り、ファイル（600）にだけ書く
 - 値はパイプ（標準入力）でだけ渡す。MySQL の root パスワードはコンテナにファイルで渡し（`MYSQL_ROOT_PASSWORD_FILE`）、`docker inspect` に値が出ない。新しいパスワードは SQL ごと標準入力で `mysql` へ渡す。`.env` の差し替えは builtin の `printf` で行い、`sed` などの引数に値を載せない
+- edge の compose はキットが持つ。キットを上げて形が変わったら、setup が「そろえる」を確認つきで出す（前のものは `compose.yml.prev`）。Caddy は 2.11 系（FastCGI の CVE-2026-27590 の直った版。いまの形では Caddy は FastCGI を使わない）
 - 作るだけ・何度流しても同じ。既にある `shared/.env`・edge の設定・root パスワードは上書きしない（パスワードを回さない）。`.env` が無いのに同じ名前の DB か利用者があれば、作らずに止める（ALTER USER しない — 別のサイトのパスワードを変えない）
 - MySQL のデータがあるのに root パスワードのファイルが無いときは、作り直さずに止める
 - 値はコマンドの引数・`docker inspect` に出ない。動いているプロセスの環境と読んだファイルの中には値がある（PHP・mysql クライアント・MySQL の entrypoint）。サーバーの root と docker グループの利用者は読める
@@ -59,7 +61,9 @@ ADR-0008 は XServer の共用サーバーへ出す道を決め、「VPS など�
 - サイトごとの鍵（`mkdir` で取る `.agentcms-deploy.lock`）を、current を読む前から health・掃除が終わるまで持つ。edge の変更（edge の設定の初回作成・Caddy の行・DB の作成）も `mkdir` の鍵で順番に流す（flock は BusyBox と macOS で使い方が違うため使わない）
 - Caddy の行の退避・差し替え・戻しは、それぞれ結果を確かめる。戻せなかったときは手で直す場所を出す
 - DB を戻すのは手で、手順書のスクリプト（docs/deployment/vps.md §8）を流す。壊す前に確かめ（無い・壊れている）、アプリを止め、いまの状態を取り、DB を空にしてから戻し、コードを DB を取ったときの release（`backups/<id>-db.release`）に合わせてから起こす。途中で落ちたらアプリは止めたまま。通し試験はこのスクリプトを手を加えずに流す
-- setup は DB に触る前に、作った値を `shared/.env.pending`（600）に置く。途中で止まったら次の setup がその値で続ける。`.env.pending` が無いのに同じ名前の DB・利用者があれば止める
+- setup は「同じ名前の DB・利用者が無い」と確かめてから、作る値を `shared/.env.pending`（600）に置き、それから DB に触る。途中で止まったら次の setup がその値で続け（`IF NOT EXISTS`）、その値で本当に入れるかを確かめてから権限を足す。入れなければ他人のものなので止める。既にある利用者のパスワードは変えない
+- release の番号（手元の時計の秒）が既にあれば、鍵を取ったあとで止める（同じ名前の展開先を消さない）
+- DB を戻すスクリプトも同じサイトの鍵を取り、戻す前の DB と release を `before-restore-*` に残す。DB を取ったときの release が無ければ、壊す前に止まる
 
 ### 6. 試験
 
@@ -69,7 +73,7 @@ ADR-0008 は XServer の共用サーバーへ出す道を決め、「VPS など�
 ## Consequences
 
 - 本物の VPS の会社のサーバーと、Let's Encrypt の本物の証明書では、まだ試していない（「VPS の代わり」は Caddy の自前の認証局 `tls internal` で通している）
-- Caddy は全サイトのディレクトリを読み取り専用で見る（配信のため）。Caddy のコンテナが乗っ取られると全サイトの `shared/.env` が読める。サイトごとの分離は DB の利用者とコンテナまで
+- Caddy はサイトのファイルを見ないが、すべてのサイトの通信の通り道ではある。Caddy・MySQL のコンテナや Docker そのものが乗っ取られた場合は、サイトの分離は保てない
 - docker グループの利用者は実質 root。出す人の ssh の鍵はそのつもりで扱う
 - サイトを外す・DB を消す・DB を戻すは自動にしない（ADR-0009 と同じ。手順は docs/deployment/vps.md §8・§11）
 - 1 台に何サイト置けるかは測っていない

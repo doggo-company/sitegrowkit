@@ -7,13 +7,15 @@
  *
  * ```
  * <root>/                      … 既定 /srv/agentcms（vps.root で変えられる）
- *   edge/                      … サーバーに 1 つ。Caddy と MySQL
+ *   edge/                      … サーバーに 1 つ。Caddy（HTTPS と転送だけ）と MySQL
  *     compose.yml  Caddyfile
  *     sites/<site>.caddy       … サイトごとの行（agentcms deploy が書く）
  *     secrets/mysql-root       … MySQL の root パスワード（サーバーで生成・600）
  *   sites/<site>/              … サイトごと（= remote.appDir）
- *     compose.yml              … このサイトの PHP-FPM と scheduler
+ *     compose.yml nginx.conf   … このサイトの PHP-FPM・web（nginx）・scheduler
  *     releases/ shared/ backups/ current -> releases/<id>
+ *     run/php-fpm.sock         … PHP-FPM はここでだけ待つ（TCP では待たない）
+ *     releases.history         … health まで通って公開した順の記録
  * ```
  */
 /** サーバーの置き場所の既定値 */
@@ -26,7 +28,11 @@ export const MYSQL_CONTAINER = "agentcms-mysql";
 export const PHP_IMAGE = "agentcms-php:8.5-2";
 /** コンテナの中の PHP-FPM のソケット（TCP では待たない） */
 export const FPM_SOCKET_IN_CONTAINER = "/run/agentcms/php-fpm.sock";
-export const CADDY_IMAGE = "caddy:2.10-alpine";
+export const CADDY_IMAGE = "caddy:2.11-alpine";
+/** サイトの web。root ではない利用者で動かせる公式の nginx */
+export const NGINX_IMAGE = "nginxinc/nginx-unprivileged:1.27-alpine";
+/** サイトの web が待つポート（Docker の内側だけ。ホストへは出さない） */
+export const WEB_PORT = 8080;
 export const MYSQL_IMAGE = "mysql:8.4";
 /**
  * サイト名。シェル・Caddy・MySQL の名前にそのまま入るので、**ここで形を絞る**。
@@ -56,22 +62,35 @@ export function vpsNames(cfg) {
         domain: new URL(cfg.app.url).hostname,
         appDir: `${root}/sites/${site}`,
         appContainer: `agentcms-${site}-app`,
+        webContainer: `agentcms-${site}-web`,
         schedulerContainer: `agentcms-${site}-scheduler`,
         dbName: db,
         dbUser: db,
         tls: vps.tls ?? "auto",
     };
 }
-/** サーバーに 1 つの Caddy と MySQL。MySQL はホストへポートを出さない */
+/**
+ * サーバーに 1 つの Caddy と MySQL。MySQL はホストへポートを出さない。
+ *
+ * **Caddy にはサイトのディレクトリを見せない。** Caddy はサイトごとの web（nginx）へ
+ * 転送するだけにする。Caddy に全サイトのディレクトリを見せると、あるサイトの中に
+ * 置かれた symlink を辿って、別のサイトの `.env` や設定のキャッシュを配信できてしまう
+ * （Caddy の root は sandbox ではない — 公式の file_server の説明）。
+ *
+ * 置き場所（root）はラベルに残す。edge は 1 台に 1 つなので、別の root の設定から
+ * 触らせないため（doctor と setup が見る）。
+ */
 export function edgeCompose(root) {
-    return `# SiteGrowKit VPS edge（agentcms deploy setup が作成。無いときだけ書く）
-# Caddy（HTTPS の証明書を自動で取って更新する）と MySQL（サイトごとに DB と利用者を分ける）。
+    return `# SiteGrowKit VPS edge（agentcms deploy setup が管理する。手で変えると、キットの版が上がったときの setup で置き換わる）
+# Caddy（HTTPS の証明書を自動で取って更新し、サイトごとの web へ転送する）と MySQL（サイトごとに DB と利用者を分ける）。
 name: agentcms-edge
 services:
   caddy:
     image: ${CADDY_IMAGE}
     container_name: ${CADDY_CONTAINER}
     restart: unless-stopped
+    labels:
+      agentcms.root: "${root}"
     ports:
       - "80:80"
       - "443:443"
@@ -79,7 +98,6 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./sites:/etc/caddy/sites:ro
-      - ${root}/sites:${root}/sites:ro
       - caddy-data:/data
       - caddy-config:/config
     networks: [${EDGE_NETWORK}]
@@ -114,36 +132,81 @@ import sites/*.caddy
 `;
 }
 /**
- * サイト 1 つ分の Caddy の設定。
- *
- * - `resolve_root_symlink`：`current` の symlink を実際の release のパスへ解いてから PHP へ渡す。
- *   解かないと全 release が同じパスに見え、OPcache が古い release のコードを返し続ける
- *   （Xserver の entry stub が `realpath()` しているのと同じ理由・ADR-0008）
- * - `.well-known` 以外のドットファイルは 404
- * - PHP-FPM へは**サイトの置き場所の中の Unix ソケット**でつなぐ。TCP（9000）で待たせると、
- *   同じ Docker ネットワークにいる別のサイトのコンテナから FastCGI を直接送れてしまう
- *   （PHP の公式の注意。接続元を絞らない FastCGI は任意のコードを動かされる）
+ * サイト 1 つ分の Caddy の設定。**転送だけ**（証明書と HTTPS は Caddy、配信と PHP はサイトの web）。
+ * Caddy は X-Forwarded-For に利用者の IP を足して渡す（サイトの web がそれを読む）。
  */
 export function siteCaddy(n) {
     return `# SiteGrowKit サイト "${n.site}"（agentcms deploy が書く。手で変えても次の deploy で戻る）
 ${DOMAIN_MARK} ${n.domain}
 ${n.domain} {
-${n.tls === "internal" ? "\ttls internal\n" : ""}\troot * ${n.appDir}/current/public
-\tencode zstd gzip
-\t@hidden {
-\t\tpath */.*
-\t\tnot path /.well-known/*
-\t}
-\trespond @hidden 404
-\tphp_fastcgi unix/${n.appDir}/run/php-fpm.sock {
-\t\tresolve_root_symlink
-\t}
-\tfile_server
+${n.tls === "internal" ? "\ttls internal\n" : ""}\tencode zstd gzip
+\treverse_proxy ${n.webContainer}:${WEB_PORT}
 }
 `;
 }
 /**
- * サイト 1 つ分の PHP-FPM と scheduler。
+ * サイトの web（nginx）の設定。サイトのコンテナの中だけで動くので、**このサイトの
+ * ディレクトリしか見えない**（別のサイトを指す symlink を置かれても辿れない）。
+ *
+ * - `$realpath_root`：`current` の symlink を実際の release のパスへ解いてから PHP へ渡す。
+ *   解かないと全 release が同じパスに見え、OPcache が古い release のコードを返し続ける
+ *   （Xserver の entry stub が `realpath()` しているのと同じ理由・ADR-0008）
+ * - PHP-FPM へはサイトの置き場所の中の Unix ソケットでつなぐ（TCP では待たせない。
+ *   同じ Docker ネットワークの別のサイトから FastCGI を直接送れないように）
+ * - 前に立つのは Caddy の HTTPS だけなので、PHP には HTTPS・443 と伝える
+ * - 利用者の IP は Caddy が付ける X-Forwarded-For から読む（ログインの回数制限が
+ *   全員同じ IP にならないように）。信じるのは Docker の内側の宛先だけ
+ */
+export function siteNginx(n) {
+    return `# SiteGrowKit サイト "${n.site}" の web（agentcms deploy が書く。手で変えても次の deploy で戻る）
+server {
+    listen ${WEB_PORT};
+    server_name _;
+    root ${n.appDir}/current/public;
+    index index.php;
+    charset utf-8;
+    server_tokens off;
+    client_max_body_size 25m;
+
+    set_real_ip_from 10.0.0.0/8;
+    set_real_ip_from 172.16.0.0/12;
+    set_real_ip_from 192.168.0.0/16;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
+    location /build/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        access_log off;
+        try_files $uri =404;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \\.php$ {
+        try_files $uri =404;
+        fastcgi_pass unix:${n.appDir}/run/php-fpm.sock;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        fastcgi_param DOCUMENT_ROOT $realpath_root;
+        fastcgi_param HTTPS on;
+        fastcgi_param SERVER_PORT 443;
+        fastcgi_buffer_size 32k;
+        fastcgi_buffers 16 16k;
+    }
+
+    location ~ /\\.(?!well-known) {
+        deny all;
+        return 404;
+    }
+}
+`;
+}
+/**
+ * サイト 1 つ分の PHP-FPM・web・scheduler。
  *
  * - サイトのディレクトリを**同じ絶対パス**で入れる（`current` などの symlink がそのまま解ける）
  * - **ssh の利用者と同じ uid:gid** で動かす（`shared/.env` は 600 で、その利用者のもの）
@@ -151,11 +214,11 @@ ${n.tls === "internal" ? "\ttls internal\n" : ""}\troot * ${n.appDir}/current/pu
  *   **本物のディレクトリとして作ってしまう**（そうなると `ln -sfn` が中に symlink を作る）
  * - scheduler は毎分 `current` へ入り直す。`schedule:work` のように 1 度入ったまま
  *   動き続けると、切り替えたあとも古い release で動く
+ * - web は読むだけで入れる
  * - 秘密は環境変数で渡さない（`docker inspect` に出る）。アプリは `shared/.env` を読む
  */
 export function siteCompose(n, ids) {
-    const common = `    image: ${PHP_IMAGE}
-    user: "${ids.uid}:${ids.gid}"
+    const common = `    user: "${ids.uid}:${ids.gid}"
     working_dir: ${n.appDir}
     restart: unless-stopped
     networks: [${EDGE_NETWORK}]`;
@@ -164,13 +227,23 @@ name: agentcms-site-${n.site}
 services:
   app:
     container_name: ${n.appContainer}
+    image: ${PHP_IMAGE}
 ${common}
     volumes:
       - ${n.appDir}:${n.appDir}
-      # PHP-FPM はこのソケットだけで待つ（Caddy がサイトの置き場所越しにつなぐ）
+      # PHP-FPM はこのソケットだけで待つ（web がサイトの置き場所越しにつなぐ）
       - ${n.appDir}/run:/run/agentcms
+  web:
+    container_name: ${n.webContainer}
+    image: ${NGINX_IMAGE}
+${common}
+    depends_on: [app]
+    volumes:
+      - ${n.appDir}:${n.appDir}:ro
+      - ${n.appDir}/nginx.conf:/etc/nginx/conf.d/default.conf:ro
   scheduler:
     container_name: ${n.schedulerContainer}
+    image: ${PHP_IMAGE}
 ${common}
     volumes:
       - ${n.appDir}:${n.appDir}

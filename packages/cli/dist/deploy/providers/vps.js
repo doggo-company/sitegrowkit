@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { shq } from "../executor.js";
-import { APP_KEY_PLACEHOLDER, CADDY_CONTAINER, DB_PASSWORD_PLACEHOLDER, DOMAIN_MARK, edgeCaddyfile, edgeCompose, MYSQL_CONTAINER, PHP_IMAGE, phpDockerfile, siteCaddy, siteCompose, vpsNames, } from "./vps-assets.js";
+import { APP_KEY_PLACEHOLDER, CADDY_CONTAINER, DB_PASSWORD_PLACEHOLDER, DOMAIN_MARK, edgeCaddyfile, edgeCompose, MYSQL_CONTAINER, PHP_IMAGE, phpDockerfile, siteCaddy, siteCompose, siteNginx, vpsNames, } from "./vps-assets.js";
 import { minimalEnv } from "./xserver-setup.js";
 /**
  * provider "vps"（Docker の入った Linux VPS 1 台・ADR-0021）。
@@ -233,7 +234,8 @@ trap 'rmdir ${shq(lock)} 2>/dev/null' EXIT`;
  */
 function edgeRootProbe(n) {
     return `if docker inspect ${CADDY_CONTAINER} >/dev/null 2>&1; then
-  if docker inspect -f '{{range .Mounts}}{{println .Destination}}{{end}}' ${CADDY_CONTAINER} | grep -qxF ${shq(n.root + "/sites")}; then echo edge_root=same; else echo edge_root=other; fi
+  r=$(docker inspect -f '{{index .Config.Labels "agentcms.root"}}' ${CADDY_CONTAINER} 2>/dev/null || true)
+  if [ -z "$r" ] || [ "$r" = "<no value>" ]; then echo edge_root=unknown; elif [ "$r" = ${shq(n.root)} ]; then echo edge_root=same; else echo edge_root=other; fi
 fi`;
 }
 function edgeRootMismatch(n) {
@@ -249,6 +251,7 @@ export async function vpsSetupActions(exec, cfg) {
     const probe = await runScript(exec, `set -u
 [ -d ${shq(n.root)} ] && [ -w ${shq(n.root)} ] && echo root=yes
 [ -f ${shq(n.root + "/edge/compose.yml")} ] && [ -f ${shq(n.root + "/edge/Caddyfile")} ] && [ -s ${shq(n.root + "/edge/secrets/mysql-root")} ] && echo edge_files=yes
+[ -f ${shq(n.root + "/edge/compose.yml")} ] && echo "edge_compose_sha=$(sha256sum ${shq(n.root + "/edge/compose.yml")} | cut -d' ' -f1)"
 ${edgeRootProbe(n)}
 [ "$(docker inspect -f '{{.State.Running}}' ${CADDY_CONTAINER} 2>/dev/null)" = true ] && [ "$(docker inspect -f '{{.State.Health.Status}}' ${MYSQL_CONTAINER} 2>/dev/null)" = healthy ] && echo edge_up=yes
 docker image inspect ${shq(PHP_IMAGE)} >/dev/null 2>&1 && echo php_image=yes
@@ -264,6 +267,9 @@ exit 0`);
         };
     if (probe.stdout.includes("edge_root=other"))
         return { actions: [], error: edgeRootMismatch(n) };
+    const remoteSha = /edge_compose_sha=([0-9a-f]{64})/.exec(probe.stdout)?.[1];
+    const edgeComposeIsCurrent = remoteSha ===
+        createHash("sha256").update(edgeCompose(n.root)).digest("hex");
     const actions = [
         {
             key: "edge_files",
@@ -272,6 +278,16 @@ exit 0`);
             current: has("edge_files") ? "置いてある（上書きしない）" : "無い",
             timeoutMs: TIMEOUTS.default,
             script: edgeFilesScript(n),
+        },
+        {
+            key: "edge_upgrade",
+            describe: `edge をこの版のキットの形にそろえる（${n.root}/edge/compose.yml を置き換え・前のものは compose.yml.prev。Caddy と MySQL を作り直すので、全サイトが数秒止まる）`,
+            satisfied: !has("edge_files") || edgeComposeIsCurrent,
+            current: edgeComposeIsCurrent
+                ? "この版の形"
+                : "前の版の形（または手で変えてある）",
+            timeoutMs: TIMEOUTS.composeUp + TIMEOUTS.mysqlReady,
+            script: edgeUpgradeScript(n),
         },
         {
             key: "edge_up",
@@ -337,6 +353,25 @@ fi
 chmod 600 ${shq(edge + "/secrets/mysql-root")}
 echo edge-files-ok`;
 }
+/** edge の compose をこの版の形にそろえ、作り直す（前のものは .prev に残す） */
+function edgeUpgradeScript(n) {
+    const edge = `${n.root}/edge`;
+    return `set -euo pipefail
+${edgeLock(n)}
+cd ${shq(edge)}
+cp -p compose.yml compose.yml.prev
+cat > compose.yml.new << 'AGENTCMS_EDGE'
+${edgeCompose(n.root)}AGENTCMS_EDGE
+chmod 644 compose.yml.new
+mv compose.yml.new compose.yml
+docker compose up -d --remove-orphans --quiet-pull 2>&1 | tail -20
+for i in $(seq 1 ${TIMEOUTS.mysqlReady / 2000}); do
+  if [ "$(docker inspect -f '{{.State.Health.Status}}' ${MYSQL_CONTAINER} 2>/dev/null)" = healthy ] && [ "$(docker inspect -f '{{.State.Running}}' ${CADDY_CONTAINER} 2>/dev/null)" = true ]; then echo edge-upgrade-ok; exit 0; fi
+  sleep 2
+done
+echo "edge を起こせませんでした。前の compose は ${edge}/compose.yml.prev にあります"
+exit 1`;
+}
 function edgeUpScript(n) {
     return `set -euo pipefail
 cd ${shq(n.root + "/edge")}
@@ -380,7 +415,7 @@ gen() { head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32; }
 pending=${shq(env + ".pending")}
 root_sql() { docker exec -i ${MYSQL_CONTAINER} sh -c 'MYSQL_PWD="$(cat /run/agentcms/mysql-root)" exec mysql -uroot -N'; }
 if [ -s "$pending" ]; then
-  # 前の setup が DB を作ったあと .env を置く前に止まった。そのとき作った値で続きをやる
+  # 前の setup が「同じ名前の DB・利用者が無い」と確かめてから置いた値。その値で続きをやる
   resume=1
   # IFS='=' で分けると APP_KEY の末尾の = が落ちる。行の頭を外して読む
   while IFS= read -r line; do
@@ -391,32 +426,31 @@ if [ -s "$pending" ]; then
   done < "$pending"
 else
   resume=0
+  # 同じ名前の DB か利用者が既にあれば作らない（別の置き場所のサイトや手で作ったもの）。
+  # 確かめられなければ（MySQL に入れないなど）ここで止まる — まだ何も書いていない
+  exists=$(printf "SELECT (SELECT COUNT(*) FROM mysql.user WHERE user='%s') + (SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='%s');\\n" ${shq(n.dbUser)} ${shq(n.dbName)} | root_sql)
+  if [ "$exists" != "0" ]; then
+    rm -f "$tmpl"
+    echo "db-exists: DB か利用者「${n.dbName}」が既にあるのに、このサイトの shared/.env がありません。別の置き場所の同じサイト名か、手で作ったものです。何も変えずに止めました"
+    exit 1
+  fi
   db_pass=$(gen)
   app_key="base64:$(head -c 32 /dev/urandom | base64 | tr -d '\\n')"
-  # DB に触る前に、このサイトの置き場所へ値を残す（600）。止まっても次の setup が同じ値で続けられ、
-  # 「他人の DB」と「自分の途中の setup」を見分けられる
+  # DB に触る前に値を残す（600）。止まっても次の setup が同じ値で続けられる
   printf 'DB_PASSWORD=%s\\nAPP_KEY=%s\\n' "$db_pass" "$app_key" > "$pending.tmp"
   chmod 600 "$pending.tmp"
   mv "$pending.tmp" "$pending"
 fi
-# 同じ名前の DB か利用者が既にあれば作らない（別の置き場所のサイトなど）。
-# 既にある利用者のパスワードを変えると、そのサイトが DB に入れなくなる
-exists=$(printf "SELECT (SELECT COUNT(*) FROM mysql.user WHERE user='%s') + (SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='%s');\\n" ${shq(n.dbUser)} ${shq(n.dbName)} | root_sql)
-if [ "$exists" != "0" ] && [ "$resume" = 0 ]; then
-  rm -f "$tmpl" "$pending"
-  echo "db-exists: DB か利用者「${n.dbName}」が既にあるのに、このサイトの shared/.env がありません。別の置き場所の同じサイト名か、手で作ったものです。何も変えずに止めました"
+# 作る（続きのときは、あるものは飛ばす。既にある利用者のパスワードは変えない）
+printf "CREATE DATABASE IF NOT EXISTS \\\`%s\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\\nCREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s';\\n" \\
+  ${shq(n.dbName)} ${shq(n.dbUser)} "$db_pass" | root_sql
+# その利用者に、残した値で本当に入れるか（入れなければ自分の作ったものではない）
+if ! printf '%s\\n' "$db_pass" | docker exec -i ${MYSQL_CONTAINER} sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysql -h 127.0.0.1 -u "$1" -N -e "SELECT 1"' sh ${shq(n.dbUser)} >/dev/null 2>&1; then
+  rm -f "$tmpl"
+  echo "db-owner-mismatch: 利用者「${n.dbUser}」に、このサイトの値で入れません。別の人の利用者です。権限は足さずに止めました（shared/.env.pending を消すと、最初からやり直します）"
   exit 1
 fi
-if [ "$resume" = 1 ]; then
-  # 自分の途中の setup（.env.pending がある）なので、同じ値でそろえ直す
-  printf "CREATE DATABASE IF NOT EXISTS \\\`%s\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\\nCREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s';\\nALTER USER '%s'@'%%' IDENTIFIED BY '%s';\\nGRANT ALL PRIVILEGES ON \\\`%s\\\`.* TO '%s'@'%%';\\n" \\
-    ${shq(n.dbName)} ${shq(n.dbUser)} "$db_pass" ${shq(n.dbUser)} "$db_pass" ${shq(n.dbName)} ${shq(n.dbUser)} \\
-    | root_sql
-else
-  printf "CREATE DATABASE \\\`%s\\\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\\nCREATE USER '%s'@'%%' IDENTIFIED BY '%s';\\nGRANT ALL PRIVILEGES ON \\\`%s\\\`.* TO '%s'@'%%';\\n" \\
-    ${shq(n.dbName)} ${shq(n.dbUser)} "$db_pass" ${shq(n.dbName)} ${shq(n.dbUser)} \\
-    | root_sql
-fi
+printf "GRANT ALL PRIVILEGES ON \\\`%s\\\`.* TO '%s'@'%%';\\n" ${shq(n.dbName)} ${shq(n.dbUser)} | root_sql
 while IFS= read -r line || [ -n "$line" ]; do
   case "$line" in
     "APP_KEY=${APP_KEY_PLACEHOLDER}") printf 'APP_KEY=%s\\n' "$app_key" ;;
@@ -510,21 +544,28 @@ export async function siteContainers(ctx) {
     if (!m)
         return ng("containers", `ssh の利用者の uid/gid を読めません: ${tail(ids)}`);
     const compose = siteCompose(n, { uid: m[1], gid: m[2] });
+    const nginx = siteNginx(n);
     const r = await runScript(ctx.exec, `set -euo pipefail
 # PHP-FPM のソケットの置き場所（無いと Docker が root の持ち物で作り、FPM が書けない）
 mkdir -p ${shq(n.appDir + "/run")}
+cat > ${shq(n.appDir + "/nginx.conf")} << 'AGENTCMS_NGINX'
+${nginx}AGENTCMS_NGINX
+chmod 644 ${shq(n.appDir + "/nginx.conf")}
 cat > ${shq(n.appDir + "/compose.yml")} << 'AGENTCMS_COMPOSE'
 ${compose}AGENTCMS_COMPOSE
 docker compose -f ${shq(n.appDir + "/compose.yml")} up -d --remove-orphans --quiet-pull 2>&1 | tail -20
+# nginx の設定は読み直させる（中身が変わってもコンテナは作り直されないことがある）
+docker exec ${shq(n.webContainer)} nginx -s reload >/dev/null 2>&1 || true
 for i in $(seq 1 30); do
-  if [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.appContainer)} 2>/dev/null)" = true ]; then echo containers-ok; exit 0; fi
+  if [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.appContainer)} 2>/dev/null)" = true ] && [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.webContainer)} 2>/dev/null)" = true ] && [ -S ${shq(n.appDir + "/run/php-fpm.sock")} ]; then echo containers-ok; exit 0; fi
   sleep 1
 done
+docker logs --tail 20 ${shq(n.webContainer)} 2>&1
 docker logs --tail 20 ${shq(n.appContainer)} 2>&1
 exit 1`, TIMEOUTS.composeUp);
     if (r.code !== 0 || !r.stdout.includes("containers-ok"))
         return ng("containers", `サイトのコンテナが起動しません: ${tail(r)}。\`agentcms deploy doctor\` で PHP のイメージと edge を確かめてください`);
-    return ok("containers", `${n.appContainer} / ${n.schedulerContainer}`);
+    return ok("containers", `${n.appContainer} / ${n.webContainer} / ${n.schedulerContainer}`);
 }
 /**
  * DB バックアップ（vps）。mysqldump は MySQL のコンテナの中で流す。
@@ -579,9 +620,13 @@ export async function markHealthy(ctx) {
  */
 export async function healthyReleases(exec, cfg) {
     const n = vpsNames(cfg);
-    const r = await exec.exec(`cd ${shq(n.appDir)} 2>/dev/null && [ -f ${HISTORY_FILE} ] && ` +
-        `awk '{ l[NR] = $0 } END { for (i = NR; i > 0; i--) print l[i] }' ${HISTORY_FILE} | ` +
-        `while IFS= read -r d; do [ -f "releases/$d/${HEALTHY_MARK}" ] && echo "$d"; done`);
+    const r = await exec.exec(`cd ${shq(n.appDir)} || exit 3; [ -f ${HISTORY_FILE} ] || { echo history-none; exit 0; }; ` +
+        // 読めなければここで止まる（パイプの途中の失敗は sh では拾えないので、先に読み切る）
+        `out=$(awk '{ l[NR] = $0 } END { for (i = NR; i > 0; i--) print l[i] }' ${HISTORY_FILE}) || exit 4; ` +
+        `printf '%s\\n' "$out" | while IFS= read -r d; do if [ -f "releases/$d/${HEALTHY_MARK}" ]; then echo "$d"; fi; done; echo history-ok`);
+    // 読めなかったのか、まだ記録が無いのかを分ける（読めなかったのに空と読むと、掃除が戻り先を消す）
+    if (r.code !== 0 || !/history-(ok|none)/.test(r.stdout))
+        return null;
     const seen = new Set();
     return r.stdout
         .split("\n")
@@ -608,6 +653,8 @@ export async function cleanupReleasesVps(ctx) {
     if (!Number.isInteger(keep) || keep < 1)
         return ng("cleanup", `keepReleases が 1 以上の整数ではありません（${String(keep)}）。何も消していません`);
     const history = await healthyReleases(ctx.exec, ctx.cfg);
+    if (history === null)
+        return ng("cleanup", "公開の記録を読めませんでした。何も消していません");
     const cur = await ctx.exec.exec(`basename "$(readlink ${shq(n.appDir + "/current")})"`);
     const current = cur.stdout.trim();
     if (!/^\d{14}$/.test(current))
@@ -645,4 +692,18 @@ export async function acquireSiteLock(ctx, what) {
 export async function releaseSiteLock(ctx) {
     const n = vpsNames(ctx.cfg);
     await ctx.exec.exec(`rm -rf ${shq(`${n.appDir}/${LOCK}`)}`);
+}
+/**
+ * これから出す release の番号が、まだ使われていないか。番号は手元の時計の秒なので、
+ * 2 つの手元から同じ秒に始めると重なりうる。重なったまま展開すると、展開の前に
+ * 同じ名前のディレクトリを消す（current が指しているものでも）。**鍵を取ったあとに見る**。
+ */
+export async function releaseIdIsFree(ctx) {
+    const n = vpsNames(ctx.cfg);
+    const r = await ctx.exec.exec(`if [ -e ${shq(`${n.appDir}/releases/${ctx.releaseId}`)} ]; then echo release-taken; else echo release-free; fi`);
+    if (r.code === 0 && r.stdout.includes("release-free"))
+        return ok("release-id");
+    return ng("release-id", r.stdout.includes("release-taken")
+        ? `release ${ctx.releaseId} は既にあります（別の手元から同じ秒に出した可能性）。何も変えずに止めました。もう一度流せば新しい番号で出します`
+        : `release の置き場所を読めませんでした: ${tail(r)}`);
 }
