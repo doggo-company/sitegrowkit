@@ -794,7 +794,7 @@ run("サイトの置き場所の中のファイル操作", () => {
     expect(r.stdout).toContain("made");
     const calls = dockerCalls();
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatch(/^run --rm --init --pull never --network none --cap-drop ALL --security-opt no-new-privileges --memory 512m --memory-swap 512m --pids-limit 128 --cpus 1\.0 --log-driver none --user \d+:\d+ -v /);
+    expect(calls[0]).toMatch(/^run --rm --init --pull never --network none --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs \/tmp:size=64m,mode=1777,nosuid,nodev,noexec --memory 512m --memory-swap 512m --pids-limit 128 --cpus 1\.0 --log-driver none --user \d+:\d+ -v /);
     expect(calls[0]).toContain(`-v ${n.appDir}:${n.appDir} -w ${n.appDir}`);
   });
 

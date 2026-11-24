@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { DeployTargetConfig } from "./types.js";
 import { isProductionTarget } from "./providers/xserver-setup.js";
 import {
+  BACKUP_AT_RE,
   HOSTNAME_RE,
   MYSQL_CONTAINER,
   SITE_NAME_RE,
@@ -182,6 +183,24 @@ function validateVps(raw: unknown, target: string): string[] {
       problems.push(
         `vps.tls は "auto" か "internal" です（指定: ${String(vps.tls)}）`,
       );
+    const bk = vps.backup as Record<string, unknown> | undefined;
+    if (bk !== undefined) {
+      const int = (v: unknown, lo: number, hi: number) =>
+        typeof v === "number" && Number.isInteger(v) && v >= lo && v <= hi;
+      if (typeof bk !== "object" || bk === null || Array.isArray(bk))
+        problems.push("vps.backup はオブジェクトです（at・keep・maxMB）");
+      else {
+        const extra = Object.keys(bk).filter((k) => !["at", "keep", "maxMB"].includes(k));
+        if (extra.length)
+          problems.push(`vps.backup に知らない項目があります: ${extra.join(", ")}（at・keep・maxMB だけ）`);
+        if (bk.at !== undefined && !(typeof bk.at === "string" && BACKUP_AT_RE.test(bk.at)))
+          problems.push(`vps.backup.at は "HH:MM"（UTC）です（指定: ${JSON.stringify(bk.at)}）`);
+        if (bk.keep !== undefined && !int(bk.keep, 1, 60))
+          problems.push(`vps.backup.keep は 1〜60 の整数です（指定: ${JSON.stringify(bk.keep)}）`);
+        if (bk.maxMB !== undefined && !int(bk.maxMB, 16, 102400))
+          problems.push(`vps.backup.maxMB は 16〜102400 の整数です（指定: ${JSON.stringify(bk.maxMB)}）`);
+      }
+    }
     const secret = Object.keys(vps).find((k) => SECRET_KEY_RE.test(k));
     if (secret)
       problems.push(

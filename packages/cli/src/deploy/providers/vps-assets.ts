@@ -15,9 +15,10 @@ import type { DeployTargetConfig } from "../types.js";
  *     secrets/mysql-root       … MySQL の root パスワード（サーバーで生成・600）
  *   sites/<site>/              … サイトごと（= remote.appDir）。**サイトのコンテナが書き換えられる**
  *     releases/ shared/ backups/ tmp/ current -> releases/<id>
- *   control/<site>/            … サイトごとの、サーバーだけが触る物（コンテナには見せない・700）
- *     compose.yml nginx.conf   … このサイトの PHP-FPM・web（nginx）・scheduler
- *     run/php-fpm.sock         … PHP-FPM はここでだけ待つ（TCP では待たない）
+ *   control/<site>/            … サイトごとの、サーバーだけが触る物（サイトのコンテナには見せない・700）
+ *     compose.yml nginx.conf   … このサイトの PHP-FPM・web（nginx）・scheduler・backup
+ *     backup.sh db-password    … 夜のバックアップの台本と、このサイトの DB 利用者のパスワード（600）
+ *     backup/                  … サーバーが取った夜のバックアップと、その成否（status.json）
  *     site                     … このサイト名を使っているドメイン
  *     releases.history         … health まで通って公開した順の記録
  *     env.pending              … setup の途中で止まったときの DB パスワード・APP_KEY（600）
@@ -32,6 +33,16 @@ import type { DeployTargetConfig } from "../types.js";
  * - サーバーが決める物・秘密は control/<site> に置く
  * - サイトの置き場所の中のファイル操作は、**その置き場所だけを入れた使い捨てのコンテナの中**で
  *   サイトと同じ利用者で流す（`siteFs`・vps.ts）。symlink はコンテナの中で解けるので、外へ届かない
+ *
+ * **サイトのコンテナが書ける場所は、サイトの置き場所と、大きさを決めたメモリの上の場所だけ。**
+ * コンテナの書ける層（/tmp など）は Docker の置き場所（MySQL と同じディスク）にあり、サイトの
+ * ディスクの区切りの外になる。だから根は読むだけにし、/tmp・/dev/shm・PHP-FPM のソケットの
+ * 置き場所は大きさを決めた tmpfs にする（`SITE_TMPFS`）。
+ *
+ * **夜のバックアップの成否は、サイトの手が届かない場所にサーバーが書く。** サイトの PHP は
+ * アプリの記録（auto.json）も zip も書けるので、成功を装える。サーバーの backup のコンテナ
+ * （サイトのコードを使わない・サイトの置き場所は読むだけ）が DB とファイルの写しを
+ * control/<site>/backup に取り、成否を status.json に書く。doctor はそちらを読む。
  */
 
 /** サーバーの置き場所の既定値 */
@@ -64,6 +75,42 @@ export const SITE_LIMITS = {
 /** サイトの DB 利用者 1 人が同時に張れる接続の数（共有の MySQL の接続枠を 1 サイトで使い切らない） */
 export const DB_MAX_USER_CONNECTIONS = 30;
 export const MYSQL_IMAGE = "mysql:8.4";
+
+/**
+ * サイトのコンテナ（app・web・scheduler）が書ける、メモリの上の場所の大きさ。根は読むだけ。
+ * どれもコンテナのメモリの上限（768MB）にも数えられる
+ */
+export const SITE_TMPFS = {
+  /** /tmp（アップロードの途中・nginx の一時ファイル・PHP の一時ファイル） */
+  tmp: "64m",
+  /** /dev/shm */
+  shm: "16m",
+  /** PHP-FPM のソケットの置き場所（app と web で分け合う・ソケット 1 つだけ） */
+  run: "1m",
+} as const;
+
+/** サーバーが取る夜のバックアップの既定（vps.backup で変えられる） */
+export const BACKUP_DEFAULTS = {
+  /** 毎日の時刻（UTC）。日本時間の 03:00 */
+  at: "18:00",
+  keep: 7,
+  maxMB: 2048,
+} as const;
+/** vps.backup.at の形（"HH:MM"・UTC） */
+export const BACKUP_AT_RE = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+/** バックアップのコンテナの上限（サイトのコードは動かさない。mysqldump・tar・gzip だけ） */
+export const BACKUP_LIMITS = {
+  memory: "512m",
+  cpus: "0.5",
+  pids: 64,
+} as const;
+/**
+ * 最後の成功からこれを超えたら「止まっている」（1 日＋取る時間＋余裕・アプリの
+ * AutoBackupStatus::STALE_AFTER_HOURS と同じ）
+ */
+export const BACKUP_STALE_HOURS = 30;
+/** 始めてからこれを超えて終わりの記録が無ければ「途中で止まった」（台本の時間の上限は DB・ファイル 1 時間ずつ） */
+export const BACKUP_RUNNING_HOURS = 3;
 
 /**
  * サイト名。シェル・Caddy・MySQL の名前にそのまま入るので、**ここで形を絞る**。
@@ -108,6 +155,10 @@ export interface VpsNames {
   tls: "auto" | "internal";
   /** サーバーだけが触る物の置き場所（サイトのコンテナには見せない） */
   controlDir: string;
+  /** サーバーが取る夜のバックアップのコンテナ（サイトのコードは動かさない） */
+  backupContainer: string;
+  /** 夜のバックアップの設定（既定を埋めたもの） */
+  backup: { at: string; keep: number; maxBytes: number };
 }
 
 export function vpsNames(cfg: DeployTargetConfig): VpsNames {
@@ -130,6 +181,12 @@ export function vpsNames(cfg: DeployTargetConfig): VpsNames {
     dbUser: db,
     tls: vps.tls ?? "auto",
     controlDir: `${root}/control/${site}`,
+    backupContainer: `agentcms-${site}-backup`,
+    backup: {
+      at: vps.backup?.at ?? BACKUP_DEFAULTS.at,
+      keep: vps.backup?.keep ?? BACKUP_DEFAULTS.keep,
+      maxBytes: (vps.backup?.maxMB ?? BACKUP_DEFAULTS.maxMB) * 1048576,
+    },
   };
 }
 
@@ -274,7 +331,7 @@ server {
 }
 
 /**
- * サイト 1 つ分の PHP-FPM・web・scheduler。
+ * サイト 1 つ分の PHP-FPM・web・scheduler と、サーバーの夜のバックアップ（backup）。
  *
  * - サイトのディレクトリを**同じ絶対パス**で入れる（`current` などの symlink がそのまま解ける）
  * - **ssh の利用者と同じ uid:gid** で動かす（`shared/.env` は 600 で、その利用者のもの）
@@ -284,23 +341,33 @@ server {
  *   動き続けると、切り替えたあとも古い release で動く
  * - web は読むだけで入れる
  * - 秘密は環境変数で渡さない（`docker inspect` に出る）。アプリは `shared/.env` を読む
+ * - **根は読むだけ**（read_only）。書けるのはサイトの置き場所と、大きさを決めた tmpfs（/tmp・/dev/shm・
+ *   ソケットの置き場所）だけ。コンテナの書ける層（Docker の置き場所＝MySQL と同じディスク）や
+ *   control（サーバーのディスク）に書かせない
+ * - backup はサイトのコードを動かさない（MySQL の公式イメージの mysqldump・tar・gzip だけ）。
+ *   サイトの置き場所は読むだけ、書くのは control/<site>/backup（サイトのコンテナには入っていない）
  */
 export function siteCompose(
   n: VpsNames,
   ids: { uid: string; gid: string },
 ): string {
-  const base = `    user: "${ids.uid}:${ids.gid}"
-    working_dir: ${n.appDir}
-    restart: unless-stopped
-    mem_limit: ${SITE_LIMITS.memory}
-    memswap_limit: ${SITE_LIMITS.memory}
-    cpus: ${SITE_LIMITS.cpus}
-    pids_limit: ${SITE_LIMITS.pids}
-    logging:
+  const logging = `    logging:
       driver: json-file
       options:
         max-size: "${SITE_LIMITS.logMaxSize}"
         max-file: "${SITE_LIMITS.logMaxFile}"`;
+  const base = `    user: "${ids.uid}:${ids.gid}"
+    working_dir: ${n.appDir}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=${SITE_TMPFS.tmp},mode=1777,nosuid,nodev,noexec
+    shm_size: "${SITE_TMPFS.shm}"
+    mem_limit: ${SITE_LIMITS.memory}
+    memswap_limit: ${SITE_LIMITS.memory}
+    cpus: ${SITE_LIMITS.cpus}
+    pids_limit: ${SITE_LIMITS.pids}
+${logging}`;
   // app・scheduler は MySQL と外へ（メール・Web Push）。web はこのサイトの web 用のネットワークだけ
   const common = `${base}
     networks: [${EDGE_NETWORK}]`;
@@ -315,8 +382,8 @@ services:
 ${common}
     volumes:
       - ${n.appDir}:${n.appDir}
-      # PHP-FPM はこのソケットだけで待つ。置き場所はサイトから差し替えられない control の中
-      - ${n.controlDir}/run:/run/agentcms
+      # PHP-FPM はこのソケットだけで待つ。置き場所は大きさを決めた tmpfs（app と web だけが入れる）
+      - run:/run/agentcms
   web:
     container_name: ${n.webContainer}
     image: ${NGINX_IMAGE}
@@ -324,7 +391,7 @@ ${webCommon}
     depends_on: [app]
     volumes:
       - ${n.appDir}:${n.appDir}:ro
-      - ${n.controlDir}/run:/run/agentcms
+      - run:/run/agentcms
       - ${n.controlDir}/nginx.conf:/etc/nginx/conf.d/default.conf:ro
   scheduler:
     container_name: ${n.schedulerContainer}
@@ -336,13 +403,177 @@ ${common}
       - sh
       - -c
       - 'while :; do if [ -f current/artisan ]; then (cd current && php artisan schedule:run --no-interaction); fi; sleep $$((60 - $$(date +%s) % 60)); done'
+  backup:
+    container_name: ${n.backupContainer}
+    image: ${MYSQL_IMAGE}
+    user: "${ids.uid}:${ids.gid}"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,nosuid,nodev,noexec
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: ${BACKUP_LIMITS.memory}
+    memswap_limit: ${BACKUP_LIMITS.memory}
+    cpus: ${BACKUP_LIMITS.cpus}
+    pids_limit: ${BACKUP_LIMITS.pids}
+${logging}
+    networks: [${EDGE_NETWORK}]
+    entrypoint: ["bash", "/agentcms/backup.sh"]
+    # 秘密ではない設定だけ（DB のパスワードはファイルで渡す）
+    environment:
+      AGENTCMS_BACKUP_AT: "${n.backup.at}"
+      AGENTCMS_BACKUP_KEEP: "${n.backup.keep}"
+      AGENTCMS_BACKUP_MAX_BYTES: "${n.backup.maxBytes}"
+    volumes:
+      - ${n.appDir}:/site:ro
+      - ${n.controlDir}/backup.sh:/agentcms/backup.sh:ro
+      - ${n.controlDir}/db-password:/agentcms/db-password:ro
+      - ${n.controlDir}/backup:/agentcms/backup
 networks:
   ${EDGE_NETWORK}:
     external: true
   web:
     name: ${n.webNetwork}
     internal: true
+volumes:
+  run:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=${SITE_TMPFS.run},mode=0700,uid=${ids.uid},gid=${ids.gid},nosuid,nodev,noexec"
 `;
+}
+
+/**
+ * サーバーが取る夜のバックアップの台本（backup のコンテナの中で、サイトと同じ利用者で動く）。
+ *
+ * - 取るのは DB（このサイトの利用者で mysqldump）と shared/storage/app（tar・リンクは辿らない）。
+ *   アプリが取る zip（storage/app/private/backups）と、その記録（backup-status）は入れない
+ * - 書くのは /agentcms/backup（= control/<site>/backup・サイトのコンテナには入っていない）だけ。
+ *   作りかけは `.work-<id>` に置き、確かめてから名前を付ける。落ちたら消す
+ * - 1 つのファイルが上限（AGENTCMS_BACKUP_MAX_BYTES）を超えたら、取らずに失敗と書く。
+ *   置き場所の空きが上限の 2 倍より少なければ始めない（サーバーのディスクを埋めない）
+ * - 成否は status.json に**サーバーの決めた言葉だけ**で書く（mysqldump・tar の出力は書かない。
+ *   サイトの表の名前やファイル名が入るので）。理由の詳しいことはこのコンテナのログに出す
+ * - `bash backup.sh now` で 1 回だけ取る（手で・試験で）。引数なしは毎日 AGENTCMS_BACKUP_AT（UTC）に取り、
+ *   記録がまだ無ければ立ち上がってすぐ 1 回取る
+ */
+export function backupScript(n: VpsNames): string {
+  return `#!/bin/bash
+# SiteGrowKit サイト "${n.site}" の夜のバックアップ（agentcms deploy が書く。手で変えても次の deploy で戻る）
+set -uo pipefail
+umask 077
+# 置き場所はコンテナの中の決まった場所（変えられるのは単体の試験のため）
+B="\${AGENTCMS_BACKUP_DIR:-/agentcms/backup}"
+SITE="\${AGENTCMS_BACKUP_SITE:-/site}"
+PWFILE="\${AGENTCMS_BACKUP_PWFILE:-/agentcms/db-password}"
+LOCK="\${AGENTCMS_BACKUP_LOCK:-/tmp/backup.lock}"
+DB=${shellWord(n.dbName)}
+DBUSER=${shellWord(n.dbUser)}
+DBHOST=${MYSQL_CONTAINER}
+AT="\${AGENTCMS_BACKUP_AT:-${BACKUP_DEFAULTS.at}}"
+KEEP="\${AGENTCMS_BACKUP_KEEP:-${BACKUP_DEFAULTS.keep}}"
+MAX="\${AGENTCMS_BACKUP_MAX_BYTES:-${BACKUP_DEFAULTS.maxMB * 1048576}}"
+[[ "$AT" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || AT=${BACKUP_DEFAULTS.at}
+[[ "$KEEP" =~ ^[1-9][0-9]?$ ]] || KEEP=${BACKUP_DEFAULTS.keep}
+[[ "$MAX" =~ ^[1-9][0-9]{0,12}$ ]] || MAX=${BACKUP_DEFAULTS.maxMB * 1048576}
+size() { echo $(( $(wc -c < "$1") )); }
+log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >&2; }
+num() { sed -n "s/.*\\"$1\\":\\([0-9][0-9]*\\).*/\\1/p" "$B/status.json" 2>/dev/null | head -1; }
+str() { sed -n "s/.*\\"$1\\":\\"\\([0-9]\\{14\\}\\)\\".*/\\1/p" "$B/status.json" 2>/dev/null | head -1; }
+# 前の回の「最後の成功」を引き継ぐ（この台本だけが書くファイル）
+load_prev() { last_at=$(num lastSuccessAt); last_id=$(str lastSuccessId); last_db=$(num dbBytes); last_files=$(num filesBytes); }
+jn() { if [ -n "$1" ]; then printf '%s' "$1"; else printf null; fi; }
+js() { if [ -n "$1" ]; then printf '"%s"' "$1"; else printf null; fi; }
+write_status() { # state error id started finished
+  printf '{"version":1,"state":"%s","error":%s,"id":"%s","startedAt":%s,"finishedAt":%s,"lastSuccessAt":%s,"lastSuccessId":%s,"dbBytes":%s,"filesBytes":%s}\\n' \\
+    "$1" "$(js "$2")" "$3" "$4" "$(jn "$5")" "$(jn "$last_at")" "$(js "$last_id")" "$(jn "$last_db")" "$(jn "$last_files")" > "$B/.status.tmp" \\
+    && mv -f "$B/.status.tmp" "$B/status.json"
+}
+# 1 回分を .work-<id> に作る。うまくいけば何も出さず、だめなら理由の言葉を 1 つ出す
+take() {
+  local id="$1" w="$B/.work-$1" pw avail rc
+  mkdir "$w" || { echo write; return; }
+  avail=$(df -Pk "$B" 2>/dev/null | awk 'NR==2{print $4}')
+  [[ "$avail" =~ ^[0-9]+$ ]] && [ $((avail * 1024)) -ge $((MAX * 2)) ] || { echo no-space; return; }
+  pw=$(head -c 256 "$PWFILE" 2>/dev/null | tr -d '\\n')
+  [ -n "$pw" ] || { echo no-db-password; return; }
+  if ! MYSQL_PWD="$pw" timeout 60 mysql -h "$DBHOST" -u "$DBUSER" -N -e 'SELECT 1' "$DB" >/dev/null 2>"$w/err"; then
+    log "DB に入れません: $(head -c 300 "$w/err")"
+    if grep -q 'ERROR 1045' "$w/err"; then echo db-auth; else echo db-connect; fi
+    return
+  fi
+  MYSQL_PWD="$pw" timeout 3600 mysqldump --single-transaction --no-tablespaces --skip-comments -h "$DBHOST" -u "$DBUSER" "$DB" 2>"$w/err" | gzip | head -c $((MAX + 1)) > "$w/db.sql.gz"
+  rc=("\${PIPESTATUS[@]}")
+  if [ "$(size "$w/db.sql.gz")" -gt "$MAX" ]; then echo too-large; return; fi
+  if [ "\${rc[0]}" != 0 ] || [ "\${rc[1]}" != 0 ]; then log "mysqldump: $(head -c 300 "$w/err")"; echo db-dump; return; fi
+  gzip -t "$w/db.sql.gz" 2>/dev/null && [ "$(size "$w/db.sql.gz")" -ge 100 ] || { echo db-dump; return; }
+  # ファイル。置き場所の中のリンクは辿らない（リンクのまま写す）。途中がリンクなら取らない
+  for p in "$SITE/shared" "$SITE/shared/storage" "$SITE/shared/storage/app"; do
+    if [ -L "$p" ]; then echo files-link; return; fi
+  done
+  [ -d "$SITE/shared/storage/app" ] || { echo files-missing; return; }
+  timeout 3600 tar -C "$SITE/shared" --exclude=storage/app/private/backups --exclude=storage/app/private/backup-status -cf - storage/app 2>"$w/err" | gzip | head -c $((MAX + 1)) > "$w/files.tar.gz"
+  rc=("\${PIPESTATUS[@]}")
+  if [ "$(size "$w/files.tar.gz")" -gt "$MAX" ]; then echo too-large; return; fi
+  # tar の 1 は「読んでいる間に変わったファイルがある」（それでも取れている）
+  if [ "\${rc[0]}" -gt 1 ] || [ "\${rc[1]}" != 0 ]; then log "tar: $(head -c 300 "$w/err")"; echo files; return; fi
+  gzip -t "$w/files.tar.gz" 2>/dev/null || { echo files; return; }
+  ( cd "$w" && sha256sum db.sql.gz files.tar.gz | sed "s/  /  $id-/" > sha256 ) || { echo write; return; }
+}
+run_once() {
+  if ! mkdir "$LOCK" 2>/dev/null; then log "別の回が動いています"; return 3; fi
+  local id started err db files
+  id=$(date -u +%Y%m%d%H%M%S); started=$(date -u +%s)
+  load_prev
+  rm -rf "$B"/.work-*
+  write_status running "" "$id" "$started" "" || { rmdir "$LOCK"; log "記録を書けません"; return 1; }
+  err=$(take "$id")
+  if [ -z "$err" ]; then
+    db=$(size "$B/.work-$id/db.sql.gz"); files=$(size "$B/.work-$id/files.tar.gz")
+    if mv "$B/.work-$id/db.sql.gz" "$B/$id-db.sql.gz" && mv "$B/.work-$id/files.tar.gz" "$B/$id-files.tar.gz" && mv "$B/.work-$id/sha256" "$B/$id.sha256"; then
+      last_at=$(date -u +%s); last_id=$id; last_db=$db; last_files=$files
+    else
+      err=write
+    fi
+  fi
+  rm -rf "$B/.work-$id"
+  # 古い世代を片付ける（新しい順に KEEP 個を残す）
+  ls -1 "$B" | grep -E '^[0-9]{14}-db\\.sql\\.gz$' | sort -r | tail -n +$((KEEP + 1)) | cut -c1-14 | while read -r old; do
+    rm -f "$B/$old-db.sql.gz" "$B/$old-files.tar.gz" "$B/$old.sha256"
+  done
+  if [ -n "$err" ]; then
+    write_status failed "$err" "$id" "$started" "$(date -u +%s)"
+    log "失敗: $err（$id）"
+    rmdir "$LOCK"
+    return 1
+  fi
+  write_status ok "" "$id" "$started" "$(date -u +%s)"
+  log "取りました: $id（DB $db bytes・ファイル $files bytes）"
+  rmdir "$LOCK"
+  return 0
+}
+if [ "\${1:-}" = now ]; then run_once; exit $?; fi
+trap 'exit 0' TERM INT
+[ -s "$B/status.json" ] || run_once || true
+while :; do
+  now=$(date -u +%s)
+  next=$(date -u -d "$(date -u +%F) $AT" +%s)
+  [ "$next" -gt "$now" ] || next=$((next + 86400))
+  sleep $((next - now)) &
+  wait $!
+  run_once || true
+done
+`;
+}
+
+/** 台本に入れる名前（形を確かめた物だけ。引用符で包む） */
+function shellWord(v: string): string {
+  if (!/^[a-z0-9-]+$/.test(v)) throw new Error(`名前の形が違います: ${v}`);
+  return `'${v}'`;
 }
 
 /**

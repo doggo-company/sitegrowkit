@@ -77,6 +77,19 @@ export interface DeployTargetConfig {
      * "internal" は Caddy の自前の認証局（試験・社内向け。ブラウザは警告を出す）
      */
     tls?: "auto" | "internal";
+    /**
+     * サーバーが取る夜のバックアップ（DB と shared/storage/app の写し）。サイトのコードは使わず、
+     * サイトの手が届かない control/<site>/backup に置き、成否もそこに書く（doctor が読む）。
+     * 省くと既定（毎日 18:00 UTC＝日本時間 03:00・7 世代・1 つ 2048MB まで）
+     */
+    backup?: {
+      /** 取る時刻（"HH:MM"・**UTC**） */
+      at?: string;
+      /** 残す世代（1〜60） */
+      keep?: number;
+      /** 1 つのファイル（DB・ファイル）の上限 MB（16〜102400）。超えたら取らずに「失敗」と書く */
+      maxMB?: number;
+    };
   };
 }
 

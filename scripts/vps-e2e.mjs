@@ -20,6 +20,10 @@
  *     ソケットの置き場所・印・記録・releases・backups・tmp）が、MySQL の root の SQL・ほかのサイト・
  *     サーバーのファイルに届かない（見張りの DB が消えない・権限が足されない・リンクの先が変わらない・
  *     MySQL の root パスワードがサイトのコンテナに見えない）
+ *  6f. サイトのコンテナの一時領域（/tmp・/dev/shm・ソケットの置き場所・書ける層）は大きさが決まっていて、
+ *     サーバーのディスク（Docker の置き場所・control）を埋められない
+ *  6g. サイトの中から夜のバックアップの成功を装えない（成否はサーバーの backup のコンテナが control に書き、
+ *     doctor はそちらを読む。サイトが DB のパスワードを変えて落とすと「失敗」と出る・上限・リンクを辿らない）
  *  7. サーバーで生成した秘密（APP_KEY・DB パスワード・MySQL root）が、CLI の出力・
  *     コンテナの設定（docker inspect）・compose/Caddy のファイルのどこにも出ていない
  *
@@ -849,11 +853,11 @@ exit 0`,
     `サイトのコンテナに上限（メモリ 768MB・プロセス 256・CPU 1・ログ 10MB）（${lim.join(" / ")}）`,
   );
   const sock = remote(
-    `test -S /srv/agentcms/control/${S1.site}/run/php-fpm.sock && echo socket`,
+    `docker exec agentcms-${S1.site}-web test -S /run/agentcms/php-fpm.sock && echo socket; test -e /srv/agentcms/control/${S1.site}/run && echo host-run; docker volume inspect -f '{{index .Options "type"}}' agentcms-site-${S1.site}_run`,
   ).stdout.trim();
   check(
-    sock === "socket",
-    "サイト 1 の PHP-FPM は control（サイトのコンテナから差し替えられない場所）のソケットで待っている",
+    sock === "socket\ntmpfs",
+    `サイト 1 の PHP-FPM は、大きさを決めた tmpfs のソケットで待っている（サーバーのディスクの control/run は無い）（${sock.replace(/\n/g, " ")}）`,
   );
   const seen = remote(
     `docker exec agentcms-${S2.site}-app sh -c 'ls /srv/agentcms/sites/${S1.site} 2>&1 || true'`,
@@ -895,7 +899,12 @@ exit 0`,
     .replace(/\n    labels:\n      agentcms\.root: "[^"]*"/, "")
     .replace(
       "      - ./sites:/etc/caddy/sites:ro\n",
-      "      - ./sites:/etc/caddy/sites:ro\n      - /srv/agentcms/sites:/srv/agentcms/sites:ro\n      - /srv/agentcms/control:/srv/agentcms/control:ro\n",
+      "      - ./sites:/etc/caddy/sites:ro\n      - /srv/agentcms/sites:/srv/agentcms/sites:ro\n" +
+        `      - agentcms-site-${S1.site}_run:/srv/agentcms/control/${S1.site}/run:ro\n`,
+    )
+    .replace(
+      "\n  mysql-data:\n",
+      `\n  mysql-data:\n  agentcms-site-${S1.site}_run:\n    external: true\n`,
     );
   const oldSite = `# agentcms-domain: ${S1.host}\n${S1.host} {\n\ttls internal\n\troot * /srv/agentcms/sites/${S1.site}/current/public\n\tencode zstd gzip\n\tphp_fastcgi unix//srv/agentcms/control/${S1.site}/run/php-fpm.sock {\n\t\tresolve_root_symlink\n\t}\n\tfile_server\n}\n`;
   const made = remote(
@@ -1250,6 +1259,226 @@ exit 0`,
   );
   inS2("rm -f backups/e2e-fifo");
   rootQ("DROP DATABASE IF EXISTS `sgk-e2e-canary`");
+
+  // ------------------------------------------------------------ 6f. 一時領域でサーバーのディスクを埋められない
+  // サイトの PHP（app・scheduler）は、自分の置き場所の外にも書ける場所を持ちうる: コンテナの書ける層
+  // （/tmp・/var/tmp など＝Docker の置き場所＝MySQL と同じディスク）と、PHP-FPM のソケットの置き場所。
+  // どれも大きさを決めた場所だけにして、サーバーのディスクを使わせない
+  step(
+    "6f. サイトのコンテナの一時領域（/tmp・ソケットの置き場所・書ける層）で、サーバーのディスクを埋められない",
+  );
+  const inC = (container, script) =>
+    remote(
+      `docker exec -w /srv/agentcms/sites/${S2.site} ${container} sh -c '${script.replaceAll("'", `'\\''`)}' 2>&1`,
+    );
+  const ctlKb = () =>
+    Number(
+      remote(`du -sk /srv/agentcms/control/${S2.site} | cut -f1`).stdout.trim(),
+    );
+  const ctlBefore = ctlKb();
+  for (const k of ["app", "scheduler"]) {
+    const c = `agentcms-${S2.site}-${k}`;
+    // 書けた量は消す前に測る（書けた分がディスクに残っている間に、書ける層とサーバーの側を見る）
+    const fill = inC(
+      c,
+      [
+        "w() { dd if=/dev/zero of=$1 bs=1048576 count=$2 2>/dev/null; printf \"%s=%s \" $1 $(($(wc -c < $1 2>/dev/null || echo 0) / 1048576)); }",
+        "w /tmp/e2e-fill 200",
+        "w /var/tmp/e2e-fill 50",
+        "w /run/agentcms/e2e-fill 50",
+        "w /dev/shm/e2e-fill 100",
+        "w /e2e-fill 20",
+        "echo",
+      ].join("; "),
+    ).stdout.trim();
+    const mb = (p) => Number(new RegExp(`(?:^|\\s)${p}=(\\d+)`).exec(fill)?.[1] ?? -1);
+    const rw = Number(
+      remote(`docker inspect --size -f '{{.SizeRw}}' ${c}`).stdout.trim(),
+    );
+    const ctlNow = ctlKb();
+    inC(
+      c,
+      "rm -f /tmp/e2e-fill /var/tmp/e2e-fill /run/agentcms/e2e-fill /dev/shm/e2e-fill /e2e-fill",
+    );
+    check(
+      mb("/tmp/e2e-fill") >= 0 && mb("/tmp/e2e-fill") <= 64,
+      `${k}: /tmp に 200MB 書こうとしても 64MB までで止まる（書けた ${mb("/tmp/e2e-fill")}MB）`,
+    );
+    check(
+      mb("/var/tmp/e2e-fill") <= 0 && mb("/e2e-fill") <= 0,
+      `${k}: /var/tmp・/ には書けない（書けた ${mb("/var/tmp/e2e-fill")}MB・${mb("/e2e-fill")}MB）`,
+    );
+    check(
+      mb("/run/agentcms/e2e-fill") <= 1 && mb("/dev/shm/e2e-fill") <= 16,
+      `${k}: ソケットの置き場所は 1MB・/dev/shm は 16MB までで止まる（書けた ${mb("/run/agentcms/e2e-fill")}MB・${mb("/dev/shm/e2e-fill")}MB）`,
+    );
+    check(
+      Number.isFinite(rw) && rw >= 0 && rw < 16 * 1048576,
+      `${k}: 書いている最中も、コンテナの書ける層（Docker の置き場所のディスク）は 16MB 未満（${Math.round(rw / 1048576)}MB）`,
+    );
+    check(
+      Number.isFinite(ctlNow) && ctlNow - ctlBefore < 4096,
+      `${k}: 書いている最中も、サーバーの control/${S2.site} は増えない（${ctlBefore}KB → ${ctlNow}KB）`,
+    );
+  }
+  check(
+    (await get(S2.host, "/healthz")).status === 200,
+    "書き込みのあと、サイト 2 の /healthz は 200",
+  );
+
+  // ------------------------------------------------------------ 6g. 夜のバックアップの成功を装えない
+  // 成否はサイトの手が届かない control/<site>/backup にサーバー（サイトのコードを使わない別のコンテナ）が書き、
+  // doctor はそちらを読む。サイトが自分の置き場所に「成功」の記録と zip を置いても、何も変わらない
+  step(
+    "6g. サイトの中から夜のバックアップの成功を装えない（成否はサーバーが control に書く）",
+  );
+  const bkDir = `/srv/agentcms/control/${S2.site}/backup`;
+  const bkC = `agentcms-${S2.site}-backup`;
+  const bkStatus = () => {
+    const raw = remote(`cat ${bkDir}/status.json 2>/dev/null`).stdout.trim();
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  };
+  const bkNow = (extra = "") =>
+    remote(
+      `docker exec ${extra} ${bkC} bash /agentcms/backup.sh now 2>&1; echo "rc=$?"`,
+    ).stdout;
+  // 立ち上がったときに 1 回取る（記録が無いとき）
+  let st0 = null;
+  for (let i = 0; i < 60 && st0?.state !== "ok"; i++) {
+    st0 = bkStatus();
+    if (st0?.state !== "ok") await new Promise((res) => setTimeout(res, 2000));
+  }
+  check(
+    st0?.state === "ok" && /^\d{14}$/.test(st0?.lastSuccessId ?? ""),
+    `サーバーのバックアップのコンテナが、立ち上がって最初の 1 回を取った（${JSON.stringify(st0)?.slice(0, 200)}）`,
+  );
+  const firstId = st0?.lastSuccessId ?? "x";
+  check(
+    remote(
+      `cd ${bkDir} && gzip -t ${firstId}-db.sql.gz && gzip -t ${firstId}-files.tar.gz && sha256sum -c --quiet ${firstId}.sha256 && echo sums-ok`,
+    ).stdout.trim() === "sums-ok",
+    `control/${S2.site}/backup に DB とファイルの写しがあり、checksum が合う（${firstId}・最初の回は migration の前に取るので表は無い）`,
+  );
+  check(
+    /No such file/.test(
+      inS2("ls /srv/agentcms/control 2>&1; ls /agentcms 2>&1").stdout,
+    ),
+    "サイトのコンテナから control（サーバーのバックアップと成否の記録）は見えない",
+  );
+  // 乗っ取られたサイトができること: 自分の DB のパスワードを変えてサーバーのバックアップを落とし、
+  // アプリの記録（auto.json）に「成功」を書き、本物らしい zip を置く
+  const s2pwNow = remote(
+    `grep -E '^DB_PASSWORD=' ${s2}/shared/.env | cut -d= -f2-`,
+  ).stdout.trim();
+  const evilPw = `E2e${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`.slice(0, 32);
+  // パスワードは標準入力で渡す（コマンドの引数・環境変数の代入をコマンド行に載せると ps に出る）
+  const alter = (from, to) =>
+    inS2(
+      `IFS= read -r FROM; IFS= read -r TO; export FROM TO; php -r '$p = new PDO("mysql:host=agentcms-mysql;dbname=sgk-${S2.site}", "sgk-${S2.site}", getenv("FROM")); $p->exec("ALTER USER CURRENT_USER() IDENTIFIED BY \\x27" . getenv("TO") . "\\x27"); echo "altered";' 2>&1`,
+      `${from}\n${to}\n`,
+    ).stdout;
+  check(
+    alter(s2pwNow, evilPw).includes("altered"),
+    "サイト 2 の中から、自分の DB の利用者のパスワードを変えた（サイトの PHP ができること）",
+  );
+  const nowSec = Math.floor(Date.now() / 1000);
+  const forged = inS2(
+    [
+      "set -e",
+      "d=shared/storage/app/private",
+      "mkdir -p $d/backup-status $d/backups",
+      `printf '%s' '{"version":1,"state":"ok","started_at":${nowSec - 60},"finished_at":${nowSec},"backup":"e2e-forged","stage":null,"reason":null,"last_success_at":${nowSec},"armed_at":null}' > $d/backup-status/auto.json`,
+      "head -c 65536 /dev/urandom > $d/backups/e2e-forged.zip",
+      "echo forged",
+    ].join("; "),
+  ).stdout;
+  check(
+    forged.includes("forged"),
+    "サイト 2 の中から、アプリの記録（auto.json）に「成功」を書き、zip を置いた",
+  );
+  const appView = remote(
+    `docker exec -w ${s2}/current agentcms-${S2.site}-app php artisan agentcms:backup-offsite --list 2>&1; echo "rc=$?"`,
+  ).stdout;
+  console.log(
+    `    （参考: サイトの中の表示（アプリのコード）は乗っ取られたサイトの言い分になる: ${appView.replace(/\s+/g, " ").slice(-160)}）`,
+  );
+  out = bkNow();
+  const stBad = bkStatus();
+  check(
+    !out.includes("rc=0") &&
+      stBad?.state === "failed" &&
+      stBad?.error === "db-auth" &&
+      stBad?.lastSuccessId === firstId,
+    `サーバーのバックアップは「失敗（db-auth）」と書き、最後の成功は前の回のまま（${JSON.stringify(stBad)?.slice(0, 200)}）`,
+  );
+  a = agentcms("doctor-backup-failed", ["deploy", "doctor", "-t", S2.target]);
+  check(
+    /WARN[\s\S]{0,400}夜のバックアップ|夜のバックアップ[\s\S]{0,400}失敗/.test(a.out) &&
+      a.out.includes("db-auth"),
+    "doctor は control の記録を読み、夜のバックアップの失敗を出す（サイトの auto.json の「成功」は使わない）",
+  );
+  // 記録をサイトの中から書けない（コンテナに入っていない）・サーバーの記録はサイトの文を含まない
+  check(
+    !JSON.stringify(stBad ?? {}).includes("e2e-forged"),
+    "サーバーの記録に、サイトが書いた文（e2e-forged）は入っていない",
+  );
+  check(
+    alter(evilPw, s2pwNow).includes("altered"),
+    "パスワードを元に戻した",
+  );
+  // 大きすぎる中身は、決めた上限で止まり、途中のファイルを残さない（サーバーのディスクを埋めない）
+  inS2(
+    "head -c 3145728 /dev/urandom > shared/storage/app/public/e2e-big.bin && echo big",
+  );
+  out = bkNow("-e AGENTCMS_BACKUP_MAX_BYTES=1048576");
+  const stBig = bkStatus();
+  const leftovers = remote(
+    `ls -A ${bkDir} | grep -vE '^([0-9]{14}-(db.sql|files.tar).gz|[0-9]{14}.sha256|status.json)$' | wc -l`,
+  ).stdout.trim();
+  check(
+    !out.includes("rc=0") && stBig?.error === "too-large" && leftovers === "0",
+    `上限（1MB）を超える中身は「too-large」で止まり、作りかけを残さない（${stBig?.error}・残り ${leftovers} 件）`,
+  );
+  // サイトが置いたリンクは辿らない（リンクのまま写す・中身は入らない）
+  inS2(
+    "rm -f shared/storage/app/public/e2e-big.bin; ln -sfn /srv/agentcms/edge/secrets/mysql-root shared/storage/app/public/e2e-link; ln -sfn /agentcms/db-password shared/storage/app/public/e2e-link2; echo linked",
+  );
+  out = bkNow();
+  const stOk = bkStatus();
+  const okId = stOk?.lastSuccessId ?? "x";
+  const rootPwBk = remote(
+    "cat /srv/agentcms/edge/secrets/mysql-root",
+  ).stdout.trim();
+  const inTar = remote(
+    `cd ${bkDir} && tar -tzvf ${okId}-files.tar.gz | grep -c 'e2e-link.* -> ' ; zcat ${okId}-files.tar.gz | grep -c -F -e ${JSON.stringify(rootPwBk)} -e ${JSON.stringify(s2pwNow)} || true; zcat ${okId}-db.sql.gz | grep -c 'CREATE TABLE'`,
+  )
+    .stdout.trim()
+    .split("\n");
+  check(
+    out.includes("rc=0") &&
+      stOk?.state === "ok" &&
+      okId !== firstId &&
+      inTar[0] === "2" &&
+      inTar[1] === "0" &&
+      Number(inTar[2]) > 0,
+    `元に戻すと取れる（DB の表 ${inTar[2]} 個）。サイトが置いたリンクはリンクのまま写し、先の秘密は入らない（${okId}・リンク ${inTar[0]} 件・秘密 ${inTar[1]} 件）`,
+  );
+  inS2(
+    "rm -f shared/storage/app/public/e2e-link shared/storage/app/public/e2e-link2 shared/storage/app/private/backups/e2e-forged.zip shared/storage/app/private/backup-status/auto.json",
+  );
+  a = agentcms("doctor-backup-ok", ["deploy", "doctor", "-t", S2.target]);
+  check(
+    a.code === 0 && /夜のバックアップ/.test(a.out) && !a.out.includes("db-auth"),
+    "直ったあとの doctor は、夜のバックアップを PASS にする",
+  );
+  check(
+    (await waitHealthy()) === 200 && (await get(S2.host, "/healthz")).status === 200,
+    "サイト 1・2 の /healthz は 200",
+  );
 
   // ------------------------------------------------------------ 7. 秘密が漏れていない
   step("7. サーバーで生成した秘密が、出力・コンテナ設定・ファイルに出ていない");

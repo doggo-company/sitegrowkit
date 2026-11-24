@@ -15,6 +15,7 @@ Docker の入った Linux の VPS 1 台に、SiteGrowKit のサイトを出す�
  │    └─ サイト B の行 → サイト B の web（nginx）→ サイト B の PHP-FPM         │
  │  MySQL 8.4（1 つ。サイトごとに DB と利用者を分ける・外へポートを出さない）    │
  │  各サイトの scheduler のコンテナ（毎分 schedule:run・cron は使わない）       │
+ │  各サイトの backup のコンテナ（毎日 DB とファイルの写しを control に取る）    │
  └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -22,15 +23,17 @@ Caddy にはサイトのファイルを見せない（転送だけ）。サイ�
 
 **サイトの置き場所（`sites/<サイト名>/`）の中は、サイトの PHP が書き換えられる。** 値も、ほかの場所を指す symlink も置ける。そこで、サーバーの処理（setup・deploy・MySQL の root）はその中身を入力にしない:
 
-- サーバーが決める物（compose・web の設定・ソケット・公開の記録・鍵・途中で止まった setup の値）は `control/<サイト名>/` に置く。サイトのコンテナには見せない
+- サーバーが決める物（compose・web の設定・夜のバックアップの台本と写し・公開の記録・鍵・途中で止まった setup の値）は `control/<サイト名>/` に置く。サイトのコンテナには見せない
 - MySQL の root で流す SQL には、設定のサイト名から作った名前（`sgk-<サイト名>`）とサーバーで作ったパスワードだけを入れる。サイトの `.env` の値は入れない
 - サイトの置き場所の中のファイル操作（展開・リンク・切り替え・掃除・バックアップを書く・`.env` を置く）は、**その置き場所だけを入れた使い捨てのコンテナの中**で、サイトと同じ利用者で流す。symlink を置かれても、その先はコンテナの中でしか解けない
+- サイトのコンテナの根は読むだけ。書けるのはサイトの置き場所と、大きさを決めたメモリの上の場所（`/tmp` 64MB・`/dev/shm` 16MB・PHP-FPM のソケットの置き場所 1MB）だけ。サイトの置き場所の外のディスク（Docker の置き場所・`control/`）を埋めさせない
+- 夜のバックアップの写しと成否は、サーバーの backup のコンテナ（サイトのコードは動かさない）が `control/<サイト名>/backup` に書く。サイトの中のアプリの記録（`auto.json`）は、乗っ取られたサイトなら「成功」と書き換えられるので、doctor は読まない（§9）
 
 | 置き場所（サーバー） | 中身 |
 | --- | --- |
 | `/srv/agentcms/edge/` | Caddy と MySQL の compose・Caddyfile・`sites/<サイト名>.caddy`・`secrets/mysql-root` |
 | `/srv/agentcms/sites/<サイト名>/` | サイトのコンテナが見る物：`releases/<id>`・`shared/.env`・`shared/storage`・`backups/`・`current` |
-| `/srv/agentcms/control/<サイト名>/` | サーバーだけが触る物（700）：`compose.yml`・`nginx.conf`・`run/php-fpm.sock`（PHP-FPM はここでだけ待つ）・`site`（このサイト名のドメイン）・`releases.history`（公開の記録）・`deploy.lock`・`env.pending`（setup の途中の値・600） |
+| `/srv/agentcms/control/<サイト名>/` | サーバーだけが触る物（700・サイトのコンテナには見せない）：`compose.yml`・`nginx.conf`・`backup.sh` と `db-password`（夜のバックアップの台本とこのサイトの DB 利用者のパスワード・600）・`backup/`（夜のバックアップの写しと成否 `status.json`）・`site`（このサイト名のドメイン）・`releases.history`（公開の記録）・`deploy.lock`・`env.pending`（setup の途中の値・600） |
 
 **秘密（DB パスワード・APP_KEY・MySQL の root パスワード）は `agentcms deploy setup` がサーバーの上で作り、サーバーのファイル（600）にだけ置く。** 手元・Git・設定ファイル・ログ・画面・コマンドの引数・`docker inspect` には出さない。ただし動いているプロセスの中には値がある（PHP は `.env` を読み、MySQL は root パスワードを読んで起動する）。サーバーの root と docker グループの利用者は、それを読める。
 
@@ -83,6 +86,7 @@ cp .agentcms/deploy/vps.example.json .agentcms/deploy/staging.json
 | `vps.site` | サイト名。英小文字で始まる英小文字・数字・ハイフン 2〜28 文字（`_` は使えない）。**1 台の中で重ならない名前**（コンテナ・置き場所の名前になり、DB と DB の利用者は `sgk-<サイト名>`） |
 | `vps.root` | 置き場所を変えるときだけ（既定 `/srv/agentcms`）。**1 台の中のサイトはみな同じ値にする**（Caddy と MySQL は 1 台に 1 つなので、違う値の設定は doctor と setup が止める） |
 | `vps.tls` | 既定 `"auto"`（Let's Encrypt）。`"internal"` は Caddy の自前の認証局（試験用。ブラウザは警告を出す） |
+| `vps.backup` | 省いてよい。サーバーが取る夜のバックアップ（§9）の `at`（時刻・**UTC**・既定 `"18:00"`＝日本時間 03:00）・`keep`（残す数・既定 7）・`maxMB`（1 つのファイルの上限・既定 2048） |
 
 このファイルは Git に入らない（`.gitignore` 済み）。**パスワードや鍵の値は書かない**（書くと読み込みで止まる）。`remote` は書かない（`vps.site` から決まる）。
 
@@ -213,7 +217,8 @@ echo "戻しました: DB は $id の直前 / current は $(basename "$(readlink
 
 サイトの PHP が乗っ取られても、ほかのサイトを止めにくいように、次の上限を付けている:
 
-- サイトのコンテナ（app・web・scheduler）それぞれ：メモリ 768MB・CPU 1・プロセス 256・ログ 10MB×3
+- サイトのコンテナ（app・web・scheduler）それぞれ：メモリ 768MB・CPU 1・プロセス 256・ログ 10MB×3。根は読むだけで、`/tmp` は 64MB・`/dev/shm` は 16MB・PHP-FPM のソケットの置き場所は 1MB の tmpfs（どれもメモリの上限にも数える）。サイトの置き場所の外のディスクには書けない
+- backup のコンテナ：メモリ 512MB・CPU 0.5・プロセス 64・ログ 10MB×3。写しは 1 つ `vps.backup.maxMB` まで・`keep` 個まで（サーバーのディスクを使うのは最大で `keep × 2 × maxMB`）。置き場所の空きが `maxMB` の 2 倍より少なければ取らずに失敗と書く
 - サイトの DB 利用者：同時接続 30（deploy のたびに付け直す）
 - サイトの web は、そのサイトの web と Caddy だけが入るネットワーク。ほかのサイトのコンテナから直接は届かない
 
@@ -224,7 +229,31 @@ echo "戻しました: DB は $id の直前 / current は $(basename "$(readlink
 
 ## 9. 毎日のバックアップ
 
-scheduler のコンテナが毎分 `schedule:run` を流すので、`shared/.env` に `AGENTCMS_BACKUP_SCHEDULE=03:00` を入れれば毎日取る。別の置き場所へ写す設定は [MAINTENANCE.md](../MAINTENANCE.md) の「毎日のバックアップを別の置き場所へ」。`.env` を変えたら `agentcms deploy staging` を流し直す（設定のキャッシュを作り直すため）。
+**サーバーが取る写し（設定なしで動く）。** サイトごとの backup のコンテナ（`agentcms-<サイト名>-backup`）が、毎日 `vps.backup.at`（UTC）に DB（このサイトの DB 利用者で `mysqldump`）と `shared/storage/app`（画像など。アプリの zip は入れない・中のリンクはリンクのまま）を取り、`/srv/agentcms/control/<サイト名>/backup/` に置く。最初の deploy で立ち上がったときにも 1 回取る。
+
+```
+control/<サイト名>/backup/
+  <時刻>-db.sql.gz  <時刻>-files.tar.gz  <時刻>.sha256   … 新しい順に keep 個
+  status.json   … 最後の回の成否（state: ok / failed / running・失敗の言葉・最後の成功の時刻）
+```
+
+- **成否はサイトの手が届かない場所にサーバーが書く。** サイトの PHP はアプリの記録（`auto.json`）も zip も書けるので、乗っ取られたサイトは「成功」を装える。`agentcms deploy doctor` は `status.json` だけを読み、失敗・30 時間成功なし・途中で止まった・コンテナが動いていない、を WARN で出す（deploy は止めない）
+- 失敗の言葉：`db-auth`（このサイトの DB 利用者で入れない。DB のパスワードを変えたら `control/<サイト名>/db-password` も同じ値にする）・`db-connect`・`db-dump`・`files-link`（`shared`・`storage`・`app` がリンクに差し替わっている）・`files`・`too-large`・`no-space`・`no-db-password`・`write`。詳しい理由は `docker logs agentcms-<サイト名>-backup`
+- 手で 1 回取る：`docker exec agentcms-<サイト名>-backup bash /agentcms/backup.sh now`
+- この写しから DB を戻す：写しをサイトの置き場所の `backups/` へ 14 桁の名前で入れてから、§8 のスクリプトを `keep-code` 付きで流す（コードはそのまま・DB だけ戻る）
+
+```bash
+id=<時刻>   # ls /srv/agentcms/control/<サイト名>/backup
+gzip -t /srv/agentcms/control/<サイト名>/backup/$id-db.sql.gz
+docker run --rm -i --init --pull never --network none --cap-drop ALL --security-opt no-new-privileges --read-only \
+  --user "$(id -u):$(id -g)" -v /srv/agentcms/sites/<サイト名>:/s -w /s --entrypoint sh agentcms-php:8.5-2 \
+  -c "cat > backups/$id-db.sql.gz" < /srv/agentcms/control/<サイト名>/backup/$id-db.sql.gz
+bash restore-db.sh <サイト名> $id keep-code
+```
+
+- この写しはサーバーの中にしかない。サーバーごと失ったときのために、`control/<サイト名>/backup/` を別の置き場所へ写す（サーバーの cron と rclone など）
+
+**アプリの自動バックアップ（zip・管理画面から戻せる）。** scheduler のコンテナが毎分 `schedule:run` を流すので、`shared/.env` に `AGENTCMS_BACKUP_SCHEDULE=03:00` を入れれば毎日取る。別の置き場所へ写す設定は [MAINTENANCE.md](../MAINTENANCE.md) の「毎日のバックアップを別の置き場所へ」。`.env` を変えたら `agentcms deploy staging` を流し直す（設定のキャッシュを作り直すため）。こちらの成否（管理画面・`auto.json`）はサイトの中の表示なので、サイトが乗っ取られたときはあてにしない。
 
 ## 10. 2 つ目のサイトを足す
 
@@ -262,6 +291,7 @@ docker exec -it agentcms-mysql sh -c 'MYSQL_PWD="$(cat /run/agentcms/mysql-root)
 | setup が「DB か利用者 … が既にある」で止まる | 同じサイト名の DB が、別の置き場所か前の setup の途中で作られている。自分のものなら §11 の手順で DB と利用者を消してから setup をもう一度。他人のものならサイト名を変える |
 | deploy が「別の deploy / rollback が動いています」で止まる | 終わるのを待つ。止まったまま残っているなら、ほかに動いていないことを確かめてから `/srv/agentcms/control/<サイト名>/deploy.lock` を消す |
 | setup が途中で止まった | もう一度流す。DB を作ったあと `.env` を置く前に止まったときは、`control/<サイト名>/env.pending`（そのとき作った値・600・サイトのコンテナからは見えない）を使って続きから作る。サイトの置き場所の `shared/.env.pending` は読まない |
+| doctor で「夜のバックアップ」が WARN | 出ている失敗の言葉（§9）を見る。`docker logs agentcms-<サイト名>-backup` に詳しい理由。直したら `docker exec agentcms-<サイト名>-backup bash /agentcms/backup.sh now` |
 | setup の PHP のイメージで止まる | 時間切れ（30 分）か、VPS から Docker Hub へつながらない。もう一度流せば続きから |
 
 ## 試験（kit を直す人向け）

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isProductionTarget } from "./providers/xserver-setup.js";
-import { HOSTNAME_RE, MYSQL_CONTAINER, SITE_NAME_RE, VPS_DEFAULT_ROOT, } from "./providers/vps-assets.js";
+import { BACKUP_AT_RE, HOSTNAME_RE, MYSQL_CONTAINER, SITE_NAME_RE, VPS_DEFAULT_ROOT, } from "./providers/vps-assets.js";
 /**
  * デプロイ設定の読み込み。場所: <project>/.agentcms/deploy/<target>.json
  * ホスト名・ユーザー名等の接続情報を含むため Git には含めない（.gitignore 済み）。
@@ -136,6 +136,23 @@ function validateVps(raw, target) {
             problems.push(`vps.root は / で始まる絶対パスです（英数字と . _ - / のみ・.. は不可。指定: ${String(vps.root)}）`);
         if (vps.tls !== undefined && vps.tls !== "auto" && vps.tls !== "internal")
             problems.push(`vps.tls は "auto" か "internal" です（指定: ${String(vps.tls)}）`);
+        const bk = vps.backup;
+        if (bk !== undefined) {
+            const int = (v, lo, hi) => typeof v === "number" && Number.isInteger(v) && v >= lo && v <= hi;
+            if (typeof bk !== "object" || bk === null || Array.isArray(bk))
+                problems.push("vps.backup はオブジェクトです（at・keep・maxMB）");
+            else {
+                const extra = Object.keys(bk).filter((k) => !["at", "keep", "maxMB"].includes(k));
+                if (extra.length)
+                    problems.push(`vps.backup に知らない項目があります: ${extra.join(", ")}（at・keep・maxMB だけ）`);
+                if (bk.at !== undefined && !(typeof bk.at === "string" && BACKUP_AT_RE.test(bk.at)))
+                    problems.push(`vps.backup.at は "HH:MM"（UTC）です（指定: ${JSON.stringify(bk.at)}）`);
+                if (bk.keep !== undefined && !int(bk.keep, 1, 60))
+                    problems.push(`vps.backup.keep は 1〜60 の整数です（指定: ${JSON.stringify(bk.keep)}）`);
+                if (bk.maxMB !== undefined && !int(bk.maxMB, 16, 102400))
+                    problems.push(`vps.backup.maxMB は 16〜102400 の整数です（指定: ${JSON.stringify(bk.maxMB)}）`);
+            }
+        }
         const secret = Object.keys(vps).find((k) => SECRET_KEY_RE.test(k));
         if (secret)
             problems.push(`vps.${secret} は設定ファイルに書けません（秘密は deploy setup がサーバーの上で作り、shared/.env にだけ置きます）`);

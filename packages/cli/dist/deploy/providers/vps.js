@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { shq } from "../executor.js";
-import { APP_KEY_PLACEHOLDER, CADDY_CONTAINER, DB_MAX_USER_CONNECTIONS, DB_PASSWORD_PLACEHOLDER, DOMAIN_MARK, edgeCaddyfile, edgeCompose, MYSQL_CONTAINER, PHP_IMAGE, phpDockerfile, siteCaddy, siteCompose, siteNginx, vpsNames, } from "./vps-assets.js";
+import { APP_KEY_PLACEHOLDER, FPM_SOCKET_IN_CONTAINER, BACKUP_RUNNING_HOURS, BACKUP_STALE_HOURS, backupScript, CADDY_CONTAINER, DB_MAX_USER_CONNECTIONS, DB_PASSWORD_PLACEHOLDER, DOMAIN_MARK, edgeCaddyfile, edgeCompose, MYSQL_CONTAINER, PHP_IMAGE, phpDockerfile, siteCaddy, siteCompose, siteNginx, vpsNames, } from "./vps-assets.js";
 import { minimalEnv } from "./xserver-setup.js";
 /**
  * provider "vps"（Docker の入った Linux VPS 1 台・ADR-0021）。
@@ -55,6 +55,7 @@ function tail(r, n = 600) {
  * コンテナの中では、symlink はコンテナに見える物の中でしか解けない。
  *
  * - ネットワークなし・権限（capability）なし・特権の昇格なし・メモリ／プロセス／CPU・時間の上限つき・ログを残さない
+ * - 根は読むだけ。/tmp は大きさを決めた tmpfs（コンテナの書ける層＝Docker の置き場所に書かない）
  * - イメージはサイトの PHP と同じ（setup が build したもの。取りに行かない）
  * - 秘密を引数に載せない（`stdin` で渡す）
  */
@@ -64,6 +65,7 @@ const SITE_FS_LIMITS = {
     pids: 128,
     cpus: "1.0",
     timeoutSec: 900,
+    tmp: "64m",
 };
 export function siteFsCommand(n, script, opts = {}) {
     // 時間の上限はコンテナの中の timeout で切る。手元の CLI や ssh が先に切れても、
@@ -72,7 +74,8 @@ export function siteFsCommand(n, script, opts = {}) {
     // それが PID 1 だと同じ名前空間からの KILL が届かない）
     const secs = Math.max(1, Math.floor(opts.timeoutSec ?? SITE_FS_LIMITS.timeoutSec));
     return (`docker run --rm${opts.stdin ? " -i" : ""} --init --pull never --network none --cap-drop ALL ` +
-        `--security-opt no-new-privileges --memory ${SITE_FS_LIMITS.memory} --memory-swap ${SITE_FS_LIMITS.memory} ` +
+        `--security-opt no-new-privileges --read-only --tmpfs /tmp:size=${SITE_FS_LIMITS.tmp},mode=1777,nosuid,nodev,noexec ` +
+        `--memory ${SITE_FS_LIMITS.memory} --memory-swap ${SITE_FS_LIMITS.memory} ` +
         `--pids-limit ${SITE_FS_LIMITS.pids} --cpus ${SITE_FS_LIMITS.cpus} --log-driver none --user "$(id -u):$(id -g)" ` +
         `-v ${shq(`${n.appDir}:${n.appDir}`)} -w ${shq(n.appDir)} ` +
         `--entrypoint timeout ${shq(PHP_IMAGE)} -s KILL ${secs} sh -c ${shq(script)}`);
@@ -284,7 +287,108 @@ export async function vpsDoctor(exec, cfg) {
             why: "1 つのサイトが置き場所を書き足し続けると、MySQL とほかのサイトも書けなくなります（サイトのコンテナは同じ uid で動くので、利用者ごとの quota では区切れません）",
             fix: `${n.root}/sites をサイトごとに容量を区切ったファイルシステム（project quota・サイトごとのディスクイメージなど）に置くか、Docker の置き場所と別のディスクに分けてください（docs/deployment/vps.md「1 台に置くサイトの上限」）`,
         });
+    const bk = backupCheck(n, {
+        status: fact("backup_status"),
+        container: fact("backup_container"),
+        now: Number(fact("server_now")),
+        deployed: Boolean(fact("current")),
+    });
+    if (bk)
+        add(bk);
     return done(fact("current") || null);
+}
+/** 失敗の言葉（台本が決めた物だけ）と、その意味 */
+export const BACKUP_ERRORS = {
+    "db-auth": "このサイトの DB の利用者で入れません（パスワードが変わった？ control/<サイト名>/db-password と shared/.env の DB_PASSWORD を確かめる）",
+    "db-connect": "MySQL につながりません",
+    "db-dump": "mysqldump が途中で落ちました（backup のコンテナのログ）",
+    "no-db-password": "control/<サイト名>/db-password が空です",
+    "files-link": "shared・storage・storage/app のどれかがリンクに差し替わっています（サイトの中から？）",
+    "files-missing": "shared/storage/app がありません",
+    files: "ファイルを tar で読めませんでした（読めないファイルがある・backup のコンテナのログ）",
+    "too-large": "上限（vps.backup.maxMB）を超えたので取りませんでした",
+    "no-space": "サーバーの空きが上限の 2 倍より少ないので取りませんでした",
+    write: "control/<サイト名>/backup に書けませんでした",
+};
+/** status.json（base64）を読む。形が違えば null（数は数・言葉は決まった物だけ） */
+export function parseBackupStatus(b64) {
+    try {
+        const raw = Buffer.from(b64, "base64").toString("utf8");
+        if (raw.length > 4096)
+            return null;
+        const d = JSON.parse(raw);
+        const sec = (v) => Number.isSafeInteger(v) && v >= 0 && v <= 4_102_444_800
+            ? v
+            : null;
+        const bytes = (v) => Number.isSafeInteger(v) && v >= 0 ? v : null;
+        const id14 = (v) => typeof v === "string" && /^\d{14}$/.test(v) ? v : null;
+        if (d.version !== 1)
+            return null;
+        if (d.state !== "running" && d.state !== "ok" && d.state !== "failed")
+            return null;
+        const id = id14(d.id);
+        const startedAt = sec(d.startedAt);
+        if (id === null || startedAt === null)
+            return null;
+        const error = typeof d.error === "string" && d.error in BACKUP_ERRORS ? d.error : null;
+        if (d.state === "failed" && error === null)
+            return null;
+        return {
+            state: d.state,
+            error,
+            id,
+            startedAt,
+            finishedAt: sec(d.finishedAt),
+            lastSuccessAt: sec(d.lastSuccessAt),
+            lastSuccessId: id14(d.lastSuccessId),
+            dbBytes: bytes(d.dbBytes),
+            filesBytes: bytes(d.filesBytes),
+        };
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * doctor の「夜のバックアップ」の行。サイトの置き場所の記録（アプリの auto.json）は読まない
+ * — サイトが書けるので、成功を装える。読むのはサーバーの backup のコンテナが control に書いた物だけ。
+ * どれも WARN（deploy は止めない）。まだ一度も出していないサイトは出さない
+ */
+export function backupCheck(n, f) {
+    const name = `夜のバックアップ（サーバーが取る写し・${n.controlDir}/backup）`;
+    if (!f.deployed && (f.status === "" || f.status === "none"))
+        return null;
+    const warn = (what, why, fix) => ({
+        key: "backup",
+        name,
+        status: "WARN",
+        what,
+        why,
+        fix,
+    });
+    const logs = `docker logs --tail 50 ${n.backupContainer}`;
+    if (f.container !== "running")
+        return warn(`夜のバックアップのコンテナが動いていません（${f.container || "無い"}）`, "このままでは毎日のバックアップが取れません", "`agentcms deploy` を流し直すと作り直します");
+    if (f.status === "" || f.status === "none")
+        return warn("夜のバックアップの記録がまだありません（コンテナは立ち上がるとすぐ 1 回取ります）", "立ち上げた直後なら、少し待ってからもう一度 doctor を流してください", `続くなら ${logs}`);
+    const st = f.status === "odd" ? null : parseBackupStatus(f.status);
+    if (!st)
+        return warn("夜のバックアップの記録（status.json）の形が違います", "backup のコンテナだけが書くファイルです。手で変えたか、壊れています", `${logs} を見て、${n.controlDir}/backup/status.json を消すと次の起動で取り直します`);
+    const iso = (t) => t === null ? "記録なし" : new Date(t * 1000).toISOString();
+    const now = Number.isFinite(f.now) && f.now > 0 ? f.now : Date.now() / 1000;
+    if (st.state === "failed")
+        return warn(`最後の夜のバックアップが失敗しました（${st.error}・${iso(st.finishedAt)}）`, `${BACKUP_ERRORS[st.error]}。最後に取れたのは ${iso(st.lastSuccessAt)}`, `${logs} で詳しい理由を見て直し、\`docker exec ${n.backupContainer} bash /agentcms/backup.sh now\` で取り直してください`);
+    if (st.state === "running" && now - st.startedAt > BACKUP_RUNNING_HOURS * 3600)
+        return warn(`夜のバックアップが ${iso(st.startedAt)} に始まったまま終わっていません`, "途中でコンテナが止まった可能性があります", `${logs} を見て、\`docker exec ${n.backupContainer} bash /agentcms/backup.sh now\` で取り直してください`);
+    if (st.lastSuccessAt === null || now - st.lastSuccessAt > BACKUP_STALE_HOURS * 3600)
+        return warn(`夜のバックアップが ${BACKUP_STALE_HOURS} 時間以上取れていません（最後の成功: ${iso(st.lastSuccessAt)}）`, "毎日取るはずです（vps.backup.at・UTC）", `${logs} を見てください`);
+    const kb = (b) => (b === null ? "?" : `${Math.ceil(b / 1024)}KB`);
+    return {
+        key: "backup",
+        name,
+        status: "PASS",
+        detected: `最後の成功 ${iso(st.lastSuccessAt)}（${st.lastSuccessId}・DB ${kb(st.dbBytes)}・ファイル ${kb(st.filesBytes)}）`,
+    };
 }
 function doctorScript(n) {
     return `set -u
@@ -304,6 +408,13 @@ done
 [ -f ${shq(n.controlDir + "/site")} ] && echo "site_owner=$(head -1 ${shq(n.controlDir + "/site")})"
 echo "current=$(readlink ${shq(n.appDir + "/current")} 2>/dev/null)"
 ${edgeRootProbe(n)}
+# サーバーの夜のバックアップの記録（control の中・サイトのコンテナから見えない。backup のコンテナだけが書く）
+bk=${shq(n.controlDir + "/backup/status.json")}
+if [ -L "$bk" ] || { [ -e "$bk" ] && [ ! -f "$bk" ]; }; then echo backup_status=odd
+elif [ -f "$bk" ]; then echo "backup_status=$(head -c 4097 "$bk" | base64 | tr -d '\\n')"
+else echo backup_status=none; fi
+echo "backup_container=$(docker inspect -f '{{.State.Status}}' ${shq(n.backupContainer)} 2>/dev/null)"
+echo "server_now=$(date -u +%s)"
 # サイトの置き場所と Docker（MySQL のデータ）が同じ場所（ファイルシステム）か。同じなら、1 サイトが
 # 置き場所を書き足し続けると MySQL とほかのサイトも書けなくなる（サイトごとの容量の上限は無い）
 # 比べるのは、サイトが実際に書く場所（このサイトの置き場所・無ければ sites/）と Docker の置き場所
@@ -598,6 +709,10 @@ while IFS= read -r line || [ -n "$line" ]; do
   esac
 done < "$tmpl" | in_site_in 'set -eu; umask 077; mkdir -p shared; t=$(mktemp shared/.env.XXXXXX); cat > "$t"; chmod 600 "$t"; mv -f "$t" shared/.env; rm -f shared/.env.pending'
 in_site 'test -s shared/.env'
+# 夜のバックアップ（サーバーの backup のコンテナ）が使う、このサイトの利用者のパスワード（サイトから見えない・600）
+printf '%s' "$db_pass" > ${shq(n.controlDir + "/db-password.tmp")}
+chmod 600 ${shq(n.controlDir + "/db-password.tmp")}
+mv -f ${shq(n.controlDir + "/db-password.tmp")} ${shq(n.controlDir + "/db-password")}
 rm -f "$pending"
 echo site-env-ok`;
 }
@@ -704,23 +819,50 @@ export async function siteContainers(ctx) {
         return ng("containers", `ssh の利用者の uid/gid を読めません: ${tail(ids)}`);
     const compose = siteCompose(n, { uid: m[1], gid: m[2] });
     const nginx = siteNginx(n);
-    const r = await runScript(ctx.exec, `set -euo pipefail
+    const r = await runScript(ctx.exec, siteContainersScript(n, compose, nginx), TIMEOUTS.composeUp);
+    if (r.code !== 0 || !r.stdout.includes("containers-ok"))
+        return ng("containers", `サイトのコンテナが起動しません: ${tail(r)}。\`agentcms deploy doctor\` で PHP のイメージと edge を確かめてください`);
+    const warnPw = /db-password-missing: (.*)/.exec(r.stdout)?.[1];
+    return ok("containers", `${n.appContainer} / ${n.webContainer} / ${n.schedulerContainer} / ${n.backupContainer}${warnPw ? `（⚠ ${warnPw}）` : ""}`);
+}
+/**
+ * サイトのコンテナを置いて起こす台本（siteContainers）。
+ *
+ * - compose・nginx の設定・夜のバックアップの台本と DB のパスワードは control/<site>（サイトのコンテナから
+ *   見えない）に置く。サイトの置き場所に置くと、サイトが書き換えた compose を docker compose が読む・
+ *   symlink を辿って別の場所へ書く・mount の元を差し替えられる
+ * - 夜のバックアップの DB のパスワードは、setup が作ったとき control に置く。前の版で作ったサイトは
+ *   ここで 1 回だけ shared/.env から写す（置き場所だけを入れたコンテナの中で読み、形を確かめる。
+ *   入るのは**このサイトの利用者**のパスワードだけ — 違う値なら、夜のバックアップが「db-auth」で落ちて知らせる）
+ * - mount の元（台本・パスワード・backup/）は、compose を起こす前に作る（無いと Docker が root の持ち物の
+ *   ディレクトリを作る）
+ */
+export function siteContainersScript(n, compose, nginx) {
+    const c = n.controlDir;
+    return `set -euo pipefail
 ${siteFsFns(n)}
-# compose・nginx の設定・PHP-FPM のソケットは control/<site>（サイトのコンテナから見えない）に置く。
-# サイトの置き場所に置くと、サイトが書き換えた compose を docker compose が読む・
-# symlink を辿って別の場所へ書く・mount の元を差し替えられる
-mkdir -p ${shq(n.controlDir + "/run")}
-chmod 700 ${shq(n.controlDir)}
-# ソケットの置き場所は FPM（ssh の利用者と同じ uid）が書ける。無いと Docker が root の持ち物で作る
-chmod 755 ${shq(n.controlDir + "/run")}
-cat > ${shq(n.controlDir + "/nginx.conf.tmp")} << 'AGENTCMS_NGINX'
+mkdir -p ${shq(c + "/backup")}
+chmod 700 ${shq(c)} ${shq(c + "/backup")}
+cat > ${shq(c + "/nginx.conf.tmp")} << 'AGENTCMS_NGINX'
 ${nginx}AGENTCMS_NGINX
-chmod 644 ${shq(n.controlDir + "/nginx.conf.tmp")}
-mv -f ${shq(n.controlDir + "/nginx.conf.tmp")} ${shq(n.controlDir + "/nginx.conf")}
-cat > ${shq(n.controlDir + "/compose.yml.tmp")} << 'AGENTCMS_COMPOSE'
+chmod 644 ${shq(c + "/nginx.conf.tmp")}
+mv -f ${shq(c + "/nginx.conf.tmp")} ${shq(c + "/nginx.conf")}
+cat > ${shq(c + "/backup.sh.tmp")} << 'AGENTCMS_BACKUP'
+${backupScript(n)}AGENTCMS_BACKUP
+chmod 600 ${shq(c + "/backup.sh.tmp")}
+mv -f ${shq(c + "/backup.sh.tmp")} ${shq(c + "/backup.sh")}
+pwf=${shq(c + "/db-password")}
+if [ -L "$pwf" ] || { [ -e "$pwf" ] && [ ! -f "$pwf" ]; }; then rm -rf "$pwf"; fi
+if [ ! -s "$pwf" ]; then
+  umask 077
+  p=$(in_site 'grep -E "^DB_PASSWORD=" shared/.env 2>/dev/null | tail -1 | cut -d= -f2- | head -c 200' || true)
+  if [[ "$p" =~ ^[A-Za-z0-9._~@%+=-]{8,128}$ ]]; then printf '%s' "$p" > "$pwf.tmp"; else : > "$pwf.tmp"; echo "db-password-missing: shared/.env の DB_PASSWORD を読めないか形が違うので、夜のバックアップは「no-db-password」で止まります"; fi
+  chmod 600 "$pwf.tmp"; mv -f "$pwf.tmp" "$pwf"
+fi
+cat > ${shq(c + "/compose.yml.tmp")} << 'AGENTCMS_COMPOSE'
 ${compose}AGENTCMS_COMPOSE
-mv -f ${shq(n.controlDir + "/compose.yml.tmp")} ${shq(n.controlDir + "/compose.yml")}
-docker compose -f ${shq(n.controlDir + "/compose.yml")} up -d --remove-orphans --quiet-pull 2>&1 | tail -20
+mv -f ${shq(c + "/compose.yml.tmp")} ${shq(c + "/compose.yml")}
+docker compose -f ${shq(c + "/compose.yml")} up -d --remove-orphans --quiet-pull 2>&1 | tail -20
 # Caddy をこのサイトの web 用のネットワークへ（web にはほかのサイトのコンテナから届かない）
 ${CADDY_JOIN_FN}
 caddy_join ${shq(n.webNetwork)}
@@ -733,19 +875,18 @@ done
 docker exec ${shq(n.webContainer)} nginx -t 2>&1 | tail -3
 docker exec ${shq(n.webContainer)} nginx -s reload >/dev/null 2>&1 || true
 for i in $(seq 1 30); do
-  if [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.appContainer)} 2>/dev/null)" = true ] && [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.webContainer)} 2>/dev/null)" = true ] && [ -S ${shq(n.controlDir + "/run/php-fpm.sock")} ]; then
+  if [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.appContainer)} 2>/dev/null)" = true ] && [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.webContainer)} 2>/dev/null)" = true ] && docker exec ${shq(n.webContainer)} test -S ${FPM_SOCKET_IN_CONTAINER} 2>/dev/null; then
     # 前の版が置き場所に置いていた物を片付ける（コンテナの中で消す。symlink でも外は辿らない）
     in_site 'rm -rf run compose.yml nginx.conf .agentcms-site releases.history .agentcms-deploy.lock shared/.env.pending' || true
+    # 前の版のソケットの置き場所（control の中・サイトのコンテナが書けた）。いまは tmpfs なので使わない
+    rm -rf ${shq(c + "/run")}
     echo containers-ok; exit 0
   fi
   sleep 1
 done
 docker logs --tail 20 ${shq(n.webContainer)} 2>&1
 docker logs --tail 20 ${shq(n.appContainer)} 2>&1
-exit 1`, TIMEOUTS.composeUp);
-    if (r.code !== 0 || !r.stdout.includes("containers-ok"))
-        return ng("containers", `サイトのコンテナが起動しません: ${tail(r)}。\`agentcms deploy doctor\` で PHP のイメージと edge を確かめてください`);
-    return ok("containers", `${n.appContainer} / ${n.webContainer} / ${n.schedulerContainer}`);
+exit 1`;
 }
 /**
  * DB バックアップ（vps）。mysqldump は MySQL のコンテナの中で流す。

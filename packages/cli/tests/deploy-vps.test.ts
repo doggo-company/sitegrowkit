@@ -254,7 +254,9 @@ describe("サーバーへ置く中身", () => {
     );
     expect(y).toContain("working_dir: /srv/agentcms/sites/example-staging\n");
     expect(y).not.toMatch(/working_dir: .*current/);
-    expect(y).not.toContain("environment");
+    // 環境変数は backup のコンテナの秘密ではない設定だけ（サイトのコンテナには無い）
+    const site = y.slice(0, y.indexOf("\n  backup:\n"));
+    expect(site).not.toContain("environment");
     expect(y).not.toContain("env_file");
     // scheduler は毎分 current に入り直す（切り替え後も古い release で動き続けない）
     expect(y).toContain(
@@ -299,9 +301,8 @@ describe("PHP-FPM はソケットでだけ待つ（別のサイトのコンテ�
     expect(d).toContain("zzz-agentcms.conf");
     const y = siteCompose(vpsNames(cfgOf()), { uid: "1000", gid: "1000" });
     // ソケットと web の設定の mount の元は control（サイトのコンテナが書き換えられない場所）
-    expect(y).toContain(
-      "- /srv/agentcms/control/example-staging/run:/run/agentcms",
-    );
+    expect(y).toContain("- run:/run/agentcms");
+    expect(y).toContain("type: tmpfs");
     expect(y).toContain(
       "- /srv/agentcms/control/example-staging/nginx.conf:/etc/nginx/conf.d/default.conf:ro",
     );
@@ -312,13 +313,15 @@ describe("PHP-FPM はソケットでだけ待つ（別のサイトのコンテ�
       "memswap_limit: 768m",
       "cpus: 1.0",
       "pids_limit: 256",
-      'max-size: "10m"',
     ])
       expect(y.split(line).length - 1).toBe(3);
+    // ログの上限は backup のコンテナにも
+    expect(y.split('max-size: "10m"').length - 1).toBe(4);
     // web はこのサイトの web 用のネットワーク（Caddy とこの web だけ・外へ出ない）にだけ入る
     expect(y).toContain("networks: [web]");
     expect(y).toContain("name: agentcms-site-example-staging-web\n    internal: true");
-    expect(y.split("networks: [agentcms]").length - 1).toBe(2);
+    // app・scheduler・backup（MySQL へ）
+    expect(y.split("networks: [agentcms]").length - 1).toBe(3);
     expect(y).not.toContain("9000");
     expect(siteCaddy(vpsNames(cfgOf()))).not.toContain("9000");
   });
@@ -520,6 +523,9 @@ describe("doctor", () => {
             "env=yes",
             "site_owner=staging.example.com",
             "current=/srv/agentcms/sites/example-staging/releases/1",
+            `backup_status=${Buffer.from(JSON.stringify({ version: 1, state: "ok", error: null, id: "20261124030000", startedAt: 1_800_000_000, finishedAt: 1_800_000_060, lastSuccessAt: 1_800_000_060, lastSuccessId: "20261124030000", dbBytes: 1, filesBytes: 1 })).toString("base64")}`,
+            "backup_container=running",
+            "server_now=1800000100",
           ].join("\n"),
         },
       ],
