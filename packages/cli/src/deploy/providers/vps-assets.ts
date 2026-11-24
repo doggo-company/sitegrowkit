@@ -19,6 +19,7 @@ import type { DeployTargetConfig } from "../types.js";
  *     compose.yml nginx.conf   … このサイトの PHP-FPM・web（nginx）・scheduler・backup
  *     backup.sh db-password    … 夜のバックアップの台本と、このサイトの DB 利用者のパスワード（600）
  *     backup/                  … サーバーが取った夜のバックアップと、その成否（status.json）
+ *     artifacts/<id>.tar.gz    … 送った artifact（checksum つき）。展開・rollback の作り直し・doctor の比べ物
  *     site                     … このサイト名を使っているドメイン
  *     releases.history         … health まで通って公開した順の記録
  *     env.pending              … setup の途中で止まったときの DB パスワード・APP_KEY（600）
@@ -98,6 +99,11 @@ export const BACKUP_DEFAULTS = {
 } as const;
 /** vps.backup.at の形（"HH:MM"・UTC） */
 export const BACKUP_AT_RE = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+/**
+ * 夜のバックアップを取ったあとも、置き場所のファイルシステムのこの割合は空けておく。
+ * 乗っ取られたサイトが自分のファイルを大きくしても、写しでサーバーのディスクを使い切らせない
+ */
+export const BACKUP_RESERVE_PCT = 15;
 /** バックアップのコンテナの上限（サイトのコードは動かさない。mysqldump・tar・gzip だけ） */
 export const BACKUP_LIMITS = {
   memory: "512m",
@@ -431,6 +437,8 @@ ${logging}
       - ${n.controlDir}/backup.sh:/agentcms/backup.sh:ro
       - ${n.controlDir}/db-password:/agentcms/db-password:ro
       - ${n.controlDir}/backup:/agentcms/backup
+      # 全サイトの backup のコンテナで分け合う鍵（同時に取るのは 1 サイトだけ）
+      - ${n.root}/control/.backup-lock:/agentcms/hostlock
 networks:
   ${EDGE_NETWORK}:
     external: true
@@ -455,7 +463,8 @@ volumes:
  * - 書くのは /agentcms/backup（= control/<site>/backup・サイトのコンテナには入っていない）だけ。
  *   作りかけは `.work-<id>` に置き、確かめてから名前を付ける。落ちたら消す
  * - 1 つのファイルが上限（AGENTCMS_BACKUP_MAX_BYTES）を超えたら、取らずに失敗と書く。
- *   置き場所の空きが上限の 2 倍より少なければ始めない（サーバーのディスクを埋めない）
+ *   上限の 2 倍を書いても置き場所のファイルシステムの BACKUP_RESERVE_PCT % が空いたまま残るときだけ始める
+ *   （サーバーのディスクを埋めない）
  * - 成否は status.json に**サーバーの決めた言葉だけ**で書く（mysqldump・tar の出力は書かない。
  *   サイトの表の名前やファイル名が入るので）。理由の詳しいことはこのコンテナのログに出す
  * - `bash backup.sh now` で 1 回だけ取る（手で・試験で）。引数なしは毎日 AGENTCMS_BACKUP_AT（UTC）に取り、
@@ -471,6 +480,8 @@ B="\${AGENTCMS_BACKUP_DIR:-/agentcms/backup}"
 SITE="\${AGENTCMS_BACKUP_SITE:-/site}"
 PWFILE="\${AGENTCMS_BACKUP_PWFILE:-/agentcms/db-password}"
 LOCK="\${AGENTCMS_BACKUP_LOCK:-/tmp/backup.lock}"
+# サーバーの全サイトの backup のコンテナで分け合う鍵の置き場所（同時に 1 サイトだけ取る＝空きの確かめが重ならない）
+HOSTLOCK="\${AGENTCMS_BACKUP_HOSTLOCK:-/agentcms/hostlock}/held"
 DB=${shellWord(n.dbName)}
 DBUSER=${shellWord(n.dbUser)}
 DBHOST=${MYSQL_CONTAINER}
@@ -480,6 +491,8 @@ MAX="\${AGENTCMS_BACKUP_MAX_BYTES:-${BACKUP_DEFAULTS.maxMB * 1048576}}"
 [[ "$AT" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || AT=${BACKUP_DEFAULTS.at}
 [[ "$KEEP" =~ ^[1-9][0-9]?$ ]] || KEEP=${BACKUP_DEFAULTS.keep}
 [[ "$MAX" =~ ^[1-9][0-9]{0,12}$ ]] || MAX=${BACKUP_DEFAULTS.maxMB * 1048576}
+RESERVE="\${AGENTCMS_BACKUP_RESERVE_PCT:-${BACKUP_RESERVE_PCT}}"
+[[ "$RESERVE" =~ ^[0-9]$|^[1-8][0-9]$ ]] || RESERVE=${BACKUP_RESERVE_PCT}
 size() { echo $(( $(wc -c < "$1") )); }
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >&2; }
 num() { sed -n "s/.*\\"$1\\":\\([0-9][0-9]*\\).*/\\1/p" "$B/status.json" 2>/dev/null | head -1; }
@@ -497,16 +510,18 @@ write_status() { # state error id started finished
 take() {
   local id="$1" w="$B/.work-$1" pw avail rc
   mkdir "$w" || { echo write; return; }
-  avail=$(df -Pk "$B" 2>/dev/null | awk 'NR==2{print $4}')
-  [[ "$avail" =~ ^[0-9]+$ ]] && [ $((avail * 1024)) -ge $((MAX * 2)) ] || { echo no-space; return; }
+  # 空き: この回で書きうる量（DB とファイルで上限の 2 倍）を書いても、置き場所のファイルシステムの
+  # RESERVE %（既定 ${BACKUP_RESERVE_PCT}）以上が空いたまま残るときだけ取る（ほかのサイトと MySQL の分を残す）
+  read -r total avail < <(df -Pk "$B" 2>/dev/null | awk 'NR==2{print $2, $4}')
+  [[ "$total" =~ ^[0-9]+$ ]] && [[ "$avail" =~ ^[0-9]+$ ]] && [ $((avail * 1024 - MAX * 2)) -ge $((total * 1024 / 100 * RESERVE)) ] || { echo no-space; return; }
   pw=$(head -c 256 "$PWFILE" 2>/dev/null | tr -d '\\n')
   [ -n "$pw" ] || { echo no-db-password; return; }
-  if ! MYSQL_PWD="$pw" timeout 60 mysql -h "$DBHOST" -u "$DBUSER" -N -e 'SELECT 1' "$DB" >/dev/null 2>"$w/err"; then
+  if ! MYSQL_PWD="$pw" timeout 60 mysql -h "$DBHOST" -u "$DBUSER" -N -e 'SELECT 1' "$DB" >/dev/null 2> >(head -c 4096 > "$w/err"; cat > /dev/null); then
     log "DB に入れません: $(head -c 300 "$w/err")"
     if grep -q 'ERROR 1045' "$w/err"; then echo db-auth; else echo db-connect; fi
     return
   fi
-  MYSQL_PWD="$pw" timeout 3600 mysqldump --single-transaction --no-tablespaces --skip-comments -h "$DBHOST" -u "$DBUSER" "$DB" 2>"$w/err" | gzip | head -c $((MAX + 1)) > "$w/db.sql.gz"
+  MYSQL_PWD="$pw" timeout 3600 mysqldump --single-transaction --no-tablespaces --skip-comments -h "$DBHOST" -u "$DBUSER" "$DB" 2> >(head -c 4096 > "$w/err"; cat > /dev/null) | gzip | head -c $((MAX + 1)) > "$w/db.sql.gz"
   rc=("\${PIPESTATUS[@]}")
   if [ "$(size "$w/db.sql.gz")" -gt "$MAX" ]; then echo too-large; return; fi
   if [ "\${rc[0]}" != 0 ] || [ "\${rc[1]}" != 0 ]; then log "mysqldump: $(head -c 300 "$w/err")"; echo db-dump; return; fi
@@ -516,21 +531,40 @@ take() {
     if [ -L "$p" ]; then echo files-link; return; fi
   done
   [ -d "$SITE/shared/storage/app" ] || { echo files-missing; return; }
-  timeout 3600 tar -C "$SITE/shared" --exclude=storage/app/private/backups --exclude=storage/app/private/backup-status -cf - storage/app 2>"$w/err" | gzip | head -c $((MAX + 1)) > "$w/files.tar.gz"
+  timeout 3600 tar -C "$SITE/shared" --exclude=storage/app/private/backups --exclude=storage/app/private/backup-status -cf - storage/app 2> >(head -c 4096 > "$w/err"; cat > /dev/null) | gzip | head -c $((MAX + 1)) > "$w/files.tar.gz"
   rc=("\${PIPESTATUS[@]}")
   if [ "$(size "$w/files.tar.gz")" -gt "$MAX" ]; then echo too-large; return; fi
-  # tar の 1 は「読んでいる間に変わったファイルがある」（それでも取れている）
-  if [ "\${rc[0]}" -gt 1 ] || [ "\${rc[1]}" != 0 ]; then log "tar: $(head -c 300 "$w/err")"; echo files; return; fi
+  # tar の 1（読んでいる間に変わった・消えたファイルがある）も成功にしない（取り切れた写しと言えない）
+  if [ "\${rc[0]}" != 0 ] || [ "\${rc[1]}" != 0 ]; then log "tar: $(head -c 300 "$w/err")"; echo files; return; fi
   gzip -t "$w/files.tar.gz" 2>/dev/null || { echo files; return; }
   ( cd "$w" && sha256sum db.sql.gz files.tar.gz | sed "s/  /  $id-/" > sha256 ) || { echo write; return; }
 }
+# サーバーの鍵を取る（ほかのサイトの回が終わるのを最大 6 時間待つ。3 時間より古い鍵は、落ちたコンテナの残り物として外す）
+host_lock() {
+  local i t
+  local wait="\${AGENTCMS_BACKUP_HOSTLOCK_WAIT:-21600}"
+  [[ "$wait" =~ ^[1-9][0-9]{0,4}$ ]] || wait=21600
+  for i in $(seq 1 "$wait"); do
+    mkdir "$HOSTLOCK" 2>/dev/null && return 0
+    t=$(stat -c %Y "$HOSTLOCK" 2>/dev/null) || continue
+    if [ $(( $(date -u +%s) - t )) -gt 10800 ]; then rmdir "$HOSTLOCK" 2>/dev/null; continue; fi
+    sleep 1
+  done
+  return 1
+}
 run_once() {
   if ! mkdir "$LOCK" 2>/dev/null; then log "別の回が動いています"; return 3; fi
+  # 鍵の置き場所が無い・書けない（mount が外れた）なら、黙らずに失敗と書く
+  if [ ! -d "\${HOSTLOCK%/held}" ] || [ ! -w "\${HOSTLOCK%/held}" ]; then
+    load_prev; write_status failed write "$(date -u +%Y%m%d%H%M%S)" "$(date -u +%s)" "$(date -u +%s)"
+    log "サーバーの鍵の置き場所（\${HOSTLOCK%/held}）がありません"; rmdir "$LOCK"; return 1
+  fi
+  if ! host_lock; then rmdir "$LOCK"; log "ほかのサイトの回が 6 時間終わりません"; return 3; fi
   local id started err db files
   id=$(date -u +%Y%m%d%H%M%S); started=$(date -u +%s)
   load_prev
   rm -rf "$B"/.work-*
-  write_status running "" "$id" "$started" "" || { rmdir "$LOCK"; log "記録を書けません"; return 1; }
+  write_status running "" "$id" "$started" "" || { rmdir "$HOSTLOCK" 2>/dev/null; rmdir "$LOCK"; log "記録を書けません"; return 1; }
   err=$(take "$id")
   if [ -z "$err" ]; then
     db=$(size "$B/.work-$id/db.sql.gz"); files=$(size "$B/.work-$id/files.tar.gz")
@@ -548,12 +582,12 @@ run_once() {
   if [ -n "$err" ]; then
     write_status failed "$err" "$id" "$started" "$(date -u +%s)"
     log "失敗: $err（$id）"
-    rmdir "$LOCK"
+    rmdir "$HOSTLOCK" 2>/dev/null; rmdir "$LOCK"
     return 1
   fi
   write_status ok "" "$id" "$started" "$(date -u +%s)"
   log "取りました: $id（DB $db bytes・ファイル $files bytes）"
-  rmdir "$LOCK"
+  rmdir "$HOSTLOCK" 2>/dev/null; rmdir "$LOCK"
   return 0
 }
 if [ "\${1:-}" = now ]; then run_once; exit $?; fi

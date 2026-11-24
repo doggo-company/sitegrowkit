@@ -14,6 +14,9 @@ SiteGrowKit の変更履歴です。
 - 通しの試験 `scripts/vps-e2e.mjs` を足しました（手元の Docker に「VPS の代わり」を立てて流す・手で実行）
 - VPS では、サーバーが毎日 DB と `shared/storage/app` の写しを取ります（サイトごとの `backup` のコンテナ・サイトのコードは使わない）。写しと成否はサイトの手が届かない `control/<サイト名>/backup` に置き、`agentcms deploy doctor` が失敗・止まっている・途中で止まったを知らせます。時刻・残す数・上限は `vps.backup`
 - VPS のサイトのコンテナは根を読むだけにし、`/tmp`・`/dev/shm`・PHP-FPM のソケットの置き場所を大きさを決めた tmpfs にしました（乗っ取られたサイトが、サイトのディスクの外を埋められないように）
+- VPS の deploy は送った artifact をサーバーの `control/<サイト名>/artifacts` に残し、そこから展開します。`agentcms deploy rollback` は戻す先をその artifact から作り直してから切り替え、`agentcms deploy doctor` はいま出ているコードが送った物と違えば知らせます（サイトの中から書き換えられた release を戻し先として信じない）
+- VPS の DB を戻す手順（docs/deployment/vps.md §8）は、サーバーの夜の写しから直接戻せ、戻したあとに全員のログインを切ります
+- health は、サイトの HTML が別の場所のアセットを指していても取りに行かず、応答の本文は 2MB までしか読みません
 
 ## 未リリース — 毎日のバックアップを別の置き場所へ写せるようにしました
 

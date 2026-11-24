@@ -33,7 +33,7 @@ Caddy にはサイトのファイルを見せない（転送だけ）。サイ�
 | --- | --- |
 | `/srv/agentcms/edge/` | Caddy と MySQL の compose・Caddyfile・`sites/<サイト名>.caddy`・`secrets/mysql-root` |
 | `/srv/agentcms/sites/<サイト名>/` | サイトのコンテナが見る物：`releases/<id>`・`shared/.env`・`shared/storage`・`backups/`・`current` |
-| `/srv/agentcms/control/<サイト名>/` | サーバーだけが触る物（700・サイトのコンテナには見せない）：`compose.yml`・`nginx.conf`・`backup.sh` と `db-password`（夜のバックアップの台本とこのサイトの DB 利用者のパスワード・600）・`backup/`（夜のバックアップの写しと成否 `status.json`）・`site`（このサイト名のドメイン）・`releases.history`（公開の記録）・`deploy.lock`・`env.pending`（setup の途中の値・600） |
+| `/srv/agentcms/control/<サイト名>/` | サーバーだけが触る物（700・サイトのコンテナには見せない）：`compose.yml`・`nginx.conf`・`backup.sh` と `db-password`（夜のバックアップの台本とこのサイトの DB 利用者のパスワード・600）・`backup/`（夜のバックアップの写しと成否 `status.json`）・`artifacts/`（送った artifact と checksum・rollback の作り直しと doctor の比べ物）・`site`（このサイト名のドメイン）・`releases.history`（公開の記録）・`deploy.lock`・`env.pending`（setup の途中の値・600） |
 
 **秘密（DB パスワード・APP_KEY・MySQL の root パスワード）は `agentcms deploy setup` がサーバーの上で作り、サーバーのファイル（600）にだけ置く。** 手元・Git・設定ファイル・ログ・画面・コマンドの引数・`docker inspect` には出さない。ただし動いているプロセスの中には値がある（PHP は `.env` を読み、MySQL は root パスワードを読んで起動する）。サーバーの root と docker グループの利用者は、それを読める。
 
@@ -147,22 +147,35 @@ agentcms deploy rollback -t staging   # health まで通った 1 つ前の relea
 
 health まで通った release には印が付き、公開した順に `releases.history` へ書かれる。rollback はこの記録で 1 つ前に出ていた release へ戻る（release の番号＝手元の時計の時刻の順ではない。migration などで途中で落ちた release には戻らない）。戻した先の health が通らなければ、元の release に戻して止まる。古い release は、印のあるものを `keepReleases`（既定 3）まで残し、途中で落ちたものは片付ける。同じサイトへの deploy と rollback は同時に 1 つしか動かない（2 つ目は「別の deploy / rollback が動いています」で止まる）。PHP は `current` の symlink をサイトの web（nginx）が実際のパスへ解いてから受け取るので、切り替えた直後から新しい（戻したら古い）コードが動く。
 
+**送った artifact は `control/<サイト名>/artifacts/<release id>.tar.gz`（checksum つき・サイトのコンテナには見えない）に、残す release の分だけ残す。** 展開はそこから標準入力で流す（サイトの置き場所の `tmp/` を経由しないので、展開の前に中身を差し替えられない）。
+
+- **rollback は、戻す先を置き場所の中の物のまま使わず、残した artifact から作り直してから切り替える。** 置き場所の中の古い release は、乗っ取られたサイトが書き換えられる（バックドアを置ける）ため。artifact の checksum が合わなければ、何も変えずに止まる。前の版のキットで出した release（artifact が無い）は、置き場所の中の物のまま戻し、そう言う
+- **`agentcms deploy doctor` は、いま出ている release を送った artifact と比べる**（使い捨てのコンテナの中の GNU tar・サイトのコードは動かさない）。中身の違うファイル・足されたファイルがあれば WARN（数だけ・名前は出さない）。shared へのリンク（`storage`・`.env`・`public/storage`）と deploy が作る `bootstrap/cache` は比べない。サイトのコンテナは自分のコードを書き換えられるので、乗っ取りに気づく手がかりになる（書き換えを止めるものではない）
+
 ## 8. DB を戻す（手で）
 
 deploy のたびに `backups/<release id>-db.sql.gz` を取っている（その release を出す**直前**の DB）。横の `backups/<release id>-db.release` には、そのとき出ていた release の番号が入っている。戻すのは人が判断する（自動ではやらない）。
 
-次の中身をサーバーに `restore-db.sh` として保存し、`bash restore-db.sh <サイト名> <release id>` で流す（`<release id>` は `ls backups` で見る）。1 行ずつ貼り付けずに、ファイルにして流すこと（途中で失敗したらそこで止まるように書いてある）。
+**サイトが乗っ取られたかもしれないときは、サーバーが取った夜の写し（§9・`control/<サイト名>/backup`）から戻す。** `backups/` はサイトの置き場所の中にあり、乗っ取られたサイトは中身を書き換えられる。`server-<時刻>` を渡すと、スクリプトは写しを checksum で確かめ、サイトの置き場所を通さずに直接戻す（コードはそのまま＝`keep-code` と同じ。コードは `agentcms deploy` か `rollback`（送った物から作り直す）で入れ直す）。
+
+どちらから戻しても、戻したあとは**全員のログインを切る**（`users.session_epoch` を進め、`remember_token` と `sessions` の表を消す。管理画面からの復元と同じ）。乗っ取られていた間のログインを、戻した DB で生き返らせないため。
+
+次の中身をサーバーに `restore-db.sh` として保存し、`bash restore-db.sh <サイト名> <release id>`（または `server-<時刻>`）で流す（`<release id>` は `ls backups`、`<時刻>` は `ls /srv/agentcms/control/<サイト名>/backup` で見る）。1 行ずつ貼り付けずに、ファイルにして流すこと（途中で失敗したらそこで止まるように書いてある）。
 
 ```bash
 #!/bin/bash
-# 使い方: bash restore-db.sh <サイト名> <release id> [keep-code]
+# 使い方: bash restore-db.sh <サイト名> <release id | server-<時刻>> [keep-code]
 #   keep-code … DB を取ったときの release が分からない・消えているときに、コードはそのままで DB だけ戻す
+#   server-<時刻> … サーバーが取った夜の写し（control/<サイト名>/backup・サイトは書けない）から戻す（コードはそのまま）
 set -euo pipefail
 site="$1"; id="$2"; mode="${3:-}"
 root=/srv/agentcms   # vps.root を変えたなら、ここも変える
 [[ "$site" =~ ^[a-z][a-z0-9-]{0,26}[a-z0-9]$ ]] || { echo "サイト名の形が違います: $site"; exit 1; }
-[[ "$id" =~ ^([0-9]{14}|before-restore-[0-9]{14})$ ]] || { echo "release id の形が違います: $id"; exit 1; }
+[[ "$id" =~ ^([0-9]{14}|before-restore-[0-9]{14}|server-[0-9]{14})$ ]] || { echo "release id の形が違います: $id"; exit 1; }
 dir="$root/sites/$site"; ctl="$root/control/$site"
+# サーバーの写しは control の中（サイトのコンテナには見えない）。コードの release の記録は無いので、コードはそのまま
+src=""
+if [[ "$id" == server-* ]]; then src="$ctl/backup/${id#server-}-db.sql.gz"; mode=keep-code; fi
 db="sgk-$site"; user="sgk-$site"   # DB 名・利用者名はサイト名から決まる（.env の値は使わない）
 # サイトの置き場所の中は、サイトの PHP が書き換えられる（symlink も置ける）。
 # 中のファイルは、その置き場所だけを入れた使い捨てのコンテナの中で読み書きする
@@ -186,7 +199,13 @@ mkdir "$ctl/deploy.lock" 2>/dev/null || { echo "別の deploy / rollback / 戻�
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) restore-db $id" > "$ctl/deploy.lock/info"
 trap 'rm -rf "$ctl/deploy.lock"' EXIT
 # 1. 鍵を取ったあと、何も変える前に確かめる（ここで止まれば、アプリは動いたまま・DB もそのまま）
-in_site "gzip -t backups/$id-db.sql.gz" < /dev/null || { echo "バックアップがありません（無いか、壊れています）: backups/$id-db.sql.gz"; exit 1; }
+if [ -n "$src" ]; then
+  s="${id#server-}"
+  ( cd "$ctl/backup" && [ ! -L "$s-db.sql.gz" ] && gzip -t "$s-db.sql.gz" && grep " $s-db.sql.gz\$" "$s.sha256" | sha256sum -c --quiet - ) \
+    || { echo "サーバーの写しがありません（無いか、壊れているか、checksum が合いません）: $src"; exit 1; }
+else
+  in_site "gzip -t backups/$id-db.sql.gz" < /dev/null || { echo "バックアップがありません（無いか、壊れています）: backups/$id-db.sql.gz"; exit 1; }
+fi
 rel=$(in_site "head -c 32 backups/$id-db.release 2>/dev/null | head -1 || true" < /dev/null)
 if [ "$mode" != keep-code ]; then
   [[ "$rel" =~ ^[0-9]{14}$ ]] && in_site "test -d releases/$rel" < /dev/null || {
@@ -201,13 +220,26 @@ docker compose -f "$ctl/compose.yml" stop
 safe="before-restore-$(date +%Y%m%d%H%M%S)"
 pw | in_mysql mysqldump --single-transaction --no-tablespaces -h agentcms-mysql -u "$user" "$db" | gzip \
   | in_site "set -e; t=\$(mktemp backups/.db.XXXXXX); cat > \"\$t\"; gzip -t \"\$t\"; [ \$(wc -c < \"\$t\") -ge 200 ]; mv -f \"\$t\" backups/$safe-db.sql.gz; basename \"\$(readlink current)\" > backups/$safe-db.release"
+# いまのログインの世代（戻したあとに、これより大きくして全員のログインを切る）
+epoch=$( { pw; echo "SELECT COALESCE(MAX(session_epoch), 0) FROM users;"; } | in_mysql mysql --binary-mode -N -h agentcms-mysql -u "$user" "$db" 2>/dev/null || true)
+[[ "$epoch" =~ ^[0-9]{1,15}$ ]] || epoch=0
 # 4. DB を空にしてから戻す（バックアップの後に増えた表も残らない）
 { pw; printf 'DROP DATABASE `%s`;\nCREATE DATABASE `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n' "$db" "$db"; } | in_mysql mysql --binary-mode -h agentcms-mysql -u "$user"
-{ pw; in_site "gunzip -c backups/$id-db.sql.gz" < /dev/null; } | in_mysql mysql --binary-mode -h agentcms-mysql -u "$user" "$db"
+if [ -n "$src" ]; then
+  { pw; gunzip -c "$src"; } | in_mysql mysql --binary-mode -h agentcms-mysql -u "$user" "$db"
+else
+  { pw; in_site "gunzip -c backups/$id-db.sql.gz" < /dev/null; } | in_mysql mysql --binary-mode -h agentcms-mysql -u "$user" "$db"
+fi
+# 4b. 全員のログインを切る（戻した DB の中のログインの状態を使わせない。表が無い古い DB なら飛ばす）
+q() { { pw; echo "$1"; } | in_mysql mysql --binary-mode -N -h agentcms-mysql -u "$user" "$db"; }
+if [ "$(q "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'session_epoch';")" = 1 ]; then
+  q "UPDATE users SET session_epoch = GREATEST($epoch, (SELECT m FROM (SELECT COALESCE(MAX(session_epoch), 0) AS m FROM users) t)) + 1, remember_token = NULL;" > /dev/null
+fi
+if [ "$(q "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'sessions';")" = 1 ]; then q "DELETE FROM sessions;" > /dev/null; fi
 # 5. コードを、この DB を取ったときに出ていた release へ合わせてから起こす
 if [ "$mode" != keep-code ]; then in_site "ln -sfn $dir/releases/$rel current" < /dev/null; fi
 docker compose -f "$ctl/compose.yml" start
-echo "戻しました: DB は $id の直前 / current は $(basename "$(readlink "$dir/current")")"
+echo "戻しました: DB は $id の${src:+（サーバーの写し）}直前 / current は $(basename "$(readlink "$dir/current")") / ログインは全員切りました"
 ```
 
 - 戻したあと、手元で `agentcms verify staging`（本番なら health を見る）で確かめる
@@ -218,7 +250,7 @@ echo "戻しました: DB は $id の直前 / current は $(basename "$(readlink
 サイトの PHP が乗っ取られても、ほかのサイトを止めにくいように、次の上限を付けている:
 
 - サイトのコンテナ（app・web・scheduler）それぞれ：メモリ 768MB・CPU 1・プロセス 256・ログ 10MB×3。根は読むだけで、`/tmp` は 64MB・`/dev/shm` は 16MB・PHP-FPM のソケットの置き場所は 1MB の tmpfs（どれもメモリの上限にも数える）。サイトの置き場所の外のディスクには書けない
-- backup のコンテナ：メモリ 512MB・CPU 0.5・プロセス 64・ログ 10MB×3。写しは 1 つ `vps.backup.maxMB` まで・`keep` 個まで（サーバーのディスクを使うのは最大で `keep × 2 × maxMB`）。置き場所の空きが `maxMB` の 2 倍より少なければ取らずに失敗と書く
+- backup のコンテナ：メモリ 512MB・CPU 0.5・プロセス 64・ログ 10MB×3。写しは 1 つ `vps.backup.maxMB` まで・`keep` 個まで（サーバーのディスクを使うのは最大で `(keep + 1) × 2 × maxMB`。新しい回を書いてから古い回を消すため）。上限の 2 倍を書いても `control/` のファイルシステムの 15% 以上が空いたまま残るときだけ取り、残らなければ取らずに `no-space` と書く（乗っ取られたサイトが自分のファイルを大きくしても、写しでサーバーのディスクを使い切らせない。ほかのサイトの写しが `no-space` で落ちることはある）
 - サイトの DB 利用者：同時接続 30（deploy のたびに付け直す）
 - サイトの web は、そのサイトの web と Caddy だけが入るネットワーク。ほかのサイトのコンテナから直接は届かない
 
@@ -240,17 +272,7 @@ control/<サイト名>/backup/
 - **成否はサイトの手が届かない場所にサーバーが書く。** サイトの PHP はアプリの記録（`auto.json`）も zip も書けるので、乗っ取られたサイトは「成功」を装える。`agentcms deploy doctor` は `status.json` だけを読み、失敗・30 時間成功なし・途中で止まった・コンテナが動いていない、を WARN で出す（deploy は止めない）
 - 失敗の言葉：`db-auth`（このサイトの DB 利用者で入れない。DB のパスワードを変えたら `control/<サイト名>/db-password` も同じ値にする）・`db-connect`・`db-dump`・`files-link`（`shared`・`storage`・`app` がリンクに差し替わっている）・`files`・`too-large`・`no-space`・`no-db-password`・`write`。詳しい理由は `docker logs agentcms-<サイト名>-backup`
 - 手で 1 回取る：`docker exec agentcms-<サイト名>-backup bash /agentcms/backup.sh now`
-- この写しから DB を戻す：写しをサイトの置き場所の `backups/` へ 14 桁の名前で入れてから、§8 のスクリプトを `keep-code` 付きで流す（コードはそのまま・DB だけ戻る）
-
-```bash
-id=<時刻>   # ls /srv/agentcms/control/<サイト名>/backup
-gzip -t /srv/agentcms/control/<サイト名>/backup/$id-db.sql.gz
-docker run --rm -i --init --pull never --network none --cap-drop ALL --security-opt no-new-privileges --read-only \
-  --user "$(id -u):$(id -g)" -v /srv/agentcms/sites/<サイト名>:/s -w /s --entrypoint sh agentcms-php:8.5-2 \
-  -c "cat > backups/$id-db.sql.gz" < /srv/agentcms/control/<サイト名>/backup/$id-db.sql.gz
-bash restore-db.sh <サイト名> $id keep-code
-```
-
+- この写しから DB を戻す：§8 のスクリプトに `server-<時刻>` を渡す（写しを checksum で確かめ、サイトの置き場所を通さずに戻す。コードはそのまま）。`bash restore-db.sh <サイト名> server-<時刻>`
 - この写しはサーバーの中にしかない。サーバーごと失ったときのために、`control/<サイト名>/backup/` を別の置き場所へ写す（サーバーの cron と rclone など）
 
 **アプリの自動バックアップ（zip・管理画面から戻せる）。** scheduler のコンテナが毎分 `schedule:run` を流すので、`shared/.env` に `AGENTCMS_BACKUP_SCHEDULE=03:00` を入れれば毎日取る。別の置き場所へ写す設定は [MAINTENANCE.md](../MAINTENANCE.md) の「毎日のバックアップを別の置き場所へ」。`.env` を変えたら `agentcms deploy staging` を流し直す（設定のキャッシュを作り直すため）。こちらの成否（管理画面・`auto.json`）はサイトの中の表示なので、サイトが乗っ取られたときはあてにしない。

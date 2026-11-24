@@ -171,6 +171,7 @@ function setup() {
   writeFileSync(join(site, "shared/storage/app/private/backups/app.zip"), "app-zip");
   writeFileSync(join(site, "shared/storage/app/private/backup-status/auto.json"), "{}");
   mkdirSync(join(root, "backup"));
+  mkdirSync(join(root, "hostlock"));
   writeFileSync(join(root, "pw"), "secretpassword123\n");
   writeFileSync(join(root, "backup.sh"), backupScript(vpsNames(cfg())));
 }
@@ -185,8 +186,12 @@ function runBackup(env: Record<string, string> = {}) {
       AGENTCMS_BACKUP_SITE: join(root, "site"),
       AGENTCMS_BACKUP_PWFILE: join(root, "pw"),
       AGENTCMS_BACKUP_LOCK: join(root, "lock"),
+      AGENTCMS_BACKUP_HOSTLOCK: join(root, "hostlock"),
+      AGENTCMS_BACKUP_HOSTLOCK_WAIT: "2",
       AGENTCMS_BACKUP_KEEP: "3",
       AGENTCMS_BACKUP_MAX_BYTES: String(10 * 1048576),
+      // 手元のディスクの埋まり具合に左右されないよう、空けておく割合は 0 にする（no-space の試験は別に見る）
+      AGENTCMS_BACKUP_RESERVE_PCT: "0",
       ...env,
     },
   });
@@ -269,6 +274,8 @@ run("夜のバックアップの台本", () => {
     expect(runBackup().status).toMatchObject({ state: "failed", error: "no-db-password" });
     writeFileSync(join(root, "pw"), "x");
     expect(runBackup({ AGENTCMS_BACKUP_MAX_BYTES: "999999999999" }).status).toMatchObject({ state: "failed", error: "no-space" });
+    // 書いたあとも決めた割合が空いたまま残らないなら取らない（ほかのサイトと MySQL の分を残す）
+    expect(runBackup({ AGENTCMS_BACKUP_RESERVE_PCT: "89" }).status).toMatchObject({ state: "failed", error: "no-space" });
   });
 
   it("新しい順に keep 個だけ残す", () => {
@@ -282,10 +289,30 @@ run("夜のバックアップの台本", () => {
     expect(kept).toEqual([ids[3], String(r.status?.lastSuccessId)].sort());
   }, 30_000);
 
-  it("同時に 2 つは動かない（鍵）", () => {
+  it("同時に 2 つは動かない（このサイトの鍵・サーバーの全サイトで分け合う鍵）・鍵の置き場所が無ければ黙らず失敗と書く", () => {
     mkdirSync(join(root, "lock"));
+    expect(runBackup().code).toBe(3);
+    rmSync(join(root, "lock"), { recursive: true });
+    // ほかのサイトの回が動いている（サーバーの鍵がある）→ 待って、取れなければ取らない（空きの確かめが重ならない）
+    mkdirSync(join(root, "hostlock", "held"));
+    const busy = runBackup();
+    expect(busy.code).toBe(3);
+    expect(busy.status).toBeNull();
+    rmSync(join(root, "hostlock", "held"), { recursive: true });
+    expect(runBackup().status?.state).toBe("ok");
+    expect(existsSync(join(root, "hostlock", "held"))).toBe(false);
+    rmSync(join(root, "hostlock"), { recursive: true });
+    sleep1();
+    expect(runBackup().status).toMatchObject({ state: "failed", error: "write" });
+  });
+
+  it("tar が「読んでいる間に変わった」（終了コード 1）でも成功にしない・作りかけ（エラーの出力も）を残さない", () => {
+    // 偽の tar: 大量のエラーを出して 1 で終わる（中身は本物の tar で作る）
+    const realTar = spawnSync("sh", ["-c", "command -v tar"], { encoding: "utf8" }).stdout.trim();
+    writeFileSync(join(root, "bin", "tar"), `#!/bin/bash\nfor i in $(seq 1 5000); do echo "tar: storage/app/x$i: file changed as we read it" >&2; done\n${realTar} "$@"\nexit 1\n`);
+    chmodSync(join(root, "bin", "tar"), 0o755);
     const r = runBackup();
-    expect(r.code).toBe(3);
-    expect(r.status).toBeNull();
+    expect(r.status).toMatchObject({ state: "failed", error: "files" });
+    expect(r.files).toEqual(["status.json"]);
   });
 });

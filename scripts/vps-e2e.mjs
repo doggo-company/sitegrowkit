@@ -448,6 +448,10 @@ exit 0`,
   a = agentcms("rollback", ["deploy", "rollback", "-t", S1.target, "-y"]);
   check(a.code === 0, "rollback が exit 0");
   check(
+    a.out.includes("送った artifact から作り直しました"),
+    "rollback は戻す先を、置き場所の中の物ではなく送った artifact（control の中）から作り直した",
+  );
+  check(
     (await get(S1.host, "/e2e-version.php")).body.trim() === "php-v1",
     "rollback で PHP が v1 に戻った",
   );
@@ -733,10 +737,16 @@ exit 0`,
   const rel = remote(
     `cat /srv/agentcms/sites/${S1.site}/backups/${id}-db.release`,
   ).stdout.trim();
+  const epochBefore = Number(sql("SELECT COALESCE(MAX(session_epoch), 0) FROM users"));
   out = restore(id);
   check(
     out.includes("rc=0"),
     `§8 のスクリプトで ${id} から戻した（${out.trim().split("\n").slice(-2, -1)[0] ?? ""}）`,
+  );
+  const epochAfter = Number(sql("SELECT COALESCE(MAX(session_epoch), 0) FROM users"));
+  check(
+    Number.isInteger(epochBefore) && epochAfter > epochBefore && sql("SELECT COUNT(*) FROM users WHERE remember_token IS NOT NULL") === "0",
+    `戻したあと、全員のログインを切った（session_epoch ${epochBefore} → ${epochAfter}・remember_token なし）`,
   );
   check(
     rows > 0 && Number(sql("SELECT COUNT(*) FROM migrations")) === rows,
@@ -1469,6 +1479,75 @@ exit 0`,
   );
   inS2(
     "rm -f shared/storage/app/public/e2e-link shared/storage/app/public/e2e-link2 shared/storage/app/private/backups/e2e-forged.zip shared/storage/app/private/backup-status/auto.json",
+  );
+  // サーバーの写しから DB を戻す（§8 のスクリプトに server-<時刻>。サイトの置き場所を通さない）
+  const sqlS2 = (q) =>
+    remote(
+      `cd ${s2} && grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2- | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysql -h 127.0.0.1 -u sgk-e2e-two -D sgk-e2e-two -N -e "$1"' sh ${JSON.stringify(q)} 2>&1`,
+    ).stdout.trim();
+  sqlS2("CREATE TABLE e2e_after_srv (id INT)");
+  check(sqlS2("SHOW TABLES LIKE 'e2e_after_srv'") === "e2e_after_srv", "サーバーの写しの後に、サイト 2 の DB に表を足した");
+  out = remote(
+    `cd /srv/agentcms && bash restore-db.sh ${S2.site} server-${okId} 2>&1; echo "rc=$?"`,
+  ).stdout;
+  let s2hz = 0;
+  for (let i = 0; i < 20 && s2hz !== 200; i++) {
+    s2hz = (await get(S2.host, "/healthz")).status;
+    if (s2hz !== 200) await new Promise((res) => setTimeout(res, 1000));
+  }
+  check(
+    out.includes("rc=0") && sqlS2("SHOW TABLES LIKE 'e2e_after_srv'") === "" && s2hz === 200,
+    `§8 のスクリプトに server-${okId} を渡すと、サーバーの写しから戻した（足した表は消え、/healthz は ${s2hz}）（${out.trim().split("\n").slice(-2, -1)[0] ?? ""}）`,
+  );
+  remote(`cp ${bkDir}/${okId}.sha256 /tmp/e2e-sha && sed -i 's/^./0/' ${bkDir}/${okId}.sha256`);
+  out = remote(
+    `cd /srv/agentcms && bash restore-db.sh ${S2.site} server-${okId} 2>&1; echo "rc=$?"`,
+  ).stdout;
+  remote(`cp /tmp/e2e-sha ${bkDir}/${okId}.sha256 && rm -f /tmp/e2e-sha`);
+  check(
+    !out.includes("rc=0") && out.includes("checksum") && (await get(S2.host, "/healthz")).status === 200,
+    "checksum の合わない写しでは、何も変えずに止まる（アプリは動いたまま）",
+  );
+
+  // ------------------------------------------------------------ 6h. 公開中のコードの書き換えに気づく・rollback は送った物から作り直す
+  step(
+    "6h. サイトの中からコードを書き換えると doctor が気づき、rollback は送った artifact から作り直す",
+  );
+  a = agentcms("doctor-clean-code", ["deploy", "doctor", "-t", S2.target]);
+  check(
+    /公開中のコード[^\n]*\n?[^\n]*送った物と同じ/.test(a.out) || (a.out.includes("公開中のコード") && !a.out.includes("違います")),
+    "書き換える前の doctor は、公開中のコードを送った物と同じと言う",
+  );
+  // 乗っ取られたサイトができること: いまの release と、戻し先の古い release の両方にバックドアを置く
+  const tampered = inS2(
+    [
+      "set -e",
+      "for d in releases/*/; do printf '%s' '<?php echo \"e2e-backdoor\";' > \"$d\"public/e2e-backdoor.php; done",
+      "printf '%s' '<?php echo \"php-tampered\";' > current/public/e2e-version.php",
+      "echo tampered",
+    ].join("; "),
+  ).stdout;
+  check(
+    tampered.includes("tampered") && (await get(S2.host, "/e2e-backdoor.php")).body.includes("e2e-backdoor"),
+    "サイト 2 の中から、いまの release と古い release にバックドアを置き、いまのコードを書き換えた（配信されている）",
+  );
+  a = agentcms("doctor-tampered", ["deploy", "doctor", "-t", S2.target]);
+  check(
+    /中身の違い 1 か所・足された物 1 個/.test(a.out),
+    `doctor は、公開中のコードが送った物と違うことに気づいた（${(/中身の違い[^）]*）/.exec(a.out) ?? ["見つからない"])[0]}）`,
+  );
+  a = agentcms("rollback-tampered", ["deploy", "rollback", "-t", S2.target, "-y"]);
+  const afterRb2 = await get(S2.host, "/e2e-version.php");
+  check(
+    a.code === 0 && a.out.includes("送った artifact から作り直しました") &&
+      (await get(S2.host, "/e2e-backdoor.php")).status === 404 &&
+      /^php-v\d-two$/.test(afterRb2.body.trim()),
+    `rollback は戻し先を送った物から作り直したので、古い release に置いたバックドアは消えた（/e2e-version.php: ${afterRb2.body.trim().slice(0, 40)}）`,
+  );
+  a = agentcms("doctor-after-rollback", ["deploy", "doctor", "-t", S2.target]);
+  check(
+    !/中身の違い/.test(a.out) && a.out.includes("公開中のコード"),
+    "戻したあとの doctor は、公開中のコードを送った物と同じと言う",
   );
   a = agentcms("doctor-backup-ok", ["deploy", "doctor", "-t", S2.target]);
   check(

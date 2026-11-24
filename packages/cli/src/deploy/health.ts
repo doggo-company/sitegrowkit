@@ -12,6 +12,30 @@ interface FetchResult {
   body: string;
 }
 
+/**
+ * 1 つの応答で読む本文の上限（展開したあとの大きさ）。乗っ取られたサイトが巨大な応答を返しても、
+ * 手元の CLI のメモリを使い切らせない。超えたら「接続できなかった」と同じに扱う
+ */
+export const HEALTH_MAX_BODY_BYTES = 2 * 1024 * 1024;
+
+async function readCapped(res: Response): Promise<string | null> {
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > HEALTH_MAX_BODY_BYTES) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 async function get(url: string): Promise<FetchResult | null> {
   try {
     const res = await fetch(url, {
@@ -19,7 +43,26 @@ async function get(url: string): Promise<FetchResult | null> {
       signal: AbortSignal.timeout(15_000),
       headers: { "User-Agent": "agentcms-health/0.1" },
     });
-    return { status: res.status, headers: res.headers, body: await res.text() };
+    const body = await readCapped(res);
+    if (body === null) return null;
+    return { status: res.status, headers: res.headers, body };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * TOP の HTML の中のアセットの参照を、サイトと同じ origin の URL にだけ解く。
+ * HTML は乗っ取られたサイトが書き換えられるので、別の場所（手元の 127.0.0.1・社内の網）を
+ * 指していたら取りに行かない（手元の CLI から GET を送らせない）
+ */
+export function sameOriginAsset(assetRef: string, baseUrl: string): string | null {
+  try {
+    const base = new URL(baseUrl);
+    const u = new URL(assetRef, base);
+    return u.origin === base.origin && u.pathname.includes("/build/assets/")
+      ? u.href
+      : null;
   } catch {
     return null;
   }
@@ -199,8 +242,17 @@ export async function runHealthChecks(
   if (top && top.status === 200) {
     const m = /(?:href|src)="([^"]*\/build\/assets\/[^"]+)"/.exec(top.body);
     const assetRef = m?.[1];
-    if (assetRef) {
-      const assetUrl = assetRef.startsWith("http") ? assetRef : url(assetRef);
+    const assetUrl = assetRef ? sameOriginAsset(assetRef, `${baseUrl.replace(/\/$/, "")}/`) : null;
+    if (assetRef && !assetUrl) {
+      checks.push({
+        key: "assets",
+        name: "build アセット配信",
+        status: "FAIL",
+        what: "TOP の HTML の build アセットの参照が、サイトと別の場所を指しています",
+        why: "HTML が書き換えられた可能性があります（別の場所へは取りに行きません）",
+        fix: "ページソースの /build/assets/ 参照と、公開中のコード（agentcms deploy doctor の「公開中のコード」）を確かめてください",
+      });
+    } else if (assetUrl) {
       const asset = await get(assetUrl);
       checks.push(
         check(

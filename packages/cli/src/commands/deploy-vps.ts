@@ -8,7 +8,6 @@ import {
   optimize,
   switchCurrent,
   taxonomySync,
-  uploadAndExtract,
   type DeployContext,
 } from "../deploy/release.js";
 import {
@@ -19,6 +18,7 @@ import {
   healthyReleases,
   markHealthy,
   readCurrent,
+  rebuildReleaseFromArtifact,
   releaseIdIsFree,
   rollbackTargetByHistory,
   releaseSiteLock,
@@ -26,6 +26,7 @@ import {
   siteContainers,
   siteFsContext,
   siteRoute,
+  uploadAndExtractVps,
   vpsDoctor,
   vpsSetupActions,
 } from "../deploy/providers/vps.js";
@@ -159,7 +160,8 @@ export function vpsDeploySteps(
   return [
     ["release の番号が空いているか", () => releaseIdIsFree(ctx)],
     ["レイアウト作成 + shared/.env 検査", () => ensureLayout(fs)],
-    ["artifact アップロード + 展開", () => uploadAndExtract(fs, artifactPath)],
+    // 送った artifact は control に残し、そこから標準入力で展開する（サイトの tmp/ を経由しない）
+    ["artifact アップロード + 展開", () => uploadAndExtractVps(ctx, artifactPath)],
     ["shared リンク（storage / .env）", () => linkShared(fs)],
     [
       "サイトのコンテナ（PHP-FPM / web / scheduler）",
@@ -427,6 +429,37 @@ async function rollbackLocked(
     warn("中止しました");
     return 1;
   }
+  // 戻す先は、置き場所の中の物（サイトが書き換えられる）ではなく、送った artifact から作り直す
+  const rebuilt = await rebuildReleaseFromArtifact(ctx, prev);
+  if (!rebuilt.ok) {
+    fail({
+      what: "戻す先を送った物から作り直せませんでした（current は変えていません）",
+      why: rebuilt.detail ?? "-",
+      fix: `${n.controlDir}/artifacts を確かめてください。分かったうえで置き場所の中の物のまま戻すなら ssh で ln -sfn ${n.appDir}/releases/${prev} ${n.appDir}/current`,
+    });
+    return 1;
+  }
+  if (rebuilt.rebuilt) {
+    const rctx = { ...ctx, releaseId: prev };
+    for (const [label, step] of [
+      ["shared リンク", () => linkShared(siteFsContext(rctx))],
+      ["config / view キャッシュ", () => optimize(rctx)],
+    ] as Array<[string, () => Promise<StepResult>]>) {
+      const r = await step();
+      if (!r.ok) {
+        fail({
+          what: `作り直した ${prev} の${label}に失敗しました（current は変えていません）`,
+          why: r.detail ?? "-",
+          fix: "原因を直してから、もう一度 rollback を流してください",
+        });
+        return 1;
+      }
+    }
+    info(`  戻す先 ${prev} を、送った artifact から作り直しました（置き場所の中の古いコードは使いません）`);
+  } else
+    warn(
+      `${prev} は送った artifact が残っていないので（前の版で出した release）、置き場所の中のコードのまま戻します`,
+    );
   const rb = await switchCurrent(siteFsContext(ctx), `${n.appDir}/releases/${prev}`);
   if (!rb.ok) {
     fail({

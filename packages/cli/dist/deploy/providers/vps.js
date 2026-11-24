@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { shq } from "../executor.js";
-import { APP_KEY_PLACEHOLDER, FPM_SOCKET_IN_CONTAINER, BACKUP_RUNNING_HOURS, BACKUP_STALE_HOURS, backupScript, CADDY_CONTAINER, DB_MAX_USER_CONNECTIONS, DB_PASSWORD_PLACEHOLDER, DOMAIN_MARK, edgeCaddyfile, edgeCompose, MYSQL_CONTAINER, PHP_IMAGE, phpDockerfile, siteCaddy, siteCompose, siteNginx, vpsNames, } from "./vps-assets.js";
+import { APP_KEY_PLACEHOLDER, FPM_SOCKET_IN_CONTAINER, MYSQL_IMAGE, BACKUP_RUNNING_HOURS, BACKUP_STALE_HOURS, backupScript, CADDY_CONTAINER, DB_MAX_USER_CONNECTIONS, DB_PASSWORD_PLACEHOLDER, DOMAIN_MARK, edgeCaddyfile, edgeCompose, MYSQL_CONTAINER, PHP_IMAGE, phpDockerfile, siteCaddy, siteCompose, siteNginx, vpsNames, } from "./vps-assets.js";
 import { minimalEnv } from "./xserver-setup.js";
 /**
  * provider "vps"（Docker の入った Linux VPS 1 台・ADR-0021）。
@@ -135,6 +135,88 @@ caddy_join_all() {
 }`;
 /** DB 名・利用者名（`sgk-<サイト名>`）の形。SQL とシェルに入る前に台本の中でも確かめる */
 const DB_NAME_SHELL_RE = "^sgk-[a-z][a-z0-9-]{0,26}[a-z0-9]$";
+// ---------------------------------------------------------------- 送った artifact（control に残す）
+/**
+ * いまの release を、deploy で送った artifact（control/<site>/artifacts・サイトは書けない）と比べる台本。
+ * 使い捨てのコンテナ（MySQL の公式イメージ＝GNU tar・サイトのコードは動かさない・ネットワークなし・
+ * 権限なし・根は読むだけ・上限つき）の中で流す。サイトの置き場所も artifact も読むだけで入れる。
+ * 出すのは `diff=<中身の違う数> extra=<足された数>` か `missing` の 1 行だけ（ファイル名は出さない）。
+ *
+ * 比べないもの: shared へのリンク（storage・.env・public/storage）・deploy が作る bootstrap/cache・health の印
+ */
+const INTEGRITY_INNER = `id="$1"; r="/site/releases/$id"
+if [ ! -d "$r" ] || [ -L "$r" ]; then echo missing; exit 0; fi
+skip='^(tar: )?(\\./)?(storage|\\.env|public/storage|bootstrap/cache|\\.agentcms-healthy)(/|:|$)'
+# tar --compare は違いがあると 1・壊れていると 2 で終わる
+cmp=$(tar --compare -zf /a.tar.gz -C "$r" 2>&1); rc=$?
+[ "$rc" -le 1 ] || exit 1
+d=$(printf '%s\\n' "$cmp" | grep -E ': (Contents differ|Size differs|File type differs|Symlink differs|Not found in archive|Cannot stat|Cannot readlink)' | grep -cvE "$skip")
+list=$(tar -tzf /a.tar.gz) || exit 1
+printf '%s\\n' "$list" | sed 's#^\\./##; s#/$##' | sort -u > /tmp/a
+( cd "$r" && find . -mindepth 1 \\( -path ./storage -o -path ./.env -o -path ./public/storage -o -path ./bootstrap/cache -o -path ./.agentcms-healthy \\) -prune -o \\( -type f -o -type l \\) -print ) | sed 's#^\\./##' | sort -u > /tmp/f
+x=$(comm -13 /tmp/a /tmp/f | wc -l)
+echo "diff=$d extra=$x"`;
+/** INTEGRITY_INNER を流すコマンド行（最後に release の番号を足して使う） */
+export function integrityCommand(n) {
+    const art = `${n.controlDir}/artifacts`;
+    return (`docker run --rm --init --pull never --network none --cap-drop ALL --security-opt no-new-privileges ` +
+        `--read-only --tmpfs /tmp:size=32m,mode=1777,nosuid,nodev,noexec --memory 256m --memory-swap 256m ` +
+        `--pids-limit 64 --cpus 1.0 --log-driver none --user "$(id -u):$(id -g)" ` +
+        `-v ${shq(`${n.appDir}:/site:ro`)} -v ${shq(art)}/"$id".tar.gz:/a.tar.gz:ro ` +
+        `--entrypoint timeout ${shq(MYSQL_IMAGE)} -s KILL 300 bash -c ${shq(INTEGRITY_INNER)} sh`);
+}
+/**
+ * 送って展開する（vps）。artifact はまず control/<site>/upload（サイトから見えない）へ scp し、
+ * control/<site>/artifacts/<id>.tar.gz として残す（checksum つき）。展開はそこから**標準入力で**
+ * 置き場所だけを入れた使い捨てのコンテナへ流す — サイトが書ける場所（tmp/）を経由しないので、
+ * 展開の前に中身を差し替えられない。残した artifact は doctor の比べ物と、rollback の作り直しに使う
+ */
+export async function uploadAndExtractVps(ctx, artifactPath) {
+    const n = vpsNames(ctx.cfg);
+    const id = ctx.releaseId;
+    if (!/^\d{14}$/.test(id))
+        return ng("upload", `release の番号の形が違います: ${id}`);
+    const up = `${n.controlDir}/upload`;
+    const art = `${n.controlDir}/artifacts`;
+    const mk = await ctx.exec.exec(`mkdir -p ${shq(up)} ${shq(art)} && chmod 700 ${shq(n.controlDir)} ${shq(up)} ${shq(art)}`);
+    if (mk.code !== 0)
+        return ng("upload", `control に置き場所を作れません: ${tail(mk)}`);
+    const sent = await ctx.exec.upload(artifactPath, `${up}/${id}.tar.gz`);
+    if (sent.code !== 0)
+        return ng("upload", `scp 失敗: ${sent.stderr}`);
+    const r = await runScript(ctx.exec, `set -euo pipefail
+${siteFsFns(n)}
+f=${shq(`${up}/${id}.tar.gz`)}
+gzip -t "$f" || { rm -f "$f"; echo "artifact-odd: 送った artifact が壊れています"; exit 1; }
+mv -f "$f" ${shq(`${art}/${id}.tar.gz`)}
+( cd ${shq(art)} && sha256sum ${shq(`${id}.tar.gz`)} > ${shq(`${id}.sha256`)} )
+in_site_in ${shq(`rm -rf releases/${id} && mkdir -p releases/${id} && tar -xzf - -C releases/${id} && test -f releases/${id}/artisan && echo extract-ok`)} < ${shq(`${art}/${id}.tar.gz`)}`, 600_000);
+    if (r.code !== 0 || !r.stdout.includes("extract-ok"))
+        return ng("extract", `展開失敗: ${tail(r)}`);
+    return ok("upload+extract", `${art}/${id}.tar.gz`);
+}
+/**
+ * rollback の前に、戻す先の release を送った artifact から作り直す（置き場所の中の古い release は
+ * サイトが書き換えられるので、そのまま戻すと乗っ取られたコードへ戻りうる）。
+ * artifact が無い（前の版の deploy で出した）release は作り直せないので `rebuilt: false` を返す
+ */
+export async function rebuildReleaseFromArtifact(ctx, id) {
+    const n = vpsNames(ctx.cfg);
+    if (!/^\d{14}$/.test(id))
+        return { ok: false, rebuilt: false, detail: `release の番号の形が違います: ${id}` };
+    const art = `${n.controlDir}/artifacts`;
+    const r = await runScript(ctx.exec, `set -euo pipefail
+${siteFsFns(n)}
+cd ${shq(art)} 2>/dev/null || { echo no-artifact; exit 0; }
+[ -f ${shq(`${id}.tar.gz`)} ] && [ -f ${shq(`${id}.sha256`)} ] || { echo no-artifact; exit 0; }
+sha256sum -c --quiet ${shq(`${id}.sha256`)} || { echo "artifact-odd: 残した artifact の checksum が合いません"; exit 1; }
+in_site_in ${shq(`set -e; rm -rf releases/.rebuild-${id}; mkdir releases/.rebuild-${id}; tar -xzf - -C releases/.rebuild-${id}; test -f releases/.rebuild-${id}/artisan; rm -rf releases/${id}; mv releases/.rebuild-${id} releases/${id}; touch releases/${id}/${HEALTHY_MARK}; echo rebuild-ok`)} < ${shq(`${id}.tar.gz`)}`, 600_000);
+    if (r.code === 0 && r.stdout.includes("no-artifact"))
+        return { ok: true, rebuilt: false };
+    if (r.code !== 0 || !r.stdout.includes("rebuild-ok"))
+        return { ok: false, rebuilt: false, detail: tail(r) };
+    return { ok: true, rebuilt: true };
+}
 // ---------------------------------------------------------------- doctor
 /** `agentcms deploy doctor`（vps）。読むだけで何も変えない */
 export async function vpsDoctor(exec, cfg) {
@@ -164,9 +246,10 @@ export async function vpsDoctor(exec, cfg) {
     add({ key: "ssh", name: "SSH 接続", status: "PASS" });
     const r = await runScript(exec, doctorScript(n));
     const facts = new Map();
+    // 同じ鍵は最初の行だけを使う（サイトが決められる値は台本の側で base64 にして 1 行にしてある）
     for (const line of r.stdout.split("\n")) {
         const i = line.indexOf("=");
-        if (i > 0)
+        if (i > 0 && !facts.has(line.slice(0, i)))
             facts.set(line.slice(0, i), line.slice(i + 1));
     }
     const fact = (k) => facts.get(k) ?? "";
@@ -287,6 +370,19 @@ export async function vpsDoctor(exec, cfg) {
             why: "1 つのサイトが置き場所を書き足し続けると、MySQL とほかのサイトも書けなくなります（サイトのコンテナは同じ uid で動くので、利用者ごとの quota では区切れません）",
             fix: `${n.root}/sites をサイトごとに容量を区切ったファイルシステム（project quota・サイトごとのディスクイメージなど）に置くか、Docker の置き場所と別のディスクに分けてください（docs/deployment/vps.md「1 台に置くサイトの上限」）`,
         });
+    const current = decodeCurrent(n, fact("current_b64"));
+    if (current.odd)
+        add({
+            key: "current",
+            name: "current（いま出ている release）",
+            status: "WARN",
+            what: `${n.appDir}/current がこのサイトの release（releases/<14 桁>）を指していません`,
+            why: "サイトのコンテナが書き換えられる場所です。乗っ取られた可能性があります",
+            fix: "`agentcms deploy` で出し直してください（deploy は current をこの形でしか信じません）",
+        });
+    const integ = integrityCheck(n, fact("integrity"));
+    if (integ)
+        add(integ);
     const bk = backupCheck(n, {
         status: fact("backup_status"),
         container: fact("backup_container"),
@@ -295,7 +391,52 @@ export async function vpsDoctor(exec, cfg) {
     });
     if (bk)
         add(bk);
-    return done(fact("current") || null);
+    return done(current.target);
+}
+/**
+ * current の symlink の値（base64）を読む。このサイトの releases/<14 桁> を指していなければ信じない。
+ * 値はサイトが決められるので、台本は base64 の 1 行にして返す（改行で診断の行を足させない）
+ */
+export function decodeCurrent(n, b64) {
+    if (!b64)
+        return { target: null, odd: false };
+    if (!/^[A-Za-z0-9+/=]{1,8192}$/.test(b64))
+        return { target: null, odd: true };
+    const v = Buffer.from(b64, "base64").toString("utf8");
+    const prefix = `${n.appDir}/releases/`;
+    return v.startsWith(prefix) && /^\d{14}$/.test(v.slice(prefix.length))
+        ? { target: v, odd: false }
+        : { target: null, odd: true };
+}
+/**
+ * doctor の「公開中のコードが送った物のままか」の行。
+ * 台本の出力 `integrity=diff=<n> extra=<n>|none|missing|error`。
+ * deploy は送った artifact を control/<site>/artifacts に残し、doctor はいまの release をそれと比べる
+ * （比べるのはサイトのコードを動かさない使い捨てのコンテナの中・GNU tar の --compare と一覧）
+ */
+export function integrityCheck(n, raw) {
+    const name = "公開中のコード（deploy で送った物との違い）";
+    if (raw === "" || raw === "none")
+        return null;
+    const m = /^diff=(\d+) extra=(\d+)$/.exec(raw);
+    if (m && m[1] === "0" && m[2] === "0")
+        return { key: "integrity", name, status: "PASS", detected: "送った物と同じ" };
+    return {
+        key: "integrity",
+        name,
+        status: "WARN",
+        what: m
+            ? `いま出ている release のコードが、deploy で送った物と違います（中身の違い ${m[1]} か所・足された物 ${m[2]} 個）`
+            : raw === "missing"
+                ? "いま出ている release の置き場所がありません"
+                : "いま出ている release を、送った物と比べられませんでした",
+        why: m
+            ? "サイトのコンテナは自分のコードを書き換えられます。乗っ取られた可能性があります"
+            : "比べるコンテナが動かなかったか、時間切れです",
+        fix: m
+            ? `\`agentcms deploy\` で出し直すか、\`agentcms deploy rollback\`（送った物から作り直してから戻す）。shared/storage・DB も確かめ、${n.controlDir}/backup の写しから戻すかを決めてください`
+            : "もう一度 doctor を流してください",
+    };
 }
 /** 失敗の言葉（台本が決めた物だけ）と、その意味 */
 export const BACKUP_ERRORS = {
@@ -406,7 +547,17 @@ for g in ${shq(n.root + "/edge/sites")}/*.caddy; do
   if grep -qxF ${shq(`${DOMAIN_MARK} ${n.domain}`)} "$g"; then echo "domain_taken_by=$(basename "$g" .caddy)"; fi
 done
 [ -f ${shq(n.controlDir + "/site")} ] && echo "site_owner=$(head -1 ${shq(n.controlDir + "/site")})"
-echo "current=$(readlink ${shq(n.appDir + "/current")} 2>/dev/null)"
+# current の値はサイトが決められる。改行を入れて行を足させないよう base64 の 1 行で返す
+echo "current_b64=$(printf '%s' "$(readlink ${shq(n.appDir + "/current")} 2>/dev/null)" | base64 | tr -d '\\n')"
+# 公開中のコードが、deploy で送った物（control/<site>/artifacts・サイトは書けない）のままか
+cur=$(readlink ${shq(n.appDir + "/current")} 2>/dev/null || true); id=\${cur##*/}
+if [[ "$cur" == ${shq(n.appDir + "/releases/")}* ]] && [[ "$id" =~ ^[0-9]{14}$ ]] && [ -f ${shq(n.controlDir + "/artifacts")}/"$id".tar.gz ]; then
+  out=$(${integrityCommand(n)} "$id" 2>/dev/null | tail -1) || out=error
+  [[ "$out" =~ ^(diff=[0-9]+\\ extra=[0-9]+|missing)$ ]] || out=error
+  echo "integrity=$out"
+else
+  echo integrity=none
+fi
 ${edgeRootProbe(n)}
 # サーバーの夜のバックアップの記録（control の中・サイトのコンテナから見えない。backup のコンテナだけが書く）
 bk=${shq(n.controlDir + "/backup/status.json")}
@@ -841,8 +992,8 @@ export function siteContainersScript(n, compose, nginx) {
     const c = n.controlDir;
     return `set -euo pipefail
 ${siteFsFns(n)}
-mkdir -p ${shq(c + "/backup")}
-chmod 700 ${shq(c)} ${shq(c + "/backup")}
+mkdir -p ${shq(c + "/backup")} ${shq(n.root + "/control/.backup-lock")}
+chmod 700 ${shq(c)} ${shq(c + "/backup")} ${shq(n.root + "/control/.backup-lock")}
 cat > ${shq(c + "/nginx.conf.tmp")} << 'AGENTCMS_NGINX'
 ${nginx}AGENTCMS_NGINX
 chmod 644 ${shq(c + "/nginx.conf.tmp")}
@@ -1004,7 +1155,14 @@ for d in $(ls -1 | grep -E "^[0-9]{14}$"); do
 done
 rm -f tmp/*.tar.gz
 echo cleanup-ok'
-rm -f ${shq(n.controlDir + "/upload")}/*.tar.gz`);
+rm -f ${shq(n.controlDir + "/upload")}/*.tar.gz
+# 残す release の分だけ、送った artifact を残す（control の中・サイトは書けない）
+for f in ${shq(n.controlDir + "/artifacts")}/*.tar.gz; do
+  [ -e "$f" ] || continue
+  id=$(basename "$f" .tar.gz)
+  case " ${keepList} " in *" $id "*) continue ;; esac
+  rm -f "$f" ${shq(n.controlDir + "/artifacts")}/"$id".sha256
+done`);
     return r.code === 0 && r.stdout.includes("cleanup-ok")
         ? ok("cleanup")
         : ng("cleanup", tail(r));
@@ -1048,25 +1206,27 @@ export async function releaseIdIsFree(ctx) {
  */
 export async function readCurrent(ctx) {
     const n = vpsNames(ctx.cfg);
-    const r = await ctx.exec.exec(`cd ${shq(n.appDir)} || exit 3; if [ -L current ]; then printf 'current=%s\\n' "$(readlink current)"; elif [ -e current ]; then echo current-not-link; else echo current-none; fi`);
-    if (r.code === 0 && r.stdout.includes("current-none"))
+    const r = await ctx.exec.exec(
+    // current の値はサイトが決められる。改行で「current-none」などの行を足させないよう base64 の 1 行で返す
+    `cd ${shq(n.appDir)} || exit 3; if [ -L current ]; then printf 'current_b64=%s\\n' "$(printf '%s' "$(readlink current)" | base64 | tr -d '\\n')"; elif [ -e current ]; then echo current-not-link; else echo current-none; fi`);
+    const out = r.stdout.trim();
+    if (r.code === 0 && out === "current-none")
         return { ok: true, target: null };
-    const m = /current=(.*)/.exec(r.stdout);
+    const m = /^current_b64=([A-Za-z0-9+/=]*)$/.exec(out);
     if (r.code === 0 && m) {
         // current はサイトのコンテナが書き換えられる。この置き場所の release を指していなければ信じない
         // （戻す先・画面に出す直し方のコマンドに、サイトの決めた値を入れない）
-        const target = m[1];
-        const prefix = `${n.appDir}/releases/`;
-        if (target.startsWith(prefix) && /^\d{14}$/.test(target.slice(prefix.length)))
-            return { ok: true, target };
+        const c = decodeCurrent(n, m[1]);
+        if (c.target)
+            return { ok: true, target: c.target };
         return {
             ok: false,
-            detail: `${n.appDir}/current がこのサイトの release（releases/<14 桁>）を指していません（${JSON.stringify(target.slice(0, 80))}）。何も変えずに止めました。ssh で current を正しい release へ向け直してください`,
+            detail: `${n.appDir}/current がこのサイトの release（releases/<14 桁>）を指していません。何も変えずに止めました。ssh で current を正しい release へ向け直してください`,
         };
     }
     return {
         ok: false,
-        detail: r.stdout.includes("current-not-link")
+        detail: out === "current-not-link"
             ? `${n.appDir}/current が symlink ではありません（手で作られたディレクトリなど）。何も変えずに止めました`
             : `いまの release（current）を読めませんでした: ${tail(r)}。何も変えずに止めました`,
     };

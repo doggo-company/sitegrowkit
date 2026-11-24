@@ -522,7 +522,7 @@ describe("doctor", () => {
             "php_image=yes",
             "env=yes",
             "site_owner=staging.example.com",
-            "current=/srv/agentcms/sites/example-staging/releases/1",
+            `current_b64=${Buffer.from("/srv/agentcms/sites/example-staging/releases/20261124000000").toString("base64")}`,
             `backup_status=${Buffer.from(JSON.stringify({ version: 1, state: "ok", error: null, id: "20261124030000", startedAt: 1_800_000_000, finishedAt: 1_800_000_060, lastSuccessAt: 1_800_000_060, lastSuccessId: "20261124030000", dbBytes: 1, filesBytes: 1 })).toString("base64")}`,
             "backup_container=running",
             "server_now=1800000100",
@@ -533,7 +533,7 @@ describe("doctor", () => {
     const { capabilities } = await vpsDoctor(ex, cfgOf());
     expect(capabilities.checks.filter((c) => c.status !== "PASS")).toEqual([]);
     expect(capabilities.currentRelease).toBe(
-      "/srv/agentcms/sites/example-staging/releases/1",
+      "/srv/agentcms/sites/example-staging/releases/20261124000000",
     );
   });
 
