@@ -88,6 +88,18 @@ describe("current の値で診断の行を足させない", () => {
     expect((await readCurrent(ctx(`current_b64=${b64("/srv/agentcms/sites/shop-a/releases/1\ncurrent-none")}`))).ok).toBe(false);
   });
 
+  it("doctor: 夜のバックアップの失敗・公開中のコードの違いを、サーバーの材料から WARN にする", async () => {
+    const st = b64(JSON.stringify({ version: 1, state: "failed", error: "db-auth", id: "20261124030000", startedAt: 1_800_000_000, finishedAt: 1_800_000_010, lastSuccessAt: 1_799_990_000, lastSuccessId: "20261123030000", dbBytes: 1, filesBytes: 1 }));
+    const lines = ["docker=28", "compose=2", "root_writable=yes", "caddy=true", "mysql=true", "php_image=yes", "env=yes", `current_b64=${b64("/srv/agentcms/sites/shop-a/releases/20261124000000")}`, "integrity=diff=1 extra=2", `backup_status=${st}`, "backup_container=running", "server_now=1800000100"];
+    const ex = new Canned((cmd) => (cmd.includes("agentcms-ssh-ok") ? { code: 0, stdout: "agentcms-ssh-ok", stderr: "" } : { code: 0, stdout: lines.join("\n"), stderr: "" }));
+    const { capabilities } = await vpsDoctor(ex, cfgAt("/srv/agentcms"));
+    const by = Object.fromEntries(capabilities.checks.map((c) => [c.key, c]));
+    expect(by.backup?.status).toBe("WARN");
+    expect(by.backup?.what).toContain("db-auth");
+    expect(by.integrity?.status).toBe("WARN");
+    expect(by.integrity?.what).toContain("中身の違い 1 か所・足された物 2 個");
+  });
+
   it("公開中のコードが送った物と違えば WARN（違いの数だけ・ファイル名は出さない）", () => {
     expect(integrityCheck(n, "none")).toBeNull();
     expect(integrityCheck(n, "diff=0 extra=0")?.status).toBe("PASS");
@@ -95,6 +107,19 @@ describe("current の値で診断の行を足させない", () => {
     expect(w?.status).toBe("WARN");
     expect(w?.what).toContain("中身の違い 2 か所・足された物 1 個");
     expect(integrityCheck(n, "error")?.status).toBe("WARN");
+    // 出したことがある（公開の記録がある）のに比べられない・記録に無い release を指している → 黙らない
+    expect(integrityCheck(n, "none", true)?.status).toBe("WARN");
+    expect(integrityCheck(n, "unknown", true)?.what).toContain("公開の記録");
+  });
+
+  it("doctor: 公開の記録があるのに current が symlink でない・夜のバックアップのコンテナも記録も無い → WARN（current はサイトが消せる）", async () => {
+    const lines = ["docker=28", "compose=2", "root_writable=yes", "caddy=true", "mysql=true", "php_image=yes", "env=yes", "history_n=2", "current_kind=other", "current_b64=", "integrity=none", "backup_status=none", "backup_container=", "server_now=1800000100"];
+    const ex = new Canned((cmd) => (cmd.includes("agentcms-ssh-ok") ? { code: 0, stdout: "agentcms-ssh-ok", stderr: "" } : { code: 0, stdout: lines.join("\n"), stderr: "" }));
+    const { capabilities } = await vpsDoctor(ex, cfgAt("/srv/agentcms"));
+    const by = Object.fromEntries(capabilities.checks.map((c) => [c.key, c.status]));
+    expect(by.current).toBe("WARN");
+    expect(by.integrity).toBe("WARN");
+    expect(by.backup).toBe("WARN");
   });
 });
 
@@ -166,6 +191,10 @@ run("送った artifact を control に残し、そこから展開・作り直�
   it("rollback の前に、書き換えられた古い release を artifact から作り直す", async () => {
     const n = vpsNames(cfgAt(root));
     await uploadAndExtractVps(ctx("20261124000000"), artifact("v1"));
+    // 共有の storage に、PHP が読み込む物を置いた（メンテナンスの印）
+    mkdirSync(join(n.appDir, "shared/storage/framework/views"), { recursive: true });
+    writeFileSync(join(n.appDir, "shared/storage/framework/maintenance.php"), "<?php // BACKDOOR\n");
+    writeFileSync(join(n.appDir, "shared/storage/framework/views/abc.php"), "<?php // BACKDOOR\n");
     // サイトの中から古い release にバックドアを置いた
     writeFileSync(join(n.appDir, "releases/20261124000000/app/Kernel.php"), "<?php // BACKDOOR\n");
     writeFileSync(join(n.appDir, "releases/20261124000000/app/evil.php"), "<?php // BACKDOOR\n");
@@ -174,6 +203,19 @@ run("送った artifact を control に残し、そこから展開・作り直�
     expect(readFileSync(join(n.appDir, "releases/20261124000000/app/Kernel.php"), "utf8")).toContain("v1");
     expect(existsSync(join(n.appDir, "releases/20261124000000/app/evil.php"))).toBe(false);
     expect(existsSync(join(n.appDir, "releases/20261124000000/.agentcms-healthy"))).toBe(true);
+    expect(existsSync(join(n.appDir, "shared/storage/framework/maintenance.php"))).toBe(false);
+    expect(existsSync(join(n.appDir, "shared/storage/framework/views/abc.php"))).toBe(false);
+    // 作り直す間は app と scheduler を止め、終わったら起こす
+    const log = readFileSync(join(root, "docker.log"), "utf8");
+    expect(log).toMatch(/^stop agentcms-shop-a-app agentcms-shop-a-scheduler$/m);
+    expect(log.indexOf("stop agentcms-shop-a-app")).toBeLessThan(log.lastIndexOf("start agentcms-shop-a-app"));
+  });
+
+  it("current の symlink の先に改行と「current-none」を入れても、初回とは読まない（台本は base64 の 1 行で返す）", async () => {
+    const n = vpsNames(cfgAt(root));
+    spawnSync("ln", ["-s", `${n.appDir}/releases/20261124000000\ncurrent-none`, join(n.appDir, "current")]);
+    const r = await readCurrent(ctx("20261124000001"));
+    expect(r.ok).toBe(false);
   });
 
   it("artifact の checksum が合わなければ作り直さずに止まる・artifact が無ければそう言う", async () => {

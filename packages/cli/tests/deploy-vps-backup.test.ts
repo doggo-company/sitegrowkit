@@ -78,6 +78,16 @@ describe("サイトのコンテナは根を読むだけにし、一時領域は�
   });
 });
 
+describe("サイトの web は上げられたファイルを PHP として動かさない", () => {
+  it("/storage/ と /build/ は ^~ で .php の location より先に決める", async () => {
+    const { siteNginx } = await import("../src/deploy/providers/vps-assets.js");
+    const c = siteNginx(vpsNames(cfg()));
+    expect(c).toContain("location ^~ /storage/ {");
+    expect(c).toContain("location ^~ /build/ {");
+    expect(c.indexOf("location ^~ /storage/")).toBeLessThan(c.indexOf("location ~ \\.php$"));
+  });
+});
+
 describe("backup のコンテナ（サーバーが取る夜のバックアップ）", () => {
   const n = vpsNames(cfg({ backup: { at: "17:30", keep: 3, maxMB: 100 } }));
   const y = siteCompose(n, { uid: "1000", gid: "1001" });

@@ -210,7 +210,9 @@ export async function optimize(ctx) {
     const { cfg, exec, phpBin, releaseId } = ctx;
     const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
     // route:cache は closure ルートで失敗するため対象外（ADR-0008）
-    const r = await exec.exec(inDir(cfg, rel, `${shq(phpBin)} artisan config:cache && ${shq(phpBin)} artisan view:cache 2>&1`));
+    const r = await exec.exec(inDir(cfg, rel, 
+    // view:clear で前のコンパイル済みの view（storage の中＝書き換えられうる PHP）を消してから作り直す
+    `${shq(phpBin)} artisan config:cache && ${shq(phpBin)} artisan view:clear && ${shq(phpBin)} artisan view:cache 2>&1`));
     if (r.code !== 0)
         return ng("optimize", (r.stdout + r.stderr).slice(-300));
     return ok("optimize");

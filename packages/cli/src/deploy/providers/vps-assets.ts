@@ -304,7 +304,16 @@ server {
     real_ip_header X-Forwarded-For;
     real_ip_recursive on;
 
-    location /build/ {
+    # 上げられたファイル（storage）と build の中は PHP として動かさない（^~ で下の .php の location より先に決める）
+    location ^~ /storage/ {
+        location ~ /\\. {
+            deny all;
+            return 404;
+        }
+        try_files $uri =404;
+    }
+
+    location ^~ /build/ {
         expires 1y;
         add_header Cache-Control "public, immutable";
         access_log off;

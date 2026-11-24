@@ -149,7 +149,9 @@ health まで通った release には印が付き、公開した順に `releases
 
 **送った artifact は `control/<サイト名>/artifacts/<release id>.tar.gz`（checksum つき・サイトのコンテナには見えない）に、残す release の分だけ残す。** 展開はそこから標準入力で流す（サイトの置き場所の `tmp/` を経由しないので、展開の前に中身を差し替えられない）。
 
-- **rollback は、戻す先を置き場所の中の物のまま使わず、残した artifact から作り直してから切り替える。** 置き場所の中の古い release は、乗っ取られたサイトが書き換えられる（バックドアを置ける）ため。artifact の checksum が合わなければ、何も変えずに止まる。前の版のキットで出した release（artifact が無い）は、置き場所の中の物のまま戻し、そう言う
+- **rollback は、戻す先を置き場所の中の物のまま使わず、残した artifact から作り直してから切り替える。** 置き場所の中の古い release は、乗っ取られたサイトが書き換えられる（バックドアを置ける）ため。作り直す間は app と scheduler を止め（中のプロセスは起こし直すと全部新しくなる）、共有の storage の中で PHP が読み込む物（メンテナンスの印 `storage/framework/maintenance.php`・コンパイル済みの view）を片付ける。artifact の checksum が合わない・artifact が無い（前の版のキットで出した release）ときは、何も変えずに止まる
+- サイトの web は `/storage/`（上げられたファイル）と `/build/` の中の `.php` を PHP として動かさない
+- **まだ塞いでいないこと：サイトのコンテナは自分のコード（`releases/`）と共有の storage を書き換えられる。** 作り直しと doctor の比べは「書き換えられたあとで戻す・気づく」ための物で、書き換えそのものは止めない。乗っ取られたと分かったら、原因（脆弱性）を直したコードを出し直し、`shared/.env` の秘密（APP_KEY・DB のパスワード）と管理者のパスワードを替えること
 - **`agentcms deploy doctor` は、いま出ている release を送った artifact と比べる**（使い捨てのコンテナの中の GNU tar・サイトのコードは動かさない）。中身の違うファイル・足されたファイルがあれば WARN（数だけ・名前は出さない）。shared へのリンク（`storage`・`.env`・`public/storage`）と deploy が作る `bootstrap/cache` は比べない。サイトのコンテナは自分のコードを書き換えられるので、乗っ取りに気づく手がかりになる（書き換えを止めるものではない）
 
 ## 8. DB を戻す（手で）
@@ -182,7 +184,7 @@ db="sgk-$site"; user="sgk-$site"   # DB 名・利用者名はサイト名から�
 # どちらの使い捨てのコンテナにも、メモリ・プロセス・CPU・時間の上限を付け、ログを残さない。
 # 時間はコンテナの中の timeout で切るので、この端末や ssh が切れてもサーバーの上で終わり、--rm で消える
 # （--init で PID 1 を Docker の init にする。timeout の対象が PID 1 だと KILL が届かない）
-in_site() { docker run --rm -i --init --pull never --network none --cap-drop ALL --security-opt no-new-privileges \
+in_site() { docker run --rm -i --init --pull never --network none --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:size=64m \
   --memory 512m --memory-swap 512m --pids-limit 128 --cpus 1.0 --log-driver none \
   --user "$(id -u):$(id -g)" -v "$dir:$dir" -w "$dir" --entrypoint timeout agentcms-php:8.5-2 -s KILL 600 sh -c "$1"; }
 pw() { in_site 'grep -E "^DB_PASSWORD=" shared/.env | tail -1 | cut -d= -f2- | head -c 128' < /dev/null; }
@@ -191,7 +193,7 @@ pw() { in_site 'grep -E "^DB_PASSWORD=" shared/.env | tail -1 | cut -d= -f2- | h
 #  - サイトの利用者で流す（root では流さない）
 #  - --binary-mode でクライアントのコマンド（\! でシェルを動かす・source など）を止める
 # 利用者のパスワードは標準入力の 1 行目で渡す（コマンドの引数に載せない）
-in_mysql() { docker run --rm -i --init --pull never --network agentcms --cap-drop ALL --security-opt no-new-privileges \
+in_mysql() { docker run --rm -i --init --pull never --network agentcms --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:size=64m \
   --memory 512m --memory-swap 512m --pids-limit 64 --cpus 1.0 --log-driver none \
   --entrypoint timeout mysql:8.4 -s KILL 3600 sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec "$@"' sh "$@"; }
 # deploy・rollback と同時に動かさない。最初に鍵を取る（確かめたあとに release を消されないように。取れなければ何も変えずに止まる）

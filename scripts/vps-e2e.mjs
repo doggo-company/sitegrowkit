@@ -1536,7 +1536,7 @@ exit 0`,
     /中身の違い 1 か所・足された物 1 個/.test(a.out),
     `doctor は、公開中のコードが送った物と違うことに気づいた（${(/中身の違い[^）]*）/.exec(a.out) ?? ["見つからない"])[0]}）`,
   );
-  a = agentcms("rollback-tampered", ["deploy", "rollback", "-t", S2.target, "-y"]);
+  a = agentcms("rollback-tampered", ["deploy", "rollback", "-t", S2.target, "--confirm-target", S2.target, "-y"]);
   const afterRb2 = await get(S2.host, "/e2e-version.php");
   check(
     a.code === 0 && a.out.includes("送った artifact から作り直しました") &&

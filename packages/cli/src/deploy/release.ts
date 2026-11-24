@@ -290,7 +290,8 @@ export async function optimize(ctx: DeployContext): Promise<StepResult> {
     inDir(
       cfg,
       rel,
-      `${shq(phpBin)} artisan config:cache && ${shq(phpBin)} artisan view:cache 2>&1`,
+      // view:clear で前のコンパイル済みの view（storage の中＝書き換えられうる PHP）を消してから作り直す
+      `${shq(phpBin)} artisan config:cache && ${shq(phpBin)} artisan view:clear && ${shq(phpBin)} artisan view:cache 2>&1`,
     ),
   );
   if (r.code !== 0) return ng("optimize", (r.stdout + r.stderr).slice(-300));

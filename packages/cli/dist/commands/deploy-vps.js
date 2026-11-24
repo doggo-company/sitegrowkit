@@ -339,8 +339,15 @@ async function rollbackLocked(ctx, io, approval) {
         }
         info(`  戻す先 ${prev} を、送った artifact から作り直しました（置き場所の中の古いコードは使いません）`);
     }
-    else
-        warn(`${prev} は送った artifact が残っていないので（前の版で出した release）、置き場所の中のコードのまま戻します`);
+    else {
+        // 置き場所の中の古い release はサイトが書き換えられる。確かめられない物へは黙って戻さない
+        fail({
+            what: `${prev} は送った artifact が残っていないので（前の版のキットで出した release）、作り直せません（current は変えていません）`,
+            why: "置き場所の中の古い release は、サイトの中から書き換えられた可能性があり、確かめる物がありません",
+            fix: `手元の正しいコードから \`agentcms deploy\` で出し直してください。分かったうえで置き場所の中の物のまま戻すなら ssh で ln -sfn ${n.appDir}/releases/${prev} ${n.appDir}/current`,
+        });
+        return 1;
+    }
     const rb = await switchCurrent(siteFsContext(ctx), `${n.appDir}/releases/${prev}`);
     if (!rb.ok) {
         fail({

@@ -210,6 +210,12 @@ ${siteFsFns(n)}
 cd ${shq(art)} 2>/dev/null || { echo no-artifact; exit 0; }
 [ -f ${shq(`${id}.tar.gz`)} ] && [ -f ${shq(`${id}.sha256`)} ] || { echo no-artifact; exit 0; }
 sha256sum -c --quiet ${shq(`${id}.sha256`)} || { echo "artifact-odd: 残した artifact の checksum が合いません"; exit 1; }
+# 作り直す間、サイトのコードが動くコンテナ（app・scheduler）を止める（動いたままだと、作り直した物をまた書き換えられる）。
+# 起こすのは作り直したあと（中のプロセスは全部新しくなる）。web は止めない（その間は 502）
+docker stop ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null
+trap 'docker start ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null 2>&1 || true' EXIT
+# 共有の storage の中で、PHP が読み込む物を片付ける（メンテナンスの印・コンパイル済みの view。どちらも作り直せる）
+in_site 'rm -f shared/storage/framework/maintenance.php shared/storage/framework/down; find shared/storage/framework/views -type f -name "*.php" -delete 2>/dev/null; true'
 in_site_in ${shq(`set -e; rm -rf releases/.rebuild-${id}; mkdir releases/.rebuild-${id}; tar -xzf - -C releases/.rebuild-${id}; test -f releases/.rebuild-${id}/artisan; rm -rf releases/${id}; mv releases/.rebuild-${id} releases/${id}; touch releases/${id}/${HEALTHY_MARK}; echo rebuild-ok`)} < ${shq(`${id}.tar.gz`)}`, 600_000);
     if (r.code === 0 && r.stdout.includes("no-artifact"))
         return { ok: true, rebuilt: false };
@@ -371,7 +377,8 @@ export async function vpsDoctor(exec, cfg) {
             fix: `${n.root}/sites をサイトごとに容量を区切ったファイルシステム（project quota・サイトごとのディスクイメージなど）に置くか、Docker の置き場所と別のディスクに分けてください（docs/deployment/vps.md「1 台に置くサイトの上限」）`,
         });
     const current = decodeCurrent(n, fact("current_b64"));
-    if (current.odd)
+    const published = Number(fact("history_n")) > 0;
+    if (current.odd || (published && fact("current_kind") !== "link"))
         add({
             key: "current",
             name: "current（いま出ている release）",
@@ -380,14 +387,14 @@ export async function vpsDoctor(exec, cfg) {
             why: "サイトのコンテナが書き換えられる場所です。乗っ取られた可能性があります",
             fix: "`agentcms deploy` で出し直してください（deploy は current をこの形でしか信じません）",
         });
-    const integ = integrityCheck(n, fact("integrity"));
+    const integ = integrityCheck(n, fact("integrity"), published);
     if (integ)
         add(integ);
     const bk = backupCheck(n, {
         status: fact("backup_status"),
         container: fact("backup_container"),
         now: Number(fact("server_now")),
-        deployed: Boolean(fact("current")),
+        deployed: published,
     });
     if (bk)
         add(bk);
@@ -414,9 +421,10 @@ export function decodeCurrent(n, b64) {
  * deploy は送った artifact を control/<site>/artifacts に残し、doctor はいまの release をそれと比べる
  * （比べるのはサイトのコードを動かさない使い捨てのコンテナの中・GNU tar の --compare と一覧）
  */
-export function integrityCheck(n, raw) {
+export function integrityCheck(n, raw, published = false) {
     const name = "公開中のコード（deploy で送った物との違い）";
-    if (raw === "" || raw === "none")
+    // 出したことがある（公開の記録がある）のに比べられないときは、黙らずに WARN
+    if (raw === "" || (raw === "none" && !published))
         return null;
     const m = /^diff=(\d+) extra=(\d+)$/.exec(raw);
     if (m && m[1] === "0" && m[2] === "0")
@@ -429,13 +437,19 @@ export function integrityCheck(n, raw) {
             ? `いま出ている release のコードが、deploy で送った物と違います（中身の違い ${m[1]} か所・足された物 ${m[2]} 個）`
             : raw === "missing"
                 ? "いま出ている release の置き場所がありません"
-                : "いま出ている release を、送った物と比べられませんでした",
-        why: m
+                : raw === "unknown"
+                    ? "いま出ている release は、公開の記録（control）にありません（サイトの中から作られて current を向けられた？）"
+                    : raw === "none"
+                        ? "いま出ている release を比べる物（送った artifact）がありません（前の版で出した release か、current がおかしい）"
+                        : "いま出ている release を、送った物と比べられませんでした",
+        why: m || raw === "unknown"
             ? "サイトのコンテナは自分のコードを書き換えられます。乗っ取られた可能性があります"
-            : "比べるコンテナが動かなかったか、時間切れです",
+            : "比べられないので、書き換えに気づけません",
         fix: m
             ? `\`agentcms deploy\` で出し直すか、\`agentcms deploy rollback\`（送った物から作り直してから戻す）。shared/storage・DB も確かめ、${n.controlDir}/backup の写しから戻すかを決めてください`
-            : "もう一度 doctor を流してください",
+            : raw === "error"
+                ? "もう一度 doctor を流してください"
+                : "`agentcms deploy` で出し直すと、比べる物（artifact）ができます",
     };
 }
 /** 失敗の言葉（台本が決めた物だけ）と、その意味 */
@@ -547,11 +561,17 @@ for g in ${shq(n.root + "/edge/sites")}/*.caddy; do
   if grep -qxF ${shq(`${DOMAIN_MARK} ${n.domain}`)} "$g"; then echo "domain_taken_by=$(basename "$g" .caddy)"; fi
 done
 [ -f ${shq(n.controlDir + "/site")} ] && echo "site_owner=$(head -1 ${shq(n.controlDir + "/site")})"
+# 公開の記録（control の中・サイトは書けない）。出したことがあるかは、これで決める（current はサイトが消せる）
+echo "history_n=$(grep -cE '^[0-9]{14}$' ${shq(n.controlDir + "/" + HISTORY_FILE)} 2>/dev/null || echo 0)"
+if [ -L ${shq(n.appDir + "/current")} ]; then echo current_kind=link; elif [ -e ${shq(n.appDir + "/current")} ]; then echo current_kind=other; else echo current_kind=none; fi
 # current の値はサイトが決められる。改行を入れて行を足させないよう base64 の 1 行で返す
 echo "current_b64=$(printf '%s' "$(readlink ${shq(n.appDir + "/current")} 2>/dev/null)" | base64 | tr -d '\\n')"
 # 公開中のコードが、deploy で送った物（control/<site>/artifacts・サイトは書けない）のままか
 cur=$(readlink ${shq(n.appDir + "/current")} 2>/dev/null || true); id=\${cur##*/}
-if [[ "$cur" == ${shq(n.appDir + "/releases/")}* ]] && [[ "$id" =~ ^[0-9]{14}$ ]] && [ -f ${shq(n.controlDir + "/artifacts")}/"$id".tar.gz ]; then
+if [[ "$cur" == ${shq(n.appDir + "/releases/")}* ]] && [[ "$id" =~ ^[0-9]{14}$ ]] && ! grep -qx "$id" ${shq(n.controlDir + "/" + HISTORY_FILE)} 2>/dev/null; then
+  # 公開の記録に無い release（サイトが作って current を向けた？）
+  echo integrity=unknown
+elif [[ "$cur" == ${shq(n.appDir + "/releases/")}* ]] && [[ "$id" =~ ^[0-9]{14}$ ]] && [ -f ${shq(n.controlDir + "/artifacts")}/"$id".tar.gz ]; then
   out=$(${integrityCommand(n)} "$id" 2>/dev/null | tail -1) || out=error
   [[ "$out" =~ ^(diff=[0-9]+\\ extra=[0-9]+|missing)$ ]] || out=error
   echo "integrity=$out"
@@ -1101,18 +1121,25 @@ export async function healthyReleases(exec, cfg) {
     const n = vpsNames(cfg);
     // 記録は control（サイトから見えない）。印があるかは、置き場所だけを入れたコンテナの中で見る。
     // コンテナへ渡すのは番号の形（14 桁）の行だけ
+    // 送った artifact が control に残っている release は、印（サイトの中＝消せる）が無くても数える。
+    // サイトが印や release を消して、掃除に正しい artifact を消させたり、戻し先から外させたりしない
     const r = await exec.exec(`cd ${shq(n.controlDir)} 2>/dev/null || { echo history-none; exit 0; }; [ -f ${HISTORY_FILE} ] || { echo history-none; exit 0; }; ` +
         // 読めなければここで止まる（パイプの途中の失敗は sh では拾えないので、先に読み切る）
         `out=$(awk '{ l[NR] = $0 } END { for (i = NR; i > 0; i--) print l[i] }' ${HISTORY_FILE}) || exit 4; ` +
-        `printf '%s\\n' "$out" | grep -E '^[0-9]{14}$' | ${siteFsCommand(n, `while IFS= read -r d; do if [ -f "releases/$d/${HEALTHY_MARK}" ]; then echo "$d"; fi; done; echo history-ok`, { stdin: true })}`);
+        `for f in artifacts/*.tar.gz; do [ -f "$f" ] && echo "artifact=$(basename "$f" .tar.gz)"; done; ` +
+        `printf '%s\\n' "$out" | grep -E '^[0-9]{14}$' | sed 's/^/order=/'; ` +
+        `printf '%s\\n' "$out" | grep -E '^[0-9]{14}$' | ${siteFsCommand(n, `while IFS= read -r d; do if [ -f "releases/$d/${HEALTHY_MARK}" ]; then echo "mark=$d"; fi; done; echo history-ok`, { stdin: true })}`);
     // 読めなかったのか、まだ記録が無いのかを分ける（読めなかったのに空と読むと、掃除が戻り先を消す）
     if (r.code !== 0 || !/history-(ok|none)/.test(r.stdout))
         return null;
+    const lines = r.stdout.split("\n").map((l) => l.trim());
+    const pick = (k) => new Set(lines.filter((l) => l.startsWith(`${k}=`)).map((l) => l.slice(k.length + 1)).filter((v) => /^\d{14}$/.test(v)));
+    const trusted = new Set([...pick("artifact"), ...pick("mark")]);
     const seen = new Set();
-    return r.stdout
-        .split("\n")
-        .map((l) => l.trim())
-        .filter((l) => /^\d{14}$/.test(l) && !seen.has(l) && seen.add(l));
+    return lines
+        .filter((l) => l.startsWith("order="))
+        .map((l) => l.slice(6))
+        .filter((l) => /^\d{14}$/.test(l) && trusted.has(l) && !seen.has(l) && seen.add(l));
 }
 /**
  * rollback の先：公開の記録で current の 1 つ前。current が記録に無ければ選ばない
