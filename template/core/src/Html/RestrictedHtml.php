@@ -73,14 +73,10 @@ final class RestrictedHtml
         $config->set('Attr.AllowedFrameTargets', []);
         $config->set('CSS.AllowedProperties', []);
         $config->set('AutoFormat.RemoveEmpty', false);
-
-        $cacheDir = storage_path('app/purifier');
-
-        if (! is_dir($cacheDir)) {
-            mkdir($cacheDir, 0775, true);
-        }
-
-        $config->set('Cache.SerializerPath', $cacheDir);
+        // 定義のキャッシュは使わない（毎回このコードから作る）。HTMLPurifier はキャッシュを
+        // unserialize で読み込むので、置き場所がサイトの書ける storage だと、乗っ取られたサイトが
+        // 置いた定義（script を許す物など）や PHP のオブジェクトを、出し直したあとも読み込んでしまう
+        $config->set('Cache.DefinitionImpl', null);
 
         return $this->purifier = new HTMLPurifier($config);
     }

@@ -455,6 +455,29 @@ run("置き場所の中のリンクを mount の元にしない・起こし直�
     expect(existsSync(join(fw, "views"))).toBe(true);
   });
 
+  it("前の版のキットが storage に作った HTML の整え方の記録（app/purifier）を消す。ほかの app の中身には触らない", async () => {
+    const n = vpsNames(cfgAt(root));
+    const app = join(n.appDir, "shared", "storage", "app");
+    const pur = join(app, "purifier", "HTML");
+    mkdirSync(pur, { recursive: true });
+    mkdirSync(join(app, "public", "media"), { recursive: true });
+    writeFileSync(join(pur, "4.19.0,abc,1.ser"), 'O:8:"stdClass":0:{}');
+    writeFileSync(join(app, "public", "media", "a.png"), "png");
+    chmodSync(pur, 0o555);
+    chmodSync(join(app, "purifier"), 0o555);
+    expect((await stopSiteCode(ctxLocal())).ok).toBe(true);
+    expect(existsSync(join(app, "purifier"))).toBe(false);
+    expect(existsSync(join(app, "public", "media", "a.png"))).toBe(true);
+    // リンクなら、リンクだけを消す（先には触らない）
+    const elsewhere = join(app, "public", "keep");
+    mkdirSync(elsewhere, { recursive: true });
+    writeFileSync(join(elsewhere, "x.ser"), "x");
+    symlinkSync(elsewhere, join(app, "purifier"));
+    expect((await stopSiteCode(ctxLocal())).ok).toBe(true);
+    expect(spawnSync("test", ["-L", join(app, "purifier")]).status).not.toBe(0);
+    expect(existsSync(join(elsewhere, "x.ser"))).toBe(true);
+  });
+
   it("サイトが framework の権限を外していても消す（同じ利用者なので戻せる）", async () => {
     const n = vpsNames(cfgAt(root));
     const fw = join(n.appDir, "shared", "storage", "framework");
@@ -531,5 +554,15 @@ describe("doctor: 前の版の形のコンテナに気づく", () => {
   it("storage にメンテナンスの印があれば WARN（どのページでも PHP として読み込まれる）", async () => {
     expect((await doctorWith("0", ["maint=yes"])).maintenance?.status).toBe("WARN");
     expect((await doctorWith("0")).maintenance).toBeUndefined();
+  });
+
+  it("storage に HTML の整え方の記録（app/purifier）があれば WARN、無ければ PASS、確かめられなければ行を出さない", async () => {
+    const warn = (await doctorWith("0", ["purifier=yes"])).purifier;
+    expect(warn?.status).toBe("WARN");
+    expect(warn?.what).toContain("shared/storage/app/purifier");
+    expect(warn?.fix).toContain("agentcms deploy");
+    expect((await doctorWith("0", ["purifier=no"])).purifier?.status).toBe("PASS");
+    expect((await doctorWith("0", ["purifier=odd"])).purifier).toBeUndefined();
+    expect((await doctorWith("0")).purifier).toBeUndefined();
   });
 });
