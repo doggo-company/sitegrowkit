@@ -396,6 +396,185 @@ export function integrityCommand(n: VpsNames): string {
   );
 }
 
+// ---------------------------------------------------------------- 画面の部品（コンパイル済みの view）の checksum（control に残す）
+
+/**
+ * 画面の部品（`shared/storage/framework/views` のコンパイル済みの view）と、いまの release の
+ * `bootstrap/cache` の一覧を checksum つきで出す bash の関数（使い捨てのコンテナの中で流す）。
+ *
+ * コンパイル済みの view は PHP としてそのまま読み込まれるが、置き場所が `storage` なので、サイトの
+ * コンテナから書ける（コードと .env を読むだけにしても残る道）。deploy はキャッシュを作ったあと
+ * （サイトのコンテナを止めている間）にこの一覧を control/<site>/artifacts/<id>.views に残し、
+ * doctor はいまの一覧をそれと比べる。`bootstrap/cache` は deploy が作るので artifact との比べから
+ * 外してある。読むだけで入れているが、前の版のキットのコンテナは書けたので同じく比べる。
+ *
+ * 1 行 1 つ: `f <sha256> <b|v>/<名前>`（ファイル）・`<種類> - <b|v>/<名前>`（ディレクトリ・リンクなど）。
+ * 名前に決まった文字以外があるもの・読めないもの・置き場所そのものがリンクのときは `odd <印>`
+ * （名前は出さない＝サイトが決められる文字を診断に出さない）。
+ */
+const VIEWS_LIST_FN = `views_list() {
+  r="/site/releases/$1"
+  if [ ! -d "$r" ] || [ -L "$r" ]; then echo "odd r"; return 0; fi
+  ok='\\./[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*'
+  for t in b v; do
+    if [ "$t" = b ]; then d="$r/bootstrap/cache"; else d=/site/shared/storage/framework/views; fi
+    if [ -L "$d" ] || [ ! -d "$d" ]; then echo "odd $t"; continue; fi
+    ( cd "$d" || { echo "odd $t"; exit 0; }
+      find . -mindepth 1 -regextype posix-extended ! -regex "$ok" -printf 'odd n\\n' | head -1000
+      find . -mindepth 1 -regextype posix-extended -regex "$ok" ! -type f -printf "%y - $t/%P\\n"
+      find . -mindepth 1 -regextype posix-extended -regex "$ok" -type f -printf '%P\\n' | while IFS= read -r p; do
+        h=$(sha256sum < "$p" 2>/dev/null | cut -c1-64)
+        if [ \${#h} -eq 64 ]; then echo "f $h $t/$p"; else echo "odd u"; fi
+      done )
+  done | LC_ALL=C sort | head -100000
+}`;
+
+/** 記録の 1 行の形（deploy が control に書く前に確かめる） */
+const VIEWS_LINE_SRC = "^(f [0-9a-f]{64}|[a-zA-Z] -) [bv]/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$";
+export const VIEWS_LINE_RE = new RegExp(VIEWS_LINE_SRC);
+
+/**
+ * いまの一覧を、control に残した記録（/m）と比べる台本。出すのは
+ * `changed=<書き換え・差し替え・形の違う物> extra=<足された物> gone=<消えた物>` の 1 行か `missing`
+ */
+const VIEWS_CHECK_INNER = `${VIEWS_LIST_FN}
+cur=$(views_list "$1") || exit 1
+case "$cur" in "odd r") echo missing; exit 0 ;; esac
+printf '%s\\n' "$cur" | awk 'NR == FNR { if (NF == 3) m[$3] = $1 " " $2; next }
+  $1 == "odd" { odd++; next }
+  NF == 3 { seen[$3] = 1; if (!($3 in m)) extra++; else if (m[$3] != $1 " " $2) changed++ }
+  END { for (k in m) if (!(k in seen)) gone++; printf "changed=%d extra=%d gone=%d\\n", changed + odd, extra, gone }' /m -`;
+
+/**
+ * VIEWS_LIST_FN / VIEWS_CHECK_INNER を流すコマンド行（最後に release の番号を足して使う）。
+ * MySQL の公式イメージ（GNU の find・awk・sha256sum。サイトのコードは動かさない）・ネットワークなし・
+ * 権限なし・根は読むだけ・上限つき・サイトと同じ利用者。置き場所は読むだけで入れる
+ */
+export function viewsCommand(n: VpsNames, mode: "list" | "check"): string {
+  const art = `${n.controlDir}/artifacts`;
+  const inner = mode === "list" ? `${VIEWS_LIST_FN}\nviews_list "$1"` : VIEWS_CHECK_INNER;
+  return (
+    `docker run --rm --init --pull never --network none --cap-drop ALL --security-opt no-new-privileges ` +
+    `--read-only --tmpfs /tmp:size=32m,mode=1777,nosuid,nodev,noexec --memory 256m --memory-swap 256m ` +
+    `--pids-limit 64 --cpus 1.0 --log-driver none --user "$(id -u):$(id -g)" ` +
+    `-v ${shq(`${n.appDir}:/site:ro`)} ` +
+    (mode === "check" ? `-v ${shq(art)}/"$id".views:/m:ro ` : "") +
+    `--entrypoint timeout ${shq(MYSQL_IMAGE)} -s KILL 300 bash -c ${shq(inner)} sh`
+  );
+}
+
+/**
+ * 画面の部品の checksum を control/<site>/artifacts/<id>.views に残す（サイトのコンテナから見えない・600）。
+ * config / view のキャッシュを作ったあと、サイトのコンテナを止めている間（起こす前）に流す。
+ * 一覧の形が違う（名前のおかしい物・読めない物がある）ときは残さずに失敗にする
+ */
+export async function recordViews(ctx: DeployContext, id: string): Promise<StepResult> {
+  const n = vpsNames(ctx.cfg);
+  if (!/^\d{14}$/.test(id)) return ng("views", `release の番号の形が違います: ${id}`);
+  const art = `${n.controlDir}/artifacts`;
+  const r = await runScript(
+    ctx.exec,
+    `set -uo pipefail
+id=${shq(id)}
+out=$(${viewsCommand(n, "list")} "$id") || { echo "views-list-failed"; exit 1; }
+[ -n "$out" ] || { echo "views-empty"; exit 1; }
+bad=$(printf '%s\\n' "$out" | grep -cvE ${shq(VIEWS_LINE_SRC)}) || true
+[ "$bad" = 0 ] || { echo "views-odd: 画面の部品の一覧に、形の違う物が $bad 個あります（記録しません）"; exit 1; }
+mkdir -p ${shq(art)} && chmod 700 ${shq(art)}
+t=$(mktemp ${shq(art)}/.views.XXXXXX) && printf '%s\\n' "$out" > "$t" && chmod 600 "$t" && mv -f "$t" ${shq(art)}/"$id".views || exit 1
+echo "views-ok $(printf '%s\\n' "$out" | wc -l)"`,
+    600_000,
+  );
+  const m = /views-ok\s+(\d+)/.exec(r.stdout);
+  return r.code === 0 && m
+    ? ok("views", `画面の部品と bootstrap/cache の checksum を ${art}/${id}.views に残しました（${m[1]} 個）`)
+    : ng("views", `画面の部品の checksum を残せません: ${tail(r)}`);
+}
+
+/**
+ * health が通ったあと、記録に無い view（最初のページを開いたときにアプリが作る物）を記録に足す。
+ *
+ * Inertia の外枠の部品のように、view:cache では作られず、最初にページを開いたときにアプリが
+ * storage へ書く view がある（試験の「VPS の代わり」で、出した直後のサイトに毎回 4 個できた）。
+ * これを記録に入れないと、doctor と見張りがいつも「足された物」と知らせる。
+ * 足すのは `v/` の新しい名前だけで、記録にある物の checksum は変えない（キャッシュを作ったときの物のまま）。
+ * health は起こし直したばかりの、送った artifact から作ったコードが答えている。そのあいだ（数秒〜数十秒）に
+ * 新たに乗っ取られて置かれた物は、ここで記録に入りうる（docs の既知の限界）
+ */
+export async function appendFirstRenderViews(ctx: DeployContext, id: string): Promise<StepResult> {
+  const n = vpsNames(ctx.cfg);
+  if (!/^\d{14}$/.test(id)) return ng("views", `release の番号の形が違います: ${id}`);
+  const art = `${n.controlDir}/artifacts`;
+  const r = await runScript(
+    ctx.exec,
+    `set -uo pipefail
+id=${shq(id)}
+m=${shq(art)}/"$id".views
+if [ -L "$m" ] || [ ! -f "$m" ]; then echo "views-none: 記録がありません"; exit 1; fi
+out=$(${viewsCommand(n, "list")} "$id") || { echo "views-list-failed"; exit 1; }
+add=$(printf '%s\\n' "$out" | grep -E ${shq(VIEWS_LINE_SRC)} | awk 'NR == FNR { m[$3] = 1; next } $3 ~ /^v\\// && !($3 in m)' "$m" -) || true
+if [ -z "$add" ]; then echo "views-added 0"; exit 0; fi
+t=$(mktemp ${shq(art)}/.views.XXXXXX) && { cat "$m"; printf '%s\\n' "$add"; } | LC_ALL=C sort > "$t" && chmod 600 "$t" && mv -f "$t" "$m" || exit 1
+echo "views-added $(printf '%s\\n' "$add" | wc -l)"`,
+    600_000,
+  );
+  const m = /views-added\s+(\d+)/.exec(r.stdout);
+  return r.code === 0 && m
+    ? ok("views", m[1] === "0" ? undefined : `最初のページでアプリが作った画面の部品 ${m[1]} 個を記録に足しました`)
+    : ng("views", `最初のページで作られた画面の部品を記録に足せません: ${tail(r)}`);
+}
+
+/**
+ * doctor の「画面の部品が deploy で作った物のままか」の行。
+ * 台本の出力 `views=changed=<n> extra=<n> gone=<n>|none|missing|unknown|error`
+ */
+export function viewsCheck(
+  n: VpsNames,
+  raw: string,
+  published = false,
+): CapabilityCheck | null {
+  const name = "画面の部品（コンパイル済みの view と bootstrap/cache・deploy で作った物との違い）";
+  if (raw === "" || ((raw === "none" || raw === "unknown") && !published)) return null;
+  const m = /^changed=(\d+) extra=(\d+) gone=(\d+)$/.exec(raw);
+  if (m && m[1] === "0" && m[2] === "0")
+    return {
+      key: "views",
+      name,
+      status: "PASS",
+      detected:
+        m[3] === "0"
+          ? "deploy で作った物と同じ"
+          : `deploy で作った物と同じ（消えた物 ${m[3]} 個。アプリが読むだけのソースから作り直すので害はない）`,
+    };
+  if (m)
+    return {
+      key: "views",
+      name,
+      status: "WARN",
+      what: `画面の部品が、deploy で作った物と違います（書き換え ${m[1]} 個・足された物 ${m[2]} 個）`,
+      why:
+        m[1] !== "0"
+          ? "コンパイル済みの view はどのページでも PHP として読み込まれ、サイトのコンテナから書き換えられます。deploy のあとにアプリが同じ物を書き直すことは無いので、乗っ取られた可能性があります"
+          : "足された物は、メールを送ったときなどにアプリが後から作った view のこともあります（区別できません）。置かれた物なら、その view が使われたときに動きます",
+      fix: `\`agentcms deploy\` で出し直すか \`agentcms deploy rollback\`（どちらも view を消して作り直し、記録し直します）。書き換えがあったなら、shared/storage・DB も確かめ、${n.controlDir}/backup の写しから戻すかを決めてください`,
+    };
+  return {
+    key: "views",
+    name,
+    status: "WARN",
+    what:
+      raw === "none"
+        ? "いま出ている release の画面の部品の記録（control）がありません（前の版のキットで出したか、DB を戻す手順の keep-code で戻した）"
+        : raw === "unknown"
+          ? "いま出ている release は、公開の記録（control）にありません"
+          : raw === "missing"
+            ? "いま出ている release の置き場所がありません"
+            : "画面の部品を、記録と比べられませんでした",
+    why: "比べられないので、画面の部品の書き換えに気づけません",
+    fix: raw === "error" ? "もう一度 doctor を流してください" : "`agentcms deploy` で出し直すと、記録ができます",
+  };
+}
+
 /**
  * 送って展開する（vps）。artifact はまず control/<site>/upload（サイトから見えない）へ scp し、
  * control/<site>/artifacts/<id>.tar.gz として残す（checksum つき）。展開はそこから**標準入力で**
@@ -682,6 +861,8 @@ export async function vpsDoctor(
     });
   const integ = integrityCheck(n, fact("integrity"), published);
   if (integ) add(integ);
+  const views = viewsCheck(n, fact("views"), published);
+  if (views) add(views);
   const bk = backupCheck(n, {
     status: fact("backup_status"),
     container: fact("backup_container"),
@@ -731,7 +912,7 @@ export function integrityCheck(
       name,
       status: "PASS",
       // 比べた範囲だけを言う（deploy が作る bootstrap/cache と、shared の storage・.env は比べていない）
-      detected: "送ったソースと同じ（bootstrap/cache・shared の storage と .env は比べていない）",
+      detected: "送ったソースと同じ（bootstrap/cache とコンパイル済みの view は「画面の部品」の行で比べる。shared の storage のほかの物と .env は比べていない）",
     };
   return {
     key: "integrity",
@@ -926,6 +1107,16 @@ elif [[ "$cur" == ${shq(n.appDir + "/releases/")}* ]] && [[ "$id" =~ ^[0-9]{14}$
   echo "integrity=$out"
 else
   echo integrity=none
+fi
+# 画面の部品（コンパイル済みの view・bootstrap/cache）が、deploy で control に残した記録のままか
+if [[ "$cur" == ${shq(n.appDir + "/releases/")}* ]] && [[ "$id" =~ ^[0-9]{14}$ ]] && ! grep -qx "$id" ${shq(n.controlDir + "/" + HISTORY_FILE)} 2>/dev/null; then
+  echo views=unknown
+elif [[ "$cur" == ${shq(n.appDir + "/releases/")}* ]] && [[ "$id" =~ ^[0-9]{14}$ ]] && [ -f ${shq(n.controlDir + "/artifacts")}/"$id".views ] && [ ! -L ${shq(n.controlDir + "/artifacts")}/"$id".views ]; then
+  out=$(${viewsCommand(n, "check")} "$id" 2>/dev/null | tail -1) || out=error
+  [[ "$out" =~ ^(changed=[0-9]+\ extra=[0-9]+\ gone=[0-9]+|missing)$ ]] || out=error
+  echo "views=$out"
+else
+  echo views=none
 fi
 ${edgeRootProbe(n)}
 # サーバーの夜のバックアップの記録（control の中・サイトのコンテナから見えない。backup のコンテナだけが書く）
@@ -1654,7 +1845,7 @@ for f in ${shq(n.controlDir + "/artifacts")}/*.tar.gz; do
   [ -e "$f" ] || continue
   id=$(basename "$f" .tar.gz)
   case " ${keepList} " in *" $id "*) continue ;; esac
-  rm -f "$f" ${shq(n.controlDir + "/artifacts")}/"$id".sha256
+  rm -f "$f" ${shq(n.controlDir + "/artifacts")}/"$id".sha256 ${shq(n.controlDir + "/artifacts")}/"$id".views
 done`,
   );
   return r.code === 0 && r.stdout.includes("cleanup-ok")

@@ -4,6 +4,12 @@ Docker の入った Linux の VPS 1 台に、SiteGrowKit のサイトを出す�
 
 > **確かめた範囲**：この道は、手元の Docker の中に立てた「VPS の代わり」（ssh で入れる Linux の中で Docker が動くもの）で、setup → deploy → 更新 → 切り戻し → 2 つ目のサイトまで通してある（`scripts/vps-e2e.mjs`）。**本物の VPS の会社のサーバーと、Let's Encrypt の本物の証明書では、まだ試していない。** 初めて出すときは staging から始めること。
 
+> **既知の限界**（使う前に読むこと）:
+> - **ディスクと MySQL の負荷は、サイトごとに区切っていない。** サイトのコンテナは同じ利用者で動くので、1 つのサイトが `shared/storage` と自分の DB を育て続けると、同じディスクのほかのサイトと MySQL も書けなくなる。共有の MySQL の CPU・I/O も分けていない（重い SQL を流し続けるサイトは、ほかのサイトを遅くできる）。区切り方は §8b
+> - **出し直し・戻しのたびに、数秒〜十数秒 502 になる。** キャッシュを作る前にサイトのコンテナを止め、切り替えてから起こすため（乗っ取られたサイトが残したプロセスと storage の中の PHP を消すため）。「VPS の代わり」で見た時間で、本物の VPS では測っていない
+> - **本物の VPS・Let's Encrypt・再起動では、まだ試していない**（上の「確かめた範囲」）
+> - doctor が気づけるのは、流したときだけ。乗っ取られたサイトが DB に残した物（管理者の追加など）は、出し直し・戻しでは消えない（§7）
+
 ## 何ができあがるか
 
 ```
@@ -35,7 +41,7 @@ Caddy にはサイトのファイルを見せない（転送だけ）。サイ�
 | --- | --- |
 | `/srv/agentcms/edge/` | Caddy と MySQL の compose・Caddyfile・`sites/<サイト名>.caddy`・`secrets/mysql-root` |
 | `/srv/agentcms/sites/<サイト名>/` | サイトのコンテナが見る物（読むだけ。書けるのは `shared/storage` だけ）：`releases/<id>`・`shared/.env`・`shared/storage`・`backups/`・`current` |
-| `/srv/agentcms/control/<サイト名>/` | サーバーだけが触る物（700・サイトのコンテナには見せない）：`compose.yml`・`nginx.conf`・`backup.sh` と `db-password`（夜のバックアップの台本とこのサイトの DB 利用者のパスワード・600）・`backup/`（夜のバックアップの写しと成否 `status.json`）・`artifacts/`（送った artifact と checksum・rollback の作り直しと doctor の比べ物）・`site`（このサイト名のドメイン）・`releases.history`（公開の記録）・`deploy.lock`・`env.pending`（setup の途中の値・600） |
+| `/srv/agentcms/control/<サイト名>/` | サーバーだけが触る物（700・サイトのコンテナには見せない）：`compose.yml`・`nginx.conf`・`backup.sh` と `db-password`（夜のバックアップの台本とこのサイトの DB 利用者のパスワード・600）・`backup/`（夜のバックアップの写しと成否 `status.json`）・`artifacts/`（送った artifact と checksum・画面の部品の checksum `<release>.views`・rollback の作り直しと doctor の比べ物）・`site`（このサイト名のドメイン）・`releases.history`（公開の記録）・`deploy.lock`・`env.pending`（setup の途中の値・600） |
 
 **秘密（DB パスワード・APP_KEY・MySQL の root パスワード）は `agentcms deploy setup` がサーバーの上で作り、サーバーのファイル（600）にだけ置く。** 手元・Git・設定ファイル・ログ・画面・コマンドの引数・`docker inspect` には出さない。ただし動いているプロセスの中には値がある（PHP は `.env` を読み、MySQL は root パスワードを読んで起動する）。サーバーの root と docker グループの利用者は、それを読める。
 
@@ -158,6 +164,10 @@ health まで通った release には印が付き、公開した順に `releases
 - 前の版のキットで出したサイトを出し直すときは、展開より前に、置き場所全体を書ける形の app・scheduler を止める（新しい release を書き換えさせない。そのあいだは 502）
 - **サイトのコンテナが書けるのは `shared/storage` だけ。** そこ（上げられたファイル・コンパイル済みの view・ログ）と DB は、乗っ取られたサイトが書き換えられる。乗っ取られたと分かったら、原因（脆弱性）を直したコードを出し直し、`shared/.env` の秘密（APP_KEY・DB のパスワード）と管理者のパスワードを替え、storage と DB はサーバーの写し（§9）から戻すかを決めること。前の版のキットで出したサイトは、出し直すまでコンテナが置き場所全体を書ける形のまま（doctor が WARN を出す）
 - **`agentcms deploy doctor` は、いま出ている release を送った artifact と比べる**（使い捨てのコンテナの中の GNU tar・サイトのコードは動かさない）。中身の違うファイル・足されたファイルがあれば WARN（数だけ・名前は出さない）。shared へのリンク（`storage`・`.env`・`public/storage`）と deploy が作る `bootstrap/cache` は比べない（PASS の行にもそう出す。そこに置かれた PHP には、この比べでは気づけない）。サイトのコンテナはいまはコードを書けないが、前の版のキットで出したあいだに書き換えられていないかの手がかりになる
+- **`agentcms deploy doctor` は、画面の部品（`shared/storage/framework/views` のコンパイル済みの view）と `bootstrap/cache` を、deploy のときに残した checksum と比べる。** コンパイル済みの view はどのページでも PHP として読み込まれ、置き場所が storage なのでサイトのコンテナから書ける。deploy はキャッシュを作ったあと（サイトのコンテナを止めている間）に一覧と checksum を `control/<サイト名>/artifacts/<release>.views`（サイトから見えない）に残し、doctor はいまの一覧をそれと比べる（使い捨てのコンテナの中・サイトのコードは動かさない）。書き換えられた物・足された物があれば WARN（数だけ・名前は出さない）。消えた物は WARN にしない（アプリが読むだけのソースから作り直すため）
+  - deploy と rollback は、health が通ったあと、最初のページでアプリが作った view（Inertia の外枠の部品など。view:cache では作られない）を記録に足す（記録にある物の checksum は変えない）。起こしてから health が終わるまでの数秒〜数十秒に新たに乗っ取られて置かれた物は、ここで記録に入りうる。health が落ちたときの自動の切り戻しでは足さない（doctor が「足された物」と出すことがある。出し直すと記録し直す）
+  - **足された物は、区別できないことがある。** アプリはメールを送るときなどに、deploy のときに作らない view（メールの部品）を後から作る。足された物だけの WARN は、それのこともある。出し直すと消えて記録し直す
+  - 気づけるのは doctor を流したときだけ（見張りは別に置く）。気づいたあとは上の「乗っ取られたと分かったら」と同じ
 
 ## 8. DB を戻す（手で）
 
@@ -265,11 +275,17 @@ fi
 # storage の中で PHP が読み込む物（メンテナンスの印・コンパイル済みの view）は、起こす前に消す（サイトが置ける）
 #    （framework・views がリンクなら本物を作り直す・権限を外されていても戻して消す・片付いたことを確かめる。できなければ起こさずに止まる）
 in_site 's=shared/storage; f=$s/framework; [ -d "$s" ] && [ ! -L "$s" ] && { if [ -L "$f" ] || { [ -e "$f" ] && [ ! -d "$f" ]; }; then rm -rf "$f"; fi; } && mkdir -p "$f" && { chmod -R u+rwX "$f" 2>/dev/null || true; } && { for d in views cache sessions; do if [ -L "$f/$d" ] || { [ -e "$f/$d" ] && [ ! -d "$f/$d" ]; }; then rm -rf "$f/$d"; fi; done; } && mkdir -p "$f/views" "$f/cache/data" "$f/sessions" && rm -rf "$f/maintenance.php" "$f/down" && find "$f/views" -mindepth 1 \( -type l -o \( -name "*.php" ! -type d \) \) -delete && [ ! -L "$f" ] && [ -d "$f/views" ] && [ ! -L "$f/views" ] && [ ! -e "$f/maintenance.php" ] && [ ! -L "$f/maintenance.php" ] && [ -z "$(find "$f/views" -mindepth 1 \( -type l -o -name "*.php" \) | head -1)" ]' < /dev/null
+# 画面の部品（コンパイル済みの view）は上で消したので、deploy が残した記録（control）はもう合わない。消しておく
+# （doctor は「記録が無い」と WARN を出す。agentcms deploy で出し直すと記録し直す）
+cid=$(basename "$(readlink "$dir/current")")
+[[ "$cid" =~ ^[0-9]{14}$ ]] && rm -f "$ctl/artifacts/$cid.views"
+if [ "$mode" != keep-code ]; then rm -f "$ctl/artifacts/$rel.views"; fi
 docker compose -f "$ctl/compose.yml" start
 echo "戻しました: DB は $id の${src:+（サーバーの写し）}直前 / current は $(basename "$(readlink "$dir/current")") / ログインは全員切りました"
 ```
 
 - 戻したあと、手元で `agentcms verify staging`（本番なら health を見る）で確かめる
+- 戻したあとの `agentcms deploy doctor` は「画面の部品の記録が無い」と WARN を出す（このスクリプトはコンパイル済みの view を消して、アプリが使うときに作り直させるため）。`agentcms deploy` で出し直すと記録し直して PASS になる
 - 戻す前の DB と release は `backups/before-restore-<時刻>-db.sql.gz`・`-db.release` に残る。同じスクリプトに `before-restore-<時刻>` を `<release id>` の代わりに渡せば、DB もコードも戻す前の状態へ戻る
 
 ## 8b. 1 台に置くサイトの上限（ほかのサイトを止めないために）
@@ -340,6 +356,7 @@ docker exec -it agentcms-mysql sh -c 'MYSQL_PWD="$(cat /run/agentcms/mysql-root)
 | setup が「DB か利用者 … が既にある」で止まる | 同じサイト名の DB が、別の置き場所か前の setup の途中で作られている。自分のものなら §11 の手順で DB と利用者を消してから setup をもう一度。他人のものならサイト名を変える |
 | deploy が「別の deploy / rollback が動いています」で止まる | 終わるのを待つ。止まったまま残っているなら、ほかに動いていないことを確かめてから `/srv/agentcms/control/<サイト名>/deploy.lock` を消す |
 | setup が途中で止まった | もう一度流す。DB を作ったあと `.env` を置く前に止まったときは、`control/<サイト名>/env.pending`（そのとき作った値・600・サイトのコンテナからは見えない）を使って続きから作る。サイトの置き場所の `shared/.env.pending` は読まない |
+| doctor で「画面の部品」が WARN | 書き換えがあれば乗っ取りを疑う（§7 の「乗っ取られたと分かったら」）。足された物だけなら、メールを送ったあとのこともある。どちらも `agentcms deploy` で出し直すと消えて記録し直す |
 | doctor で「夜のバックアップ」が WARN | 出ている失敗の言葉（§9）を見る。`docker logs agentcms-<サイト名>-backup` に詳しい理由。直したら `docker exec agentcms-<サイト名>-backup bash /agentcms/backup.sh now` |
 | setup の PHP のイメージで止まる | 時間切れ（30 分）か、VPS から Docker Hub へつながらない。もう一度流せば続きから |
 

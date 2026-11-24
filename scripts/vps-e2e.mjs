@@ -29,6 +29,8 @@
  *     （書けるのは shared/storage と /tmp だけ）。出し直し・戻しのあとに、コンテナが書いた物も、
  *     コンテナの中に残したプロセスも、storage に置いたメンテナンスの印（PHP）も残らない。
  *     管理画面での画像の追加・プロフィールの保存は動く
+ *  6j. サイトのコンテナが画面の部品（storage の中のコンパイル済みの view）を書き換える・足すと、
+ *     doctor が deploy のときに control に残した checksum と比べて気づく。出し直し・戻しのあとは元に戻る
  *  7. サーバーで生成した秘密（APP_KEY・DB パスワード・MySQL root）が、CLI の出力・
  *     コンテナの設定（docker inspect）・compose/Caddy のファイルのどこにも出ていない
  *
@@ -1766,6 +1768,80 @@ exit 0`,
   check(
     roErrors.every((n) => n === "0"),
     `アプリのログ・app と scheduler のコンテナのログに、書けなかったエラーが 0 件（アプリ ${roErrors[0]}・コンテナ ${roErrors[1]}）`,
+  );
+  check(
+    (await waitHealthy()) === 200 && (await get(S2.host, "/healthz")).status === 200,
+    "サイト 1・2 の /healthz は 200",
+  );
+
+  // ------------------------------------------------------------ 6j. 画面の部品（コンパイル済みの view）の書き換えに気づく
+  // storage はサイトのコンテナが書ける。コンパイル済みの view は PHP として読み込まれるので、乗っ取られたサイトは
+  // そこへコードを書ける（コードと .env を読むだけにしても残る道）。deploy が control に残した checksum と比べて気づくこと
+  step(
+    "6j. サイトのコンテナが画面の部品（コンパイル済みの view）を書き換える・足すと doctor が気づく。出し直し・戻しで元に戻る",
+  );
+  // PASS の行は名前だけが出る（detected は出ない）。✔ の行があり、WARN の文が無いこと
+  const viewsPass = (out) =>
+    /✔ 画面の部品（コンパイル済みの view/.test(out) &&
+    !/画面の部品が、deploy で作った物と違います|画面の部品の記録|画面の部品を、記録と比べられ|公開の記録（control）にありません/.test(out);
+  const viewsLine = (out) =>
+    (/画面の部品（コンパイル済みの view[^\n]*(?:\n[^\n✔▲✘]*){0,2}/.exec(out) ?? [""])[0];
+  a = agentcms("doctor-views-clean", ["deploy", "doctor", "-t", S2.target]);
+  check(
+    viewsPass(a.out),
+    `書き換える前の doctor は、画面の部品を deploy で作った物と同じと言う（${viewsLine(a.out).replace(/\s+/g, " ").slice(0, 120) || "行が無い"}）`,
+  );
+  // サイト 2 の app のコンテナの中から（乗っ取られたサイトの PHP ができることだけで）、どのページでも使う
+  // Inertia の外枠（resources/views/app.blade.php）のコンパイル済みの view の頭に PHP を足す
+  const rewrite = inS2c(
+    "app",
+    [
+      "set -e",
+      `f=$(grep -l "resources/views/app.blade.php ENDPATH" shared/storage/framework/views/*.php | head -1)`,
+      `[ -n "$f" ]`,
+      `{ printf "%s" "<?php echo \\"e2e-6j-view\\"; ?>"; cat "$f"; } > /tmp/e2e-6j && cat /tmp/e2e-6j > "$f" && rm -f /tmp/e2e-6j`,
+      `echo "rewritten=$(basename "$f")"`,
+    ].join("; "),
+  ).stdout;
+  const served6j = (await get(S2.host, "/login")).body.includes("e2e-6j-view");
+  check(
+    rewrite.includes("rewritten=") && served6j,
+    `サイト 2 の app のコンテナから、コンパイル済みの view を書き換えられ、ページで動く（${rewrite.trim().slice(0, 60)}・配信=${served6j}）`,
+  );
+  a = agentcms("doctor-views-rewritten", ["deploy", "doctor", "-t", S2.target]);
+  check(
+    /書き換え 1 個・足された物 0 個/.test(viewsLine(a.out)),
+    `doctor は、画面の部品が書き換えられたことに気づく（${viewsLine(a.out).replace(/\s+/g, " ").slice(0, 120) || "行が無い"}）`,
+  );
+  // 足す（まだコンパイルされていない view の名前で置いておけば、あとでそれが使われる）
+  const planted6j = inS2c(
+    "app",
+    `printf "%s" "<?php echo 1;" > shared/storage/framework/views/0e2e6j0000000000000000000000000a.php && echo planted`,
+  ).stdout;
+  a = agentcms("doctor-views-planted", ["deploy", "doctor", "-t", S2.target]);
+  check(
+    planted6j.includes("planted") && /書き換え 1 個・足された物 1 個/.test(viewsLine(a.out)),
+    `doctor は、足された view にも気づく（${viewsLine(a.out).replace(/\s+/g, " ").slice(0, 120) || "行が無い"}）`,
+  );
+  await new Promise((res) => setTimeout(res, 1100));
+  release("v7-two");
+  a = agentcms("deploy-6j", ["deploy", "staging", "-t", S2.target, "--confirm-target", S2.target, "-y"]);
+  check(
+    a.code === 0 && (await get(S2.host, "/e2e-version.php")).body.trim() === "php-v7-two" &&
+      !(await get(S2.host, "/login")).body.includes("e2e-6j-view"),
+    "出し直すと、書き換えた view は消え、ページで動かない",
+  );
+  a = agentcms("doctor-views-after-deploy", ["deploy", "doctor", "-t", S2.target]);
+  check(
+    viewsPass(a.out),
+    `出し直したあとの doctor は、画面の部品を deploy で作った物と同じと言う（${viewsLine(a.out).replace(/\s+/g, " ").slice(0, 120) || "行が無い"}）`,
+  );
+  a = agentcms("rollback-6j", ["deploy", "rollback", "-t", S2.target, "--confirm-target", S2.target, "-y"]);
+  const afterRb6j = (await get(S2.host, "/e2e-version.php")).body.trim();
+  const a2 = agentcms("doctor-views-after-rollback", ["deploy", "doctor", "-t", S2.target]);
+  check(
+    a.code === 0 && afterRb6j !== "php-v7-two" && viewsPass(a2.out),
+    `戻したあと（${afterRb6j.slice(0, 30)}）も、doctor は画面の部品を作り直した物と同じと言う（${viewsLine(a2.out).replace(/\s+/g, " ").slice(0, 120) || "行が無い"}）`,
   );
   check(
     (await waitHealthy()) === 200 && (await get(S2.host, "/healthz")).status === 200,
