@@ -173,51 +173,68 @@ export function vpsReleaseContext(ctx) {
     const n = vpsNames(ctx.cfg);
     return { ...ctx, runIn: (dir, cmd) => releaseRunCommand(n, dir, cmd) };
 }
-/**
- * サイトのコードが動くコンテナ（app・scheduler）を起こし直す（止まっていれば起こす）。
- *
- * 出し直し・戻しで current を切り替えたあとに流す。乗っ取られたサイトがコンテナの中に残した
- * プロセス（裏で起こした PHP など）は、コンテナを止めるまで動き続け、出し直しても戻しても残る。
- * 止めてから、サイトが書ける shared/storage の中で **PHP が読み込む物**（メンテナンスの印
- * `framework/maintenance.php`・コンパイル済みの view）を消し、それから起こす。storage はどの release からも
- * 同じ物を見るので、残すと出し直しても戻しても乗っ取りのコードが動く。止める前に消すと、
- * 動いているプロセスに置き直される。view は必要になったときに作り直される。
- * 起こすとコンテナの中のプロセスは全部新しくなり、/tmp・ソケットの置き場所（tmpfs）も空になる。
- * その間（数秒）web は 502 を返す
- */
-export async function restartSiteCode(ctx) {
-    const n = vpsNames(ctx.cfg);
-    const r = await runScript(ctx.exec, `set -u
-${siteFsFns(n)}
-docker stop -t 10 ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null 2>&1 || true
-# 消せなければ起こさない（起こすと、残った PHP が動く）。止めたまま知らせる
-in_site ${shq(STORAGE_EXEC_CLEAN)} || { echo "storage-clean-failed: shared/storage の中の PHP が読み込む物（メンテナンスの印・コンパイル済みの view）を消せませんでした。サイトのコンテナは止めたままです（web は 502）。中を確かめてから docker start ${n.appContainer} ${n.schedulerContainer}"; exit 1; }
-docker start ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null
-for i in $(seq 1 30); do
+const WAIT_SITE_CODE = (n) => `for i in $(seq 1 30); do
   if [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.appContainer)} 2>/dev/null)" = true ] && [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.schedulerContainer)} 2>/dev/null)" = true ] && docker exec ${shq(n.webContainer)} test -S ${FPM_SOCKET_IN_CONTAINER} 2>/dev/null; then
-    echo restart-ok; exit 0
+    echo start-ok; exit 0
   fi
   sleep 1
 done
 docker logs --tail 20 ${shq(n.appContainer)} 2>&1
-exit 1`);
-    return r.code === 0 && r.stdout.includes("restart-ok")
-        ? ok("restart", `${n.appContainer} / ${n.schedulerContainer} を起こし直しました（中に残ったプロセスは消えます）`)
-        : ng("restart", `サイトのコンテナを起こし直せません: ${tail(r)}`);
+exit 1`;
+/**
+ * サイトのコードが動くコンテナ（app・scheduler）を止め、shared/storage の中で PHP が読み込む物を片付ける。
+ *
+ * deploy では config/view のキャッシュを作る**前**に流し、current を切り替えて `startSiteCode` で起こすまで
+ * 止めたままにする（その間 web は 502）。乗っ取られたサイトがコンテナの中に残したプロセスは、止めるまで
+ * 動き続け、キャッシュを作っている間に storage の中を差し替えられる（view の出力先をリンクにする・
+ * コンパイル済みの view を置き直す）。storage はどの release からも同じ物を見るので、残すと出し直しても
+ * 戻しても乗っ取りのコードが動く。片付けられなければ、止めたまま失敗を返す（起こすと残った PHP が動く）
+ */
+export async function stopSiteCode(ctx) {
+    const n = vpsNames(ctx.cfg);
+    const r = await runScript(ctx.exec, `set -u
+${siteFsFns(n)}
+docker stop -t 10 ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null 2>&1 || true
+in_site ${shq(STORAGE_EXEC_CLEAN)} || { echo "storage-clean-failed: shared/storage の中の PHP が読み込む物（メンテナンスの印・コンパイル済みの view・その置き場所のリンク）を片付けられませんでした。サイトのコンテナは止めたままです（web は 502）。中を確かめてから docker start ${n.appContainer} ${n.schedulerContainer}"; exit 1; }
+echo stop-clean-ok`);
+    return r.code === 0 && r.stdout.includes("stop-clean-ok")
+        ? ok("stop", `${n.appContainer} / ${n.schedulerContainer} を止め、storage の中の PHP が読み込む物を片付けました（起こすまで 502）`)
+        : ng("stop", `サイトのコンテナを止めて片付けられません: ${tail(r)}`);
+}
+/** サイトのコードが動くコンテナを起こす（止まっていれば）。中のプロセスは全部新しくなり、tmpfs も空になる */
+export async function startSiteCode(ctx) {
+    const n = vpsNames(ctx.cfg);
+    const r = await runScript(ctx.exec, `set -u
+docker start ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null
+${WAIT_SITE_CODE(n)}`);
+    return r.code === 0 && r.stdout.includes("start-ok")
+        ? ok("start", `${n.appContainer} / ${n.schedulerContainer} を起こしました（中に残っていたプロセスは消えています）`)
+        : ng("start", `サイトのコンテナを起こせません: ${tail(r)}`);
 }
 /**
- * shared/storage の中で、PHP が読み込む物（メンテナンスの印・コンパイル済みの view）を消すコマンド。
- * どちらも作り直せる。サイトが書ける場所なので、出し直し・戻しのたびに、サイトのコンテナを止めてから消す
+ * shared/storage の中で、PHP が読み込む物（メンテナンスの印・コンパイル済みの view）を片付けるコマンド
+ * （置き場所だけを入れた使い捨てのコンテナの中で流す。リンクはその中でしか解けない）。
+ *
+ * - `framework` と、その中の `views`・`cache`・`sessions` がリンク（やディレクトリでない物）なら消して本物を作り直す。
+ *   Laravel は view の出力先を `realpath(storage/framework/views)` で決めて config のキャッシュに残すので、
+ *   リンクのままキャッシュを作ると、サイトが選んだ場所が出力先になる
+ * - サイトが権限を外していても消せるように戻す（同じ利用者の持ち物）
+ * - メンテナンスの印と、views の中の PHP とリンクを消し、片付いたことを確かめる（できなければ失敗）
  */
 export const STORAGE_EXEC_CLEAN = [
-    "f=shared/storage/framework",
-    // サイトが権限を外していても消せるように（同じ利用者の持ち物なので戻せる）。リンクはこのコンテナの中でしか解けない
-    'if [ -e "$f" ] || [ -L "$f" ]; then chmod -R u+rwX "$f" 2>/dev/null || true; fi',
+    "s=shared/storage; f=$s/framework",
+    '[ -d "$s" ] && [ ! -L "$s" ]',
+    '{ if [ -L "$f" ] || { [ -e "$f" ] && [ ! -d "$f" ]; }; then rm -rf "$f"; fi; }',
+    'mkdir -p "$f"',
+    '{ chmod -R u+rwX "$f" 2>/dev/null || true; }',
+    '{ for d in views cache sessions; do if [ -L "$f/$d" ] || { [ -e "$f/$d" ] && [ ! -d "$f/$d" ]; }; then rm -rf "$f/$d"; fi; done; }',
+    'mkdir -p "$f/views" "$f/cache/data" "$f/sessions"',
     'rm -rf "$f/maintenance.php" "$f/down"',
-    '{ [ ! -d "$f/views" ] || find "$f/views" -name "*.php" ! -type d -delete; }',
-    // 消えたことを確かめる（消せなければ失敗にする。黙って続けない）
+    'find "$f/views" -mindepth 1 \\( -type l -o \\( -name "*.php" ! -type d \\) \\) -delete',
+    // 片付いたことを確かめる（できなければ失敗にする。黙って続けない）
+    '[ ! -L "$f" ] && [ -d "$f/views" ] && [ ! -L "$f/views" ]',
     '[ ! -e "$f/maintenance.php" ] && [ ! -L "$f/maintenance.php" ]',
-    '{ [ ! -d "$f/views" ] || [ -z "$(find "$f/views" -name "*.php" ! -type d | head -1)" ]; }',
+    '[ -z "$(find "$f/views" -mindepth 1 \\( -type l -o -name "*.php" \\) | head -1)" ]',
 ].join(" && ");
 /**
  * 前の版の形（置き場所全体を書ける）のサイトのコンテナが動いていれば止める。deploy の最初に流す。
@@ -317,7 +334,7 @@ in_site_in ${shq(`rm -rf releases/${id} && mkdir -p releases/${id} && tar -xzf -
  * サイトが書き換えられるので、そのまま戻すと乗っ取られたコードへ戻りうる）。
  * artifact が無い（前の版の deploy で出した）release は作り直せないので `rebuilt: false` を返す。
  * 作り直せたときは、サイトのコードが動くコンテナ（app・scheduler）を**止めたまま**返す。
- * 呼ぶ側は current を切り替えてから（失敗したときも）`restartSiteCode` で起こす
+ * 呼ぶ側は current を切り替えてから（失敗したときも）`startSiteCode` で起こす
  */
 export async function rebuildReleaseFromArtifact(ctx, id) {
     const n = vpsNames(ctx.cfg);
@@ -330,14 +347,14 @@ cd ${shq(art)} 2>/dev/null || { echo no-artifact; exit 0; }
 [ -f ${shq(`${id}.tar.gz`)} ] && [ -f ${shq(`${id}.sha256`)} ] || { echo no-artifact; exit 0; }
 sha256sum -c --quiet ${shq(`${id}.sha256`)} || { echo "artifact-odd: 残した artifact の checksum が合いません"; exit 1; }
 # 作り直す間、サイトのコードが動くコンテナ（app・scheduler）を止める（中に残ったプロセスを止める）。
-# うまくいったら止めたまま返し、current を切り替えてから起こす（restartSiteCode）— 切り替える前に
+# うまくいったら止めたまま返し、current を切り替えてから起こす（startSiteCode）— 切り替える前に
 # いまのコードを起こし直さない。途中で落ちたときだけ、ここで起こし直す。web は止めない（その間は 502）
 docker stop ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null
 trap 'docker start ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null 2>&1 || true' EXIT
 # 共有の storage の中で、PHP が読み込む物を片付ける（メンテナンスの印・コンパイル済みの view。どちらも作り直せる）
 in_site ${shq(STORAGE_EXEC_CLEAN)} || { trap - EXIT; echo "storage-clean-failed: shared/storage の中の PHP が読み込む物を消せませんでした。サイトのコンテナは止めたままです"; exit 1; }
 in_site_in ${shq(`set -e; rm -rf releases/.rebuild-${id}; mkdir releases/.rebuild-${id}; tar -xzf - -C releases/.rebuild-${id}; test -f releases/.rebuild-${id}/artisan; rm -rf releases/${id}; mv releases/.rebuild-${id} releases/${id}; touch releases/${id}/${HEALTHY_MARK}; echo rebuild-ok`)} < ${shq(`${id}.tar.gz`)}
-# 作り直せた: app・scheduler は止めたまま返す（起こすのは current を切り替えてから・restartSiteCode）
+# 作り直せた: app・scheduler は止めたまま返す（起こすのは current を切り替えてから・startSiteCode）
 trap - EXIT`, 600_000);
     if (r.code === 0 && r.stdout.includes("no-artifact"))
         return { ok: true, rebuilt: false };

@@ -312,13 +312,16 @@ server {
     real_ip_header X-Forwarded-For;
     real_ip_recursive on;
 
-    # 上げられたファイル（storage）と build の中は PHP として動かさない（^~ で下の .php の location より先に決める）
+    # 上げられたファイル（storage）と build の中は PHP として動かさない（^~ で下の .php の location より先に決める）。
+    # 配信元は shared/storage/app/public へ直に向け、その中のリンクは辿らない（サイトの PHP が書ける場所なので、
+    # .env などへのリンクを置かれても配信しない）。shared/storage まではリンクでないことを deploy が確かめている
     location ^~ /storage/ {
+        alias ${n.appDir}/${SITE_WRITABLE}/app/public/;
+        disable_symlinks on from=${n.appDir}/${SITE_WRITABLE};
         location ~ /\\. {
             deny all;
             return 404;
         }
-        try_files $uri =404;
     }
 
     location ^~ /build/ {

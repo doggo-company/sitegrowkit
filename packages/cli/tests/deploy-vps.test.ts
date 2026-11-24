@@ -578,9 +578,10 @@ describe("deploy の工程の順", () => {
     expect(at("Caddy")).toBeGreaterThan(at("artifact アップロード"));
     expect(at("Caddy")).toBeGreaterThan(at("サイトのコンテナ"));
     expect(at("Caddy")).toBeLessThan(at("DB バックアップ"));
-    // 切り替えたら、サイトのコードが動くコンテナを起こし直す（中に残ったプロセスを消す）で終わる
+    // キャッシュを作る前にサイトのコンテナを止めて storage を片付け、切り替えてから起こす
+    expect(at("止め、storage")).toBe(at("config / view") - 1);
     expect(at("current 切り替え")).toBe(labels.length - 2);
-    expect(at("起こし直す")).toBe(labels.length - 1);
+    expect(at("サイトのコンテナを起こす")).toBe(labels.length - 1);
   });
 
   it("送信で落ちたら、Caddy の行には触らずに止まる（入口は前のまま）", async () => {

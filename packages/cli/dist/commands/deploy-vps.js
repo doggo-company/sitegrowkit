@@ -1,7 +1,7 @@
 import { buildArtifact, cleanupBuilds, newReleaseId } from "../deploy/build.js";
 import { postHealthAction, runHealthChecks } from "../deploy/health.js";
 import { ensureLayout, linkShared, migrate, optimize, switchCurrent, taxonomySync, } from "../deploy/release.js";
-import { acquireSiteLock, backupDatabaseVps, cleanupReleasesVps, dbUserLimits, healthyReleases, markHealthy, readCurrent, rebuildReleaseFromArtifact, releaseIdIsFree, rollbackTargetByHistory, releaseSiteLock, restartSiteCode, runScript, stopLegacyWritable, siteContainers, siteFsContext, siteRoute, uploadAndExtractVps, vpsDoctor, vpsReleaseContext, vpsSetupActions, } from "../deploy/providers/vps.js";
+import { acquireSiteLock, backupDatabaseVps, cleanupReleasesVps, dbUserLimits, healthyReleases, markHealthy, readCurrent, rebuildReleaseFromArtifact, releaseIdIsFree, rollbackTargetByHistory, releaseSiteLock, runScript, startSiteCode, stopLegacyWritable, stopSiteCode, siteContainers, siteFsContext, siteRoute, uploadAndExtractVps, vpsDoctor, vpsReleaseContext, vpsSetupActions, } from "../deploy/providers/vps.js";
 import { vpsNames } from "../deploy/providers/vps-assets.js";
 import { worstStatus } from "../deploy/types.js";
 import { fail, heading, info, ok, warn } from "../ui.js";
@@ -105,18 +105,27 @@ export function vpsDeploySteps(ctx, artifactPath) {
         ["DB バックアップ", () => backupDatabaseVps(ctx)],
         ["DB migration", () => migrate(ctx)],
         ["分類定義の同期（taxonomy-sync）", () => taxonomySync(ctx)],
+        // ここから起こすまで、サイトのコードは動かさない（502）。キャッシュを作る間に、乗っ取られたサイトの
+        // 残したプロセスに storage の中を差し替えさせない。片付けられなければ止めたまま（起こさない）
+        [STOP_STEP, () => stopSiteCode(ctx)],
         ["config / view キャッシュ", () => optimize(ctx)],
         ["current 切り替え", () => switchCurrent(fs, rel)],
-        // 乗っ取られたサイトがコンテナの中に残したプロセスを、出し直しで消す
-        ["サイトのコンテナを起こし直す（app / scheduler）", () => restartSiteCode(ctx)],
+        // 中のプロセスは全部新しくなる（乗っ取られたサイトがコンテナの中に残したプロセスは消える）
+        ["サイトのコンテナを起こす（app / scheduler）", () => startSiteCode(ctx)],
     ];
 }
-export async function runSteps(steps, previous) {
+/** サイトのコードが動くコンテナを止めて storage を片付ける工程（ここで落ちたら起こさない） */
+const STOP_STEP = "サイトのコンテナを止め、storage の中の PHP を片付ける（app / scheduler）";
+export async function runSteps(steps, previous, onStoppedFailure) {
     let switched = false;
+    let stopped = false;
     for (const [label, run] of steps) {
         info(`▶ ${label}`);
         const r = await run();
         if (!r.ok) {
+            // 止めて片付けたあとの工程で落ちたら、サイトのコンテナを起こし戻す（片付けに落ちたときは起こさない）
+            if (stopped && onStoppedFailure)
+                await onStoppedFailure();
             fail({
                 what: `deploy 失敗: ${label}`,
                 why: r.detail ?? "-",
@@ -130,6 +139,10 @@ export async function runSteps(steps, previous) {
             info(`  ${r.detail}`);
         if (label === "current 切り替え")
             switched = true;
+        if (label === STOP_STEP)
+            stopped = true;
+        if (label.startsWith("サイトのコンテナを起こす"))
+            stopped = false;
     }
     return { ok: true, switched };
 }
@@ -203,7 +216,7 @@ async function deployLocked(ctx, root, artifactPath, io) {
         return 1;
     }
     const previous = live.target;
-    const run = await runSteps(vpsDeploySteps(ctx, artifactPath), previous);
+    const run = await runSteps(vpsDeploySteps(ctx, artifactPath), previous, () => startAfterRebuild(ctx));
     if (!run.ok)
         return 1;
     info("▶ health check");
@@ -338,7 +351,7 @@ async function rebuildAndSwitch(ctx, prev) {
 }
 /** 作り直しのあと止めておいたサイトのコンテナを起こす。起こせなければ知らせる（health が続けて見る） */
 async function startAfterRebuild(ctx) {
-    const r = await restartSiteCode(ctx);
+    const r = await startSiteCode(ctx);
     if (r.ok)
         info(`  ${r.detail}`);
     else

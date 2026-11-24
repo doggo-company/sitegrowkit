@@ -152,8 +152,9 @@ health まで通った release には印が付き、公開した順に `releases
 **送った artifact は `control/<サイト名>/artifacts/<release id>.tar.gz`（checksum つき・サイトのコンテナには見えない）に、残す release の分だけ残す。** 展開はそこから標準入力で流す（サイトの置き場所の `tmp/` を経由しないので、展開の前に中身を差し替えられない）。
 
 - **rollback は、戻す先を置き場所の中の物のまま使わず、残した artifact から作り直してから切り替える。** 前の版のキットで出したサイトでは、置き場所の中の古い release を乗っ取られたサイトが書き換えられた（バックドアを置けた）ため。作り直す間は app と scheduler を止め、current を切り替えてから起こす（切り替える前にいまのコードを起こし直さない・中のプロセスは全部新しくなる）。共有の storage の中で PHP が読み込む物（メンテナンスの印 `storage/framework/maintenance.php`・コンパイル済みの view）を片付ける。artifact の checksum が合わない・artifact が無い（前の版のキットで出した release）ときは、何も変えずに止まる
-- サイトの web は `/storage/`（上げられたファイル）と `/build/` の中の `.php` を PHP として動かさない
-- **deploy と rollback は、current を切り替えたあとサイトのコンテナ（app・scheduler）を止め、`shared/storage` の中で PHP が読み込む物（メンテナンスの印 `framework/maintenance.php`・コンパイル済みの view）を消してから起こす。** 乗っ取られたサイトがコンテナの中に残したプロセスはコンテナを止めるまで動き続け、storage はどの release からも同じ物が見えるため（その間の数秒は 502）。health が落ちたときの自動の切り戻しも、手での rollback と同じく送った artifact から作り直してから切り替える（artifact の無い release へは戻さない）。DB を戻す手順（§8）も、コードを合わせるときは artifact から作り直す
+- サイトの web は `/storage/`（上げられたファイル）と `/build/` の中の `.php` を PHP として動かさない。`/storage/` は `shared/storage/app/public` へ直に向け、その中のリンクは辿らない（`disable_symlinks`。サイトが `.env` などへのリンクを置いても配信しない）
+- **コードの出し直し・戻しだけでは、乗っ取りからの復旧は終わらない。** 乗っ取られたサイトは自分の DB（管理者の追加・パスワードの変更など）と `shared/storage` の中（上げられたファイル）を書き換えられ、`shared/.env` の秘密を読める。乗っ取られたと分かったら、①原因を直したコードを出し直す ②DB をサーバーの写し（乗っ取られる前の時刻・§8 の `server-<時刻>`）から戻す（全員のログインも切れる）③`shared/.env` の APP_KEY・DB のパスワード（`control/<サイト名>/db-password` も）と管理者のパスワードを替える ④`shared/storage/app` を確かめる、までを 1 組でやる
+- **deploy と rollback は、config / view のキャッシュを作る前にサイトのコンテナ（app・scheduler）を止め、`shared/storage` の中で PHP が読み込む物（メンテナンスの印 `framework/maintenance.php`・コンパイル済みの view・`framework`・`views` がリンクならそのリンク）を片付け、current を切り替えてから起こす。** 乗っ取られたサイトがコンテナの中に残したプロセスはコンテナを止めるまで動き続け、storage はどの release からも同じ物が見えるため（止めてから起こすまで 502。キャッシュを作る数秒〜十数秒）。片付けられなければ起こさずに止まる。health が落ちたときの自動の切り戻しも、手での rollback と同じく送った artifact から作り直してから切り替える（artifact の無い release へは戻さない）。DB を戻す手順（§8）も、コードを合わせるときは artifact から作り直す
 - 前の版のキットで出したサイトを出し直すときは、展開より前に、置き場所全体を書ける形の app・scheduler を止める（新しい release を書き換えさせない。そのあいだは 502）
 - **サイトのコンテナが書けるのは `shared/storage` だけ。** そこ（上げられたファイル・コンパイル済みの view・ログ）と DB は、乗っ取られたサイトが書き換えられる。乗っ取られたと分かったら、原因（脆弱性）を直したコードを出し直し、`shared/.env` の秘密（APP_KEY・DB のパスワード）と管理者のパスワードを替え、storage と DB はサーバーの写し（§9）から戻すかを決めること。前の版のキットで出したサイトは、出し直すまでコンテナが置き場所全体を書ける形のまま（doctor が WARN を出す）
 - **`agentcms deploy doctor` は、いま出ている release を送った artifact と比べる**（使い捨てのコンテナの中の GNU tar・サイトのコードは動かさない）。中身の違うファイル・足されたファイルがあれば WARN（数だけ・名前は出さない）。shared へのリンク（`storage`・`.env`・`public/storage`）と deploy が作る `bootstrap/cache` は比べない（PASS の行にもそう出す。そこに置かれた PHP には、この比べでは気づけない）。サイトのコンテナはいまはコードを書けないが、前の版のキットで出したあいだに書き換えられていないかの手がかりになる
@@ -250,6 +251,8 @@ if [ "$mode" != keep-code ]; then
     || { echo "release $rel の送った artifact が無いか、checksum が合いません。DB は戻しました。コードは変えていません（アプリは止めたまま）。agentcms deploy で出し直してから docker compose -f $ctl/compose.yml start"; exit 1; }
   r="releases/$rel"; t="releases/.rebuild-$rel"
   in_site "set -e; rm -rf $t; mkdir $t; tar -xzf - -C $t; test -f $t/artisan; rm -rf $t/storage $t/.env; ln -sfn $dir/shared/storage $t/storage; ln -sfn $dir/shared/.env $t/.env; mkdir -p $t/public $t/bootstrap/cache; ln -sfn $dir/shared/storage/app/public $t/public/storage; touch $t/.agentcms-healthy; rm -rf $r; mv $t $r" < "$ctl/artifacts/$rel.tar.gz"
+  # キャッシュを作る前に storage の view の置き場所を片付ける（リンクのまま作ると、サイトが選んだ場所が出力先になる）
+  in_site 's=shared/storage; f=$s/framework; [ -d "$s" ] && [ ! -L "$s" ] && { if [ -L "$f" ] || { [ -e "$f" ] && [ ! -d "$f" ]; }; then rm -rf "$f"; fi; } && mkdir -p "$f" && { chmod -R u+rwX "$f" 2>/dev/null || true; } && { for d in views cache sessions; do if [ -L "$f/$d" ] || { [ -e "$f/$d" ] && [ ! -d "$f/$d" ]; }; then rm -rf "$f/$d"; fi; done; } && mkdir -p "$f/views" "$f/cache/data" "$f/sessions" && rm -rf "$f/maintenance.php" "$f/down" && find "$f/views" -mindepth 1 \( -type l -o \( -name "*.php" ! -type d \) \) -delete && [ ! -L "$f" ] && [ -d "$f/views" ] && [ ! -L "$f/views" ] && [ ! -e "$f/maintenance.php" ] && [ ! -L "$f/maintenance.php" ] && [ -z "$(find "$f/views" -mindepth 1 \( -type l -o -name "*.php" \) | head -1)" ]' < /dev/null
   # キャッシュは、その release の bootstrap/cache と shared/storage だけを書ける使い捨てのコンテナで作る（途中にリンクがあれば入れない）
   b=$(cd -P -- "$dir" && pwd)
   [ "$(cd -P -- "$dir/$r/bootstrap/cache" && pwd)" = "$b/$r/bootstrap/cache" ] && [ "$(cd -P -- "$dir/shared/storage" && pwd)" = "$b/shared/storage" ]
@@ -260,8 +263,8 @@ if [ "$mode" != keep-code ]; then
   in_site "ln -sfn $dir/$r current" < /dev/null
 fi
 # storage の中で PHP が読み込む物（メンテナンスの印・コンパイル済みの view）は、起こす前に消す（サイトが置ける）
-#    （サイトが権限を外していても消せるように戻してから消し、消えたことを確かめる。消せなければ起こさずに止まる）
-in_site 'f=shared/storage/framework; if [ -e "$f" ] || [ -L "$f" ]; then chmod -R u+rwX "$f" 2>/dev/null || true; fi; rm -rf "$f/maintenance.php" "$f/down" && { [ ! -d "$f/views" ] || find "$f/views" -name "*.php" ! -type d -delete; } && [ ! -e "$f/maintenance.php" ] && [ ! -L "$f/maintenance.php" ] && { [ ! -d "$f/views" ] || [ -z "$(find "$f/views" -name "*.php" ! -type d | head -1)" ]; }' < /dev/null
+#    （framework・views がリンクなら本物を作り直す・権限を外されていても戻して消す・片付いたことを確かめる。できなければ起こさずに止まる）
+in_site 's=shared/storage; f=$s/framework; [ -d "$s" ] && [ ! -L "$s" ] && { if [ -L "$f" ] || { [ -e "$f" ] && [ ! -d "$f" ]; }; then rm -rf "$f"; fi; } && mkdir -p "$f" && { chmod -R u+rwX "$f" 2>/dev/null || true; } && { for d in views cache sessions; do if [ -L "$f/$d" ] || { [ -e "$f/$d" ] && [ ! -d "$f/$d" ]; }; then rm -rf "$f/$d"; fi; done; } && mkdir -p "$f/views" "$f/cache/data" "$f/sessions" && rm -rf "$f/maintenance.php" "$f/down" && find "$f/views" -mindepth 1 \( -type l -o \( -name "*.php" ! -type d \) \) -delete && [ ! -L "$f" ] && [ -d "$f/views" ] && [ ! -L "$f/views" ] && [ ! -e "$f/maintenance.php" ] && [ ! -L "$f/maintenance.php" ] && [ -z "$(find "$f/views" -mindepth 1 \( -type l -o -name "*.php" \) | head -1)" ]' < /dev/null
 docker compose -f "$ctl/compose.yml" start
 echo "戻しました: DB は $id の${src:+（サーバーの写し）}直前 / current は $(basename "$(readlink "$dir/current")") / ログインは全員切りました"
 ```

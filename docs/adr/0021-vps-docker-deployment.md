@@ -108,7 +108,9 @@ deploy の中でこの差し替えをするのは、送信・展開・サイト�
 - app・scheduler は置き場所を**読むだけ**で入れ、`shared/storage` だけを書けるように重ねて入れる（上げたファイル・ログ・コンパイル済みの view・アプリの記録）。web と backup は全部読むだけ。セッション・キャッシュ・キューは DB（`.env` のひな形）なので、ほかに書く場所は要らない
 - config / view のキャッシュ・migration・分類の同期は、その release の `bootstrap/cache` と `shared/storage` だけを書ける使い捨てのコンテナ（権限なし・根は読むだけ・上限つき・edge のネットワーク）で流す。動いているサイトのコンテナは使わない
 - `shared/storage` と `bootstrap/cache` は mount の元になる（Docker はホストでリンクを辿る）。入れる前に、置き場所から先にリンクを含まない本物のディレクトリであることを `cd -P` で確かめる。前の版の形（置き場所全体を書ける）のコンテナが動いていれば、確かめる前に止める（その間に差し替えさせない）
-- deploy と rollback は、current を切り替えたあと app・scheduler を止め、`shared/storage` の中で PHP が読み込む物（メンテナンスの印・コンパイル済みの view）を消してから起こす（コンテナの中に残したプロセスと、どの release からも読み込まれる storage の PHP を消す。数秒 502）。止める前に消すと、動いているプロセスに置き直される
+- deploy と rollback は、config / view のキャッシュを作る前に app・scheduler を止め、`shared/storage` の中で PHP が読み込む物（メンテナンスの印・コンパイル済みの view、`framework`・`views` がリンクならそのリンク）を片付け、current を切り替えてから起こす（コンテナの中に残したプロセスと、どの release からも読み込まれる storage の PHP を消す。止めている間は 502）。動いているプロセスがあるままキャッシュを作ると、Laravel が `realpath` で決める view の出力先をリンクでサイトの選んだ場所にされ、片付けたあとに置き直される。片付けられなければ起こさない
+- web の `/storage/` は `shared/storage/app/public` へ直に向け、その中のリンクは辿らない（`disable_symlinks on from=shared/storage`）。サイトが `.env` へのリンクを置いても配信しない
+- 残ること（復旧の手順で扱う）：DB の中身（管理者の追加など）と上げられたファイルは、乗っ取られたサイトが書き換えられる。コードの出し直しだけでは復旧は終わらない（docs/deployment/vps.md の手順：サーバーの写しから DB を戻す・秘密を替える）
 - health が落ちたときの自動の切り戻しと DB を戻す手順も、手での rollback と同じく送った artifact から作り直してから切り替える（artifact の無い release へは戻さない）
 - 前の版の形のコンテナは、deploy の最初（展開より前）に止める。止めないと、読むだけに替える前に新しい release を書き換えられる
 - doctor は、app・scheduler が前の版の形のままなら・storage にメンテナンスの印があれば WARN を出す（出し直すと直る）

@@ -14,11 +14,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { vpsDeploySteps } from "../src/commands/deploy-vps.js";
+import { runSteps, vpsDeploySteps } from "../src/commands/deploy-vps.js";
 import type { ExecResult, RemoteExecutor } from "../src/deploy/executor.js";
 import {
   releaseRunCommand,
-  restartSiteCode,
+  startSiteCode,
+  stopSiteCode,
   siteContainersScript,
   stopLegacyWritable,
   vpsDoctor,
@@ -45,7 +46,7 @@ import type { DeployTargetConfig } from "../src/deploy/types.js";
  * - config/view のキャッシュと migration は、その release の bootstrap/cache と storage だけを書ける
  *   使い捨てのコンテナで作る（動いているサイトのコンテナを使わない）
  * - mount の元にする置き場所の中の場所は、リンクを含まないことを確かめてから入れる
- * - 出し直し・戻しで current を切り替えたら、サイトのコンテナを起こし直す（中に残ったプロセスを消す）
+ * - 出し直しはキャッシュを作る前にサイトのコンテナを止めて storage の中の PHP を片付け、current を切り替えてから起こす
  */
 
 const run = process.platform === "win32" ? describe.skip : describe;
@@ -108,6 +109,12 @@ describe("サイトのコンテナの置き場所の入れ方", () => {
       );
       expect(v).toContain("read_only: true");
     }
+  });
+
+  it("/storage/ は shared/storage/app/public へ直に向け、その中のリンクを辿らない", () => {
+    const c = siteNginx(n);
+    expect(c).toContain("alias /srv/agentcms/sites/shop-a/shared/storage/app/public/;");
+    expect(c).toContain("disable_symlinks on from=/srv/agentcms/sites/shop-a/shared/storage;");
   });
 
   it("web と backup は置き場所を読むだけ（書ける mount は無い）", () => {
@@ -197,6 +204,45 @@ describe("release の PHP は使い捨てのコンテナで流す", () => {
     expect(ex.history.filter((c) => c.includes("docker run --rm")).length).toBe(
       2,
     );
+  });
+});
+
+describe("止めて片付けたあとの工程で落ちたら、サイトのコンテナを起こし戻す", () => {
+  const ex = new Canned(() => ({ code: 0, stdout: "", stderr: "" }));
+  const ctx = vpsReleaseContext({
+    cfg: cfgAt("/srv/agentcms"),
+    exec: ex,
+    phpBin: "php",
+    releaseId: "20261124000000",
+    log: () => {},
+  });
+  const stopLabel = vpsDeploySteps(ctx, "/tmp/a.tar.gz").find(([l]) => l.includes("止め、storage"))![0];
+  const okStep = async () => ({ step: "x", ok: true });
+  const ngStep = async () => ({ step: "x", ok: false, detail: "落ちた" });
+
+  it("キャッシュで落ちたら起こし戻す（current は前のまま）", async () => {
+    let started = 0;
+    const r = await runSteps([[stopLabel, okStep], ["config / view キャッシュ", ngStep]], null, async () => {
+      started++;
+    });
+    expect(r.ok).toBe(false);
+    expect(started).toBe(1);
+  });
+
+  it("片付けそのものに落ちたら起こさない（残った PHP を動かさない）", async () => {
+    let started = 0;
+    await runSteps([[stopLabel, ngStep]], null, async () => {
+      started++;
+    });
+    expect(started).toBe(0);
+  });
+
+  it("止める前の工程で落ちたら何もしない", async () => {
+    let started = 0;
+    await runSteps([["DB migration", ngStep]], null, async () => {
+      started++;
+    });
+    expect(started).toBe(0);
   });
 });
 
@@ -364,27 +410,49 @@ run("置き場所の中のリンクを mount の元にしない・起こし直�
     log: () => {},
   });
 
-  it("current を切り替えたら app と scheduler を止め、storage の中の PHP が読み込む物を消してから起こす", async () => {
+  it("止めてから storage の中の PHP が読み込む物を消す・起こすのは別（startSiteCode）", async () => {
     const n = vpsNames(cfgAt(root));
     const fw = join(n.appDir, "shared", "storage", "framework");
     mkdirSync(join(fw, "views"), { recursive: true });
     writeFileSync(join(fw, "maintenance.php"), "<?php // BACKDOOR\n");
     writeFileSync(join(fw, "views", "abc.php"), "<?php // BACKDOOR\n");
     writeFileSync(join(n.appDir, "shared", "storage", "keep.txt"), "upload\n");
-    const r = await restartSiteCode(ctxLocal());
+    const r = await stopSiteCode(ctxLocal());
     expect(r.ok, r.detail).toBe(true);
     expect(existsSync(join(fw, "maintenance.php"))).toBe(false);
     expect(existsSync(join(fw, "views", "abc.php"))).toBe(false);
     // 上げられたファイルなど、ほかの物は消さない
     expect(existsSync(join(n.appDir, "shared", "storage", "keep.txt"))).toBe(true);
-    const log = dockerLog();
+    let log = dockerLog();
     const stop = log.search(new RegExp(`^stop -t 10 ${n.appContainer} ${n.schedulerContainer}$`, "m"));
     const clean = log.search(/^run .*maintenance\.php/m);
-    const start = log.search(new RegExp(`^start ${n.appContainer} ${n.schedulerContainer}$`, "m"));
     expect(stop).toBeGreaterThan(-1);
-    // 止めてから消し、消してから起こす（動いているプロセスに置き直させない）
+    // 止めてから消す（動いているプロセスに置き直させない）。止めたまま返す
     expect(clean).toBeGreaterThan(stop);
-    expect(start).toBeGreaterThan(clean);
+    expect(log).not.toMatch(/^start /m);
+    expect((await startSiteCode(ctxLocal())).ok).toBe(true);
+    log = dockerLog();
+    expect(log).toMatch(new RegExp(`^start ${n.appContainer} ${n.schedulerContainer}$`, "m"));
+  });
+
+  it("view の置き場所・framework がリンクなら、リンクを消して本物のディレクトリを作り直す（リンクの先には触らない）", async () => {
+    const n = vpsNames(cfgAt(root));
+    const st = join(n.appDir, "shared", "storage");
+    const fw = join(st, "framework");
+    const elsewhere = join(st, "app", "e2e-views");
+    mkdirSync(elsewhere, { recursive: true });
+    writeFileSync(join(elsewhere, "abc.php"), "<?php // BACKDOOR\n");
+    mkdirSync(fw, { recursive: true });
+    symlinkSync(elsewhere, join(fw, "views"));
+    expect((await stopSiteCode(ctxLocal())).ok).toBe(true);
+    expect(spawnSync("test", ["-L", join(fw, "views")]).status).not.toBe(0);
+    expect(existsSync(join(fw, "views"))).toBe(true);
+    // framework 自体がリンクでも
+    rmSync(fw, { recursive: true });
+    symlinkSync(join(st, "app"), fw);
+    expect((await stopSiteCode(ctxLocal())).ok).toBe(true);
+    expect(spawnSync("test", ["-L", fw]).status).not.toBe(0);
+    expect(existsSync(join(fw, "views"))).toBe(true);
   });
 
   it("サイトが framework の権限を外していても消す（同じ利用者なので戻せる）", async () => {
@@ -396,7 +464,7 @@ run("置き場所の中のリンクを mount の元にしない・起こし直�
     chmodSync(join(fw, "views", "sub"), 0o555);
     chmodSync(join(fw, "views"), 0o555);
     chmodSync(fw, 0o555);
-    const r = await restartSiteCode(ctxLocal());
+    const r = await stopSiteCode(ctxLocal());
     expect(r.ok, r.detail).toBe(true);
     expect(existsSync(join(fw, "maintenance.php"))).toBe(false);
     expect(existsSync(join(fw, "views", "sub", "x.php"))).toBe(false);
@@ -404,7 +472,7 @@ run("置き場所の中のリンクを mount の元にしない・起こし直�
 
   it("消せなければ app と scheduler を起こさず、失敗を返す（残った PHP を動かさない）", async () => {
     const n = vpsNames(cfgAt(root));
-    const r = await restartSiteCode(ctxLocal({ FAKE_RUN_FAIL: "1" }));
+    const r = await stopSiteCode(ctxLocal({ FAKE_RUN_FAIL: "1" }));
     expect(r.ok).toBe(false);
     expect(r.detail).toContain("storage-clean-failed");
     expect(dockerLog()).not.toMatch(new RegExp(`^start ${n.appContainer}`, "m"));

@@ -214,6 +214,7 @@ run("送った artifact を control に残し、そこから展開・作り直�
   it("作り直しが途中で落ちたら、止めた app と scheduler を起こして返す（current は変えていない）", async () => {
     const n = vpsNames(cfgAt(root));
     await uploadAndExtractVps(ctx("20261124000000"), artifact("v1"));
+    mkdirSync(join(n.appDir, "shared/storage"), { recursive: true });
     // checksum は合うが中身が壊れている artifact（artisan が無い）
     const src = join(root, "art-src-broken");
     mkdirSync(src, { recursive: true });
@@ -225,6 +226,17 @@ run("送った artifact を control に残し、そこから展開・作り直�
     const log = readFileSync(join(root, "docker.log"), "utf8");
     expect(log.indexOf("stop agentcms-shop-a-app")).toBeGreaterThan(-1);
     expect(log.indexOf("stop agentcms-shop-a-app")).toBeLessThan(log.lastIndexOf("start agentcms-shop-a-app"));
+  });
+
+  it("storage を片付けられなければ、止めた app と scheduler を起こさずに返す（残った PHP を動かさない）", async () => {
+    await uploadAndExtractVps(ctx("20261124000000"), artifact("v1"));
+    // shared/storage が無い（片付けの前提が崩れている）
+    const r = await rebuildReleaseFromArtifact(ctx("rollback"), "20261124000000");
+    expect(r.ok).toBe(false);
+    expect(r.detail).toContain("storage-clean-failed");
+    const log = readFileSync(join(root, "docker.log"), "utf8");
+    expect(log).toMatch(/^stop agentcms-shop-a-app agentcms-shop-a-scheduler$/m);
+    expect(log).not.toMatch(/^start agentcms-shop-a-app/m);
   });
 
   it("current の symlink の先に改行と「current-none」を入れても、初回とは読まない（台本は base64 の 1 行で返す）", async () => {
