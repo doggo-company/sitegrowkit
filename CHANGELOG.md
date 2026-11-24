@@ -20,6 +20,7 @@ SiteGrowKit の変更履歴です。
 - VPS のサイトのコンテナ（PHP-FPM・scheduler）は、サイトの置き場所を読むだけで入れ、書けるのは `shared/storage` だけにしました。乗っ取られたサイトが自分のコード・`bootstrap/cache`・`shared/.env` を書き換えて、出し直し・戻しのあとに乗っ取りを残すことを防ぎます。config / view のキャッシュと migration は deploy の使い捨てのコンテナで流し、current を切り替えたらサイトのコンテナを止め、storage の中で PHP が読み込む物（メンテナンスの印・コンパイル済みの view）を消してから起こします（コンテナの中に残したプロセスも消える・数秒 502）。health が落ちたときの自動の切り戻しと DB を戻す手順も、`rollback` と同じく送った artifact から作り直してから切り替えます。前の版で出したサイトは、次の deploy でこの形に変わります（それまでは doctor が知らせます）
 - VPS の deploy は、作った画面の部品（`storage` の中のコンパイル済みの view）と `bootstrap/cache` の checksum をサーバーの `control/<サイト名>/artifacts` に残し、`agentcms deploy doctor` はいまの物と比べて、書き換え・足された物を知らせます。コンパイル済みの view はサイトのコンテナから書ける場所にあり、PHP として読み込まれるためです（最初のページと通知メールでアプリが作る view は、キャッシュを作るときに前もって作って記録します。それ以外にアプリが後から作った view は「足された物」と出ることがあります）
 - 手順書の冒頭に「既知の限界」（ディスクと MySQL の負荷はサイトごとに区切っていない・出し直しのたびに数秒〜十数秒 502・本物の VPS ではまだ試していない）をまとめました
+- 本文の整え方（HTMLPurifier・richtext と HTML Component）は、定義のキャッシュを使わなくなりました。これまでは `storage/app/purifier` に置いて unserialize で読み込んでいたため、乗っ取られたサイトが置いた定義（script を許す物など）を、出し直したあとも読み込めました。VPS の deploy と rollback は、前の版が残したこの置き場所を消し、`agentcms deploy doctor` は残っていれば知らせます
 
 ## 未リリース — 毎日のバックアップを別の置き場所へ写せるようにしました
 

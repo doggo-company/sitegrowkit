@@ -221,6 +221,8 @@ ${WAIT_SITE_CODE(n)}`);
  *   リンクのままキャッシュを作ると、サイトが選んだ場所が出力先になる
  * - サイトが権限を外していても消せるように戻す（同じ利用者の持ち物）
  * - メンテナンスの印と、views の中の PHP とリンクを消し、片付いたことを確かめる（できなければ失敗）
+ * - 前の版のキットが作った HTML の整え方の記録（`app/purifier`・HTMLPurifier の定義キャッシュ。
+ *   unserialize で読まれていた）を消す。いまのキットは読まないが、前の版の release へ戻すと読み込む
  */
 export const STORAGE_EXEC_CLEAN = [
     "s=shared/storage; f=$s/framework",
@@ -232,10 +234,12 @@ export const STORAGE_EXEC_CLEAN = [
     'mkdir -p "$f/views" "$f/cache/data" "$f/sessions"',
     'rm -rf "$f/maintenance.php" "$f/down"',
     'find "$f/views" -mindepth 1 \\( -type l -o \\( -name "*.php" ! -type d \\) \\) -delete',
+    '{ [ -L "$s/app" ] || [ ! -d "$s/app" ] || { p="$s/app/purifier"; chmod u+rwx "$s/app" 2>/dev/null || true; if [ -L "$p" ] || [ -f "$p" ]; then rm -f "$p"; elif [ -e "$p" ]; then chmod -R u+rwX "$p" 2>/dev/null || true; rm -rf "$p"; fi; }; }',
     // 片付いたことを確かめる（できなければ失敗にする。黙って続けない）
     '[ ! -L "$f" ] && [ -d "$f/views" ] && [ ! -L "$f/views" ]',
     '[ ! -e "$f/maintenance.php" ] && [ ! -L "$f/maintenance.php" ]',
     '[ -z "$(find "$f/views" -mindepth 1 \\( -type l -o -name "*.php" \\) | head -1)" ]',
+    '{ [ -L "$s/app" ] || { [ ! -e "$s/app/purifier" ] && [ ! -L "$s/app/purifier" ]; }; }',
 ].join(" && ");
 /**
  * 前の版の形（置き場所全体を書ける）のサイトのコンテナが動いていれば止める。deploy の最初に流す。
@@ -428,6 +432,30 @@ export async function warmViews(ctx, id) {
     return r.code === 0 && m?.[1] === "2"
         ? ok("warm", "最初のページとメールで使う画面の部品を前もって作りました")
         : ng("warm", `最初のページとメールで使う画面の部品の一部を前もって作れませんでした（doctor が「足された物」と知らせることがあります）: ${(r.stdout + r.stderr).trim().slice(-300)}`);
+}
+/**
+ * doctor の「HTML の整え方の記録（HTMLPurifier の定義キャッシュ）が storage に無いか」の行。
+ * 台本の出力 `purifier=yes|no`（置き場所を確かめられなければ出さない＝行も出さない）
+ */
+export function purifierCheck(n, raw) {
+    const name = "HTML の整え方の記録（HTMLPurifier の定義キャッシュ）";
+    if (raw === "no")
+        return {
+            key: "purifier",
+            name,
+            status: "PASS",
+            detected: "サイトが書ける storage に無い（アプリは毎回コードから作り、読み込まない）",
+        };
+    if (raw !== "yes")
+        return null;
+    return {
+        key: "purifier",
+        name,
+        status: "WARN",
+        what: `${n.appDir}/shared/storage/app/purifier に、HTML の整え方の記録があります`,
+        why: "前の版のキット（とその release へ戻したとき）は、この記録を unserialize で読み込み、本文の整え方に使います。サイトのコンテナから書ける場所なので、乗っ取られたサイトが置いた物（script を許す定義・PHP のオブジェクト）を、出し直したあとも読み込みます。いまのキットは読みません",
+        fix: `\`agentcms deploy\` で出し直すか \`agentcms deploy rollback\`（どちらもサイトのコンテナを止めてから消します）。前の版の release で動いていたなら、公開中の本文に script などが混ざっていないかも確かめてください`,
+    };
 }
 /**
  * doctor の「画面の部品が deploy で作った物のままか」の行。
@@ -724,6 +752,9 @@ export async function vpsDoctor(exec, cfg) {
     const views = viewsCheck(n, fact("views"), published);
     if (views)
         add(views);
+    const purifier = purifierCheck(n, fact("purifier"));
+    if (purifier)
+        add(purifier);
     const bk = backupCheck(n, {
         status: fact("backup_status"),
         container: fact("backup_container"),
@@ -897,6 +928,8 @@ ${siteFsFns(n)}
 if [ -d ${shq(n.appDir)} ] && docker image inspect ${shq(PHP_IMAGE)} >/dev/null 2>&1 && in_site "grep -q '^APP_KEY=base64:' shared/.env" 2>/dev/null; then echo env=yes; else echo env=no; fi
 # メンテナンスの印（storage の中・PHP が最初に読み込む。サイトが置ける）
 if [ -d ${shq(n.appDir)} ] && docker image inspect ${shq(PHP_IMAGE)} >/dev/null 2>&1 && in_site "test -e shared/storage/framework/maintenance.php || test -L shared/storage/framework/maintenance.php" 2>/dev/null; then echo maint=yes; fi
+# HTML の整え方の記録（前の版のキットが storage に作り、unserialize で読んでいた HTMLPurifier の定義キャッシュ）
+if [ -d ${shq(n.appDir)} ] && docker image inspect ${shq(PHP_IMAGE)} >/dev/null 2>&1; then in_site "if test -e shared/storage/app/purifier || test -L shared/storage/app/purifier; then echo purifier=yes; else echo purifier=no; fi" 2>/dev/null; fi
 for g in ${shq(n.root + "/edge/sites")}/*.caddy; do
   [ -e "$g" ] || continue
   [ "$(basename "$g" .caddy)" = ${shq(n.site)} ] && continue
