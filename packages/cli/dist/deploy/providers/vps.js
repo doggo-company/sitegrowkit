@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { shq } from "../executor.js";
-import { APP_KEY_PLACEHOLDER, FPM_SOCKET_IN_CONTAINER, MYSQL_IMAGE, BACKUP_RUNNING_HOURS, BACKUP_STALE_HOURS, backupScript, CADDY_CONTAINER, DB_MAX_USER_CONNECTIONS, DB_PASSWORD_PLACEHOLDER, DOMAIN_MARK, edgeCaddyfile, edgeCompose, MYSQL_CONTAINER, PHP_IMAGE, phpDockerfile, siteCaddy, siteCompose, siteNginx, vpsNames, } from "./vps-assets.js";
+import { APP_KEY_PLACEHOLDER, FPM_SOCKET_IN_CONTAINER, MYSQL_IMAGE, BACKUP_RUNNING_HOURS, BACKUP_STALE_HOURS, backupScript, CADDY_CONTAINER, DB_MAX_USER_CONNECTIONS, DB_PASSWORD_PLACEHOLDER, DOMAIN_MARK, EDGE_NETWORK, edgeCaddyfile, edgeCompose, MYSQL_CONTAINER, PHP_IMAGE, phpDockerfile, siteCaddy, siteCompose, siteNginx, SITE_WRITABLE, vpsNames, } from "./vps-assets.js";
 import { minimalEnv } from "./xserver-setup.js";
 /**
  * provider "vps"（Docker の入った Linux VPS 1 台・ADR-0021）。
@@ -121,6 +121,82 @@ export function siteFsExecutor(exec, n) {
 export function siteFsContext(ctx) {
     return { ...ctx, exec: siteFsExecutor(ctx.exec, vpsNames(ctx.cfg)) };
 }
+/** release の PHP（migration・分類の同期・config/view のキャッシュ）を流す使い捨てのコンテナの上限 */
+const RELEASE_RUN_LIMITS = {
+    memory: "768m",
+    pids: 256,
+    cpus: "1.0",
+    timeoutSec: 900,
+    tmp: "64m",
+};
+/**
+ * release の中で artisan を流すコマンド行（deploy・rollback の migration・分類の同期・config/view のキャッシュ）。
+ *
+ * サイトのコンテナ（app・scheduler）は自分のコードと .env を書き換えられないように、置き場所を
+ * 読むだけで入れている。そこで config/view のキャッシュは、**この release の bootstrap/cache と
+ * shared/storage だけを書ける使い捨てのコンテナ**で作る:
+ *
+ * - 動いているサイトのコンテナ（乗っ取られていればその中のプロセスも）を使わない
+ * - 置き場所は読むだけ。書けるのは `releases/<id>/bootstrap/cache`（config・packages・services のキャッシュ）と
+ *   `shared/storage`（コンパイル済みの view・ログ）だけ
+ * - mount の元にする 2 つは、リンクを含まない本物のディレクトリであることを先に確かめる
+ *   （前の版のキットのサイトのコンテナが、置き場所の中をほかの場所へのリンクに差し替えていても、そこを入れない）
+ * - MySQL に届くように edge のネットワークに入れる。権限なし・根は読むだけ・上限つき・時間の上限はサーバーの上で切る
+ */
+export function releaseRunCommand(n, releaseDir, cmd) {
+    const id = releaseDir.slice(`${n.appDir}/releases/`.length);
+    if (!releaseDir.startsWith(`${n.appDir}/releases/`) || !/^\d{14}$/.test(id))
+        return `echo "release-run-odd: release の置き場所の形が違います" >&2; exit 97`;
+    const cache = `${releaseDir}/bootstrap/cache`;
+    const storage = `${n.appDir}/${SITE_WRITABLE}`;
+    return (`if ! { ${realDirUnder(n.appDir, `releases/${id}/bootstrap/cache`)} && ${realDirUnder(n.appDir, SITE_WRITABLE)}; }; then ` +
+        `echo "release-run-link: ${releaseDir} の bootstrap/cache か ${SITE_WRITABLE} が無いか、リンクを含んでいます（入れません）" >&2; exit 97; fi; ` +
+        `docker run --rm --init --pull never --network ${EDGE_NETWORK} --cap-drop ALL ` +
+        `--security-opt no-new-privileges --read-only --tmpfs /tmp:size=${RELEASE_RUN_LIMITS.tmp},mode=1777,nosuid,nodev,noexec ` +
+        `--memory ${RELEASE_RUN_LIMITS.memory} --memory-swap ${RELEASE_RUN_LIMITS.memory} ` +
+        `--pids-limit ${RELEASE_RUN_LIMITS.pids} --cpus ${RELEASE_RUN_LIMITS.cpus} --log-driver none --user "$(id -u):$(id -g)" ` +
+        `-v ${shq(`${n.appDir}:${n.appDir}:ro`)} -v ${shq(`${cache}:${cache}`)} -v ${shq(`${storage}:${storage}`)} ` +
+        `-w ${shq(releaseDir)} --entrypoint timeout ${shq(PHP_IMAGE)} -s KILL ${RELEASE_RUN_LIMITS.timeoutSec} sh -c ${shq(cmd)} < /dev/null`);
+}
+/**
+ * `base/rel` が、リンクを含まない本物のディレクトリかを確かめるシェルの条件。
+ * `base`（サーバーが決めた置き場所）までのリンクは解いてよい（/srv がほかのディスクへのリンクなど）。
+ * `rel` の中にリンクがあれば偽（Docker は mount の元のリンクをホストで辿るので、
+ * 置き場所の中のリンクを mount の元にすると、ほかのサイト・サーバーの物が入る）。
+ * `cd -P` と `pwd` だけを使う（GNU の realpath -e が無いサーバー・手元でも同じに動く）
+ */
+export function realDirUnder(base, rel) {
+    return `{ b=$(cd -P -- ${shq(base)} 2>/dev/null && pwd) && [ -n "$b" ] && [ "$(cd -P -- ${shq(`${base}/${rel}`)} 2>/dev/null && pwd)" = "$b"/${shq(rel)} ]; }`;
+}
+/** vps の deploy・rollback の DeployContext（release の PHP は使い捨てのコンテナで流す） */
+export function vpsReleaseContext(ctx) {
+    const n = vpsNames(ctx.cfg);
+    return { ...ctx, runIn: (dir, cmd) => releaseRunCommand(n, dir, cmd) };
+}
+/**
+ * サイトのコードが動くコンテナ（app・scheduler）を起こし直す（止まっていれば起こす）。
+ *
+ * 出し直し・戻しで current を切り替えたあとに流す。乗っ取られたサイトがコンテナの中に残した
+ * プロセス（裏で起こした PHP など）は、コンテナを止めるまで動き続け、出し直しても戻しても残る。
+ * 起こし直すとコンテナの中のプロセスは全部新しくなり、/tmp・ソケットの置き場所（tmpfs）も空になる。
+ * その間（数秒）web は 502 を返す
+ */
+export async function restartSiteCode(ctx) {
+    const n = vpsNames(ctx.cfg);
+    const r = await runScript(ctx.exec, `set -u
+docker restart -t 10 ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null 2>&1 || docker start ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null
+for i in $(seq 1 30); do
+  if [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.appContainer)} 2>/dev/null)" = true ] && [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.schedulerContainer)} 2>/dev/null)" = true ] && docker exec ${shq(n.webContainer)} test -S ${FPM_SOCKET_IN_CONTAINER} 2>/dev/null; then
+    echo restart-ok; exit 0
+  fi
+  sleep 1
+done
+docker logs --tail 20 ${shq(n.appContainer)} 2>&1
+exit 1`);
+    return r.code === 0 && r.stdout.includes("restart-ok")
+        ? ok("restart", `${n.appContainer} / ${n.schedulerContainer} を起こし直しました（中に残ったプロセスは消えます）`)
+        : ng("restart", `サイトのコンテナを起こし直せません: ${tail(r)}`);
+}
 /**
  * Caddy を、あるサイトの web 用のネットワーク（そのサイトの web と Caddy だけ）へ入れる bash の関数。
  * 入っていれば何もしない。Caddy を作り直したあと（edge をそろえる・起こす）は全サイトの分を入れ直す
@@ -198,7 +274,9 @@ in_site_in ${shq(`rm -rf releases/${id} && mkdir -p releases/${id} && tar -xzf -
 /**
  * rollback の前に、戻す先の release を送った artifact から作り直す（置き場所の中の古い release は
  * サイトが書き換えられるので、そのまま戻すと乗っ取られたコードへ戻りうる）。
- * artifact が無い（前の版の deploy で出した）release は作り直せないので `rebuilt: false` を返す
+ * artifact が無い（前の版の deploy で出した）release は作り直せないので `rebuilt: false` を返す。
+ * 作り直せたときは、サイトのコードが動くコンテナ（app・scheduler）を**止めたまま**返す。
+ * 呼ぶ側は current を切り替えてから（失敗したときも）`restartSiteCode` で起こす
  */
 export async function rebuildReleaseFromArtifact(ctx, id) {
     const n = vpsNames(ctx.cfg);
@@ -210,13 +288,16 @@ ${siteFsFns(n)}
 cd ${shq(art)} 2>/dev/null || { echo no-artifact; exit 0; }
 [ -f ${shq(`${id}.tar.gz`)} ] && [ -f ${shq(`${id}.sha256`)} ] || { echo no-artifact; exit 0; }
 sha256sum -c --quiet ${shq(`${id}.sha256`)} || { echo "artifact-odd: 残した artifact の checksum が合いません"; exit 1; }
-# 作り直す間、サイトのコードが動くコンテナ（app・scheduler）を止める（動いたままだと、作り直した物をまた書き換えられる）。
-# 起こすのは作り直したあと（中のプロセスは全部新しくなる）。web は止めない（その間は 502）
+# 作り直す間、サイトのコードが動くコンテナ（app・scheduler）を止める（中に残ったプロセスを止める）。
+# うまくいったら止めたまま返し、current を切り替えてから起こす（restartSiteCode）— 切り替える前に
+# いまのコードを起こし直さない。途中で落ちたときだけ、ここで起こし直す。web は止めない（その間は 502）
 docker stop ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null
 trap 'docker start ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null 2>&1 || true' EXIT
 # 共有の storage の中で、PHP が読み込む物を片付ける（メンテナンスの印・コンパイル済みの view。どちらも作り直せる）
 in_site 'rm -f shared/storage/framework/maintenance.php shared/storage/framework/down; find shared/storage/framework/views -type f -name "*.php" -delete 2>/dev/null; true'
-in_site_in ${shq(`set -e; rm -rf releases/.rebuild-${id}; mkdir releases/.rebuild-${id}; tar -xzf - -C releases/.rebuild-${id}; test -f releases/.rebuild-${id}/artisan; rm -rf releases/${id}; mv releases/.rebuild-${id} releases/${id}; touch releases/${id}/${HEALTHY_MARK}; echo rebuild-ok`)} < ${shq(`${id}.tar.gz`)}`, 600_000);
+in_site_in ${shq(`set -e; rm -rf releases/.rebuild-${id}; mkdir releases/.rebuild-${id}; tar -xzf - -C releases/.rebuild-${id}; test -f releases/.rebuild-${id}/artisan; rm -rf releases/${id}; mv releases/.rebuild-${id} releases/${id}; touch releases/${id}/${HEALTHY_MARK}; echo rebuild-ok`)} < ${shq(`${id}.tar.gz`)}
+# 作り直せた: app・scheduler は止めたまま返す（起こすのは current を切り替えてから・restartSiteCode）
+trap - EXIT`, 600_000);
     if (r.code === 0 && r.stdout.includes("no-artifact"))
         return { ok: true, rebuilt: false };
     if (r.code !== 0 || !r.stdout.includes("rebuild-ok"))
@@ -386,6 +467,15 @@ export async function vpsDoctor(exec, cfg) {
             what: `${n.appDir}/current がこのサイトの release（releases/<14 桁>）を指していません`,
             why: "サイトのコンテナが書き換えられる場所です。乗っ取られた可能性があります",
             fix: "`agentcms deploy` で出し直してください（deploy は current をこの形でしか信じません）",
+        });
+    if (Number(fact("code_rw")) > 0)
+        add({
+            key: "code_rw",
+            name: "サイトのコンテナが書ける場所",
+            status: "WARN",
+            what: `${n.appContainer} か ${n.schedulerContainer} が、置き場所 ${n.appDir} 全体（コード・.env）を書ける形のままです（前の版のキットで出した）`,
+            why: "乗っ取られたサイトが自分のコードと .env を書き換えられると、出し直しても戻しても乗っ取りが残ります",
+            fix: `\`agentcms deploy\` で出し直してください（置き場所を読むだけで入れ、shared/storage だけを書ける形に作り直します）`,
         });
     const integ = integrityCheck(n, fact("integrity"), published);
     if (integ)
@@ -591,6 +681,8 @@ if [ -L "$bk" ] || { [ -e "$bk" ] && [ ! -f "$bk" ]; }; then echo backup_status=
 elif [ -f "$bk" ]; then echo "backup_status=$(head -c 4097 "$bk" | base64 | tr -d '\\n')"
 else echo backup_status=none; fi
 echo "backup_container=$(docker inspect -f '{{.State.Status}}' ${shq(n.backupContainer)} 2>/dev/null)"
+# サイトのコードが動くコンテナが、置き場所全体を書ける形（前の版のキットで出した）のままか
+echo "code_rw=$(docker inspect -f '{{range .Mounts}}{{.Destination}}={{.RW}}{{"\\n"}}{{end}}' ${shq(n.appContainer)} ${shq(n.schedulerContainer)} 2>/dev/null | grep -cxF ${shq(`${n.appDir}=true`)})"
 echo "server_now=$(date -u +%s)"
 # サイトの置き場所と Docker（MySQL のデータ）が同じ場所（ファイルシステム）か。同じなら、1 サイトが
 # 置き場所を書き足し続けると MySQL とほかのサイトも書けなくなる（サイトごとの容量の上限は無い）
@@ -1039,6 +1131,17 @@ fi
 cat > ${shq(c + "/compose.yml.tmp")} << 'AGENTCMS_COMPOSE'
 ${compose}AGENTCMS_COMPOSE
 mv -f ${shq(c + "/compose.yml.tmp")} ${shq(c + "/compose.yml")}
+# サイトのコードが動くコンテナは、置き場所を読むだけで入れ、shared/storage だけを書けるように重ねる。
+# 前の版の形（置き場所全体を書ける）のコンテナが動いていれば先に止める（下で確かめてから compose が
+# mount するまでの間に、置き場所の中を差し替えさせない）
+if docker inspect -f '{{range .Mounts}}{{.Destination}}={{.RW}}{{"\\n"}}{{end}}' ${shq(n.appContainer)} ${shq(n.schedulerContainer)} 2>/dev/null | grep -qxF ${shq(`${n.appDir}=true`)}; then
+  docker stop ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null 2>&1 || true
+fi
+# shared/storage は mount の元になる（Docker はホストでリンクを辿る）。リンクを含まない本物のディレクトリでなければ入れない
+if ! ${realDirUnder(n.appDir, SITE_WRITABLE)}; then
+  echo "storage-link: ${SITE_WRITABLE} が無いか、リンクを含んでいます（前の版のサイトのコンテナが差し替えた？）。サイトのコンテナに入れずに止めました"
+  exit 1
+fi
 docker compose -f ${shq(c + "/compose.yml")} up -d --remove-orphans --quiet-pull 2>&1 | tail -20
 # Caddy をこのサイトの web 用のネットワークへ（web にはほかのサイトのコンテナから届かない）
 ${CADDY_JOIN_FN}

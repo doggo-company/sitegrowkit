@@ -21,18 +21,20 @@ Docker の入った Linux の VPS 1 台に、SiteGrowKit のサイトを出す�
 
 Caddy にはサイトのファイルを見せない（転送だけ）。サイトの web と PHP は、そのサイトの置き場所しか見えない。PHP-FPM は TCP で待たず、ソケットでだけ待つ。だから、あるサイトが乗っ取られても、ほかのサイトのファイルや PHP には届かない（DB の利用者も分かれている）。
 
-**サイトの置き場所（`sites/<サイト名>/`）の中は、サイトの PHP が書き換えられる。** 値も、ほかの場所を指す symlink も置ける。そこで、サーバーの処理（setup・deploy・MySQL の root）はその中身を入力にしない:
+**サイトのコンテナ（app・scheduler）は、置き場所（`sites/<サイト名>/`）を読むだけで入れ、書けるのは `shared/storage` だけ。** コード（`releases/`・`current`・`bootstrap/cache`）と `shared/.env` を書き換えられると、乗っ取られたあとに出し直しても戻しても乗っ取りが残るため。config / view のキャッシュと migration は、deploy がその release の `bootstrap/cache` と `shared/storage` だけを書ける使い捨てのコンテナで流す。
+
+それでも、`shared/storage` の中と、前の版のキットで出したサイトの置き場所には、サイトの PHP が書いた物（値も、ほかの場所を指す symlink も）がありうる。そこで、サーバーの処理（setup・deploy・MySQL の root）は置き場所の中身を入力にしない:
 
 - サーバーが決める物（compose・web の設定・夜のバックアップの台本と写し・公開の記録・鍵・途中で止まった setup の値）は `control/<サイト名>/` に置く。サイトのコンテナには見せない
 - MySQL の root で流す SQL には、設定のサイト名から作った名前（`sgk-<サイト名>`）とサーバーで作ったパスワードだけを入れる。サイトの `.env` の値は入れない
 - サイトの置き場所の中のファイル操作（展開・リンク・切り替え・掃除・バックアップを書く・`.env` を置く）は、**その置き場所だけを入れた使い捨てのコンテナの中**で、サイトと同じ利用者で流す。symlink を置かれても、その先はコンテナの中でしか解けない
-- サイトのコンテナの根は読むだけ。書けるのはサイトの置き場所と、大きさを決めたメモリの上の場所（`/tmp` 64MB・`/dev/shm` 16MB・PHP-FPM のソケットの置き場所 1MB）だけ。サイトの置き場所の外のディスク（Docker の置き場所・`control/`）を埋めさせない
+- サイトのコンテナの根は読むだけ。書けるのは `shared/storage` と、大きさを決めたメモリの上の場所（`/tmp` 64MB・`/dev/shm` 16MB・PHP-FPM のソケットの置き場所 1MB）だけ。サイトの置き場所の外のディスク（Docker の置き場所・`control/`）を埋めさせない
 - 夜のバックアップの写しと成否は、サーバーの backup のコンテナ（サイトのコードは動かさない）が `control/<サイト名>/backup` に書く。サイトの中のアプリの記録（`auto.json`）は、乗っ取られたサイトなら「成功」と書き換えられるので、doctor は読まない（§9）
 
 | 置き場所（サーバー） | 中身 |
 | --- | --- |
 | `/srv/agentcms/edge/` | Caddy と MySQL の compose・Caddyfile・`sites/<サイト名>.caddy`・`secrets/mysql-root` |
-| `/srv/agentcms/sites/<サイト名>/` | サイトのコンテナが見る物：`releases/<id>`・`shared/.env`・`shared/storage`・`backups/`・`current` |
+| `/srv/agentcms/sites/<サイト名>/` | サイトのコンテナが見る物（読むだけ。書けるのは `shared/storage` だけ）：`releases/<id>`・`shared/.env`・`shared/storage`・`backups/`・`current` |
 | `/srv/agentcms/control/<サイト名>/` | サーバーだけが触る物（700・サイトのコンテナには見せない）：`compose.yml`・`nginx.conf`・`backup.sh` と `db-password`（夜のバックアップの台本とこのサイトの DB 利用者のパスワード・600）・`backup/`（夜のバックアップの写しと成否 `status.json`）・`artifacts/`（送った artifact と checksum・rollback の作り直しと doctor の比べ物）・`site`（このサイト名のドメイン）・`releases.history`（公開の記録）・`deploy.lock`・`env.pending`（setup の途中の値・600） |
 
 **秘密（DB パスワード・APP_KEY・MySQL の root パスワード）は `agentcms deploy setup` がサーバーの上で作り、サーバーのファイル（600）にだけ置く。** 手元・Git・設定ファイル・ログ・画面・コマンドの引数・`docker inspect` には出さない。ただし動いているプロセスの中には値がある（PHP は `.env` を読み、MySQL は root パスワードを読んで起動する）。サーバーの root と docker グループの利用者は、それを読める。
@@ -149,10 +151,11 @@ health まで通った release には印が付き、公開した順に `releases
 
 **送った artifact は `control/<サイト名>/artifacts/<release id>.tar.gz`（checksum つき・サイトのコンテナには見えない）に、残す release の分だけ残す。** 展開はそこから標準入力で流す（サイトの置き場所の `tmp/` を経由しないので、展開の前に中身を差し替えられない）。
 
-- **rollback は、戻す先を置き場所の中の物のまま使わず、残した artifact から作り直してから切り替える。** 置き場所の中の古い release は、乗っ取られたサイトが書き換えられる（バックドアを置ける）ため。作り直す間は app と scheduler を止め（中のプロセスは起こし直すと全部新しくなる）、共有の storage の中で PHP が読み込む物（メンテナンスの印 `storage/framework/maintenance.php`・コンパイル済みの view）を片付ける。artifact の checksum が合わない・artifact が無い（前の版のキットで出した release）ときは、何も変えずに止まる
+- **rollback は、戻す先を置き場所の中の物のまま使わず、残した artifact から作り直してから切り替える。** 前の版のキットで出したサイトでは、置き場所の中の古い release を乗っ取られたサイトが書き換えられた（バックドアを置けた）ため。作り直す間は app と scheduler を止め、current を切り替えてから起こす（切り替える前にいまのコードを起こし直さない・中のプロセスは全部新しくなる）。共有の storage の中で PHP が読み込む物（メンテナンスの印 `storage/framework/maintenance.php`・コンパイル済みの view）を片付ける。artifact の checksum が合わない・artifact が無い（前の版のキットで出した release）ときは、何も変えずに止まる
 - サイトの web は `/storage/`（上げられたファイル）と `/build/` の中の `.php` を PHP として動かさない
-- **まだ塞いでいないこと：サイトのコンテナは自分のコード（`releases/`）と共有の storage を書き換えられる。** 作り直しと doctor の比べは「書き換えられたあとで戻す・気づく」ための物で、書き換えそのものは止めない。乗っ取られたと分かったら、原因（脆弱性）を直したコードを出し直し、`shared/.env` の秘密（APP_KEY・DB のパスワード）と管理者のパスワードを替えること
-- **`agentcms deploy doctor` は、いま出ている release を送った artifact と比べる**（使い捨てのコンテナの中の GNU tar・サイトのコードは動かさない）。中身の違うファイル・足されたファイルがあれば WARN（数だけ・名前は出さない）。shared へのリンク（`storage`・`.env`・`public/storage`）と deploy が作る `bootstrap/cache` は比べない（PASS の行にもそう出す。そこに置かれた PHP には、この比べでは気づけない）。サイトのコンテナは自分のコードを書き換えられるので、乗っ取りに気づく手がかりになる（書き換えを止めるものではない）
+- **deploy と rollback は、current を切り替えたあとサイトのコンテナ（app・scheduler）を起こし直す。** 乗っ取られたサイトがコンテナの中に残したプロセスは、コンテナを止めるまで動き続けるため（その間の数秒は 502）
+- **サイトのコンテナが書けるのは `shared/storage` だけ。** そこ（上げられたファイル・コンパイル済みの view・ログ）と DB は、乗っ取られたサイトが書き換えられる。乗っ取られたと分かったら、原因（脆弱性）を直したコードを出し直し、`shared/.env` の秘密（APP_KEY・DB のパスワード）と管理者のパスワードを替え、storage と DB はサーバーの写し（§9）から戻すかを決めること。前の版のキットで出したサイトは、出し直すまでコンテナが置き場所全体を書ける形のまま（doctor が WARN を出す）
+- **`agentcms deploy doctor` は、いま出ている release を送った artifact と比べる**（使い捨てのコンテナの中の GNU tar・サイトのコードは動かさない）。中身の違うファイル・足されたファイルがあれば WARN（数だけ・名前は出さない）。shared へのリンク（`storage`・`.env`・`public/storage`）と deploy が作る `bootstrap/cache` は比べない（PASS の行にもそう出す。そこに置かれた PHP には、この比べでは気づけない）。サイトのコンテナはいまはコードを書けないが、前の版のキットで出したあいだに書き換えられていないかの手がかりになる
 
 ## 8. DB を戻す（手で）
 
@@ -251,7 +254,7 @@ echo "戻しました: DB は $id の${src:+（サーバーの写し）}直前 /
 
 サイトの PHP が乗っ取られても、ほかのサイトを止めにくいように、次の上限を付けている:
 
-- サイトのコンテナ（app・web・scheduler）それぞれ：メモリ 768MB・CPU 1・プロセス 256・ログ 10MB×3。根は読むだけで、`/tmp` は 64MB・`/dev/shm` は 16MB・PHP-FPM のソケットの置き場所は 1MB の tmpfs（どれもメモリの上限にも数える）。サイトの置き場所の外のディスクには書けない
+- サイトのコンテナ（app・web・scheduler）それぞれ：メモリ 768MB・CPU 1・プロセス 256・ログ 10MB×3。根は読むだけで、`/tmp` は 64MB・`/dev/shm` は 16MB・PHP-FPM のソケットの置き場所は 1MB の tmpfs（どれもメモリの上限にも数える）。置き場所の中で書けるのは `shared/storage` だけ（web は全部読むだけ）
 - backup のコンテナ：メモリ 512MB・CPU 0.5・プロセス 64・ログ 10MB×3。写しは 1 つ `vps.backup.maxMB` まで・`keep` 個まで（サーバーのディスクを使うのは最大で `(keep + 1) × 2 × maxMB`。新しい回を書いてから古い回を消すため）。上限の 2 倍を書いても `control/` のファイルシステムの 15% 以上が空いたまま残るときだけ取り、残らなければ取らずに `no-space` と書く（乗っ取られたサイトが自分のファイルを大きくしても、写しでサーバーのディスクを使い切らせない。ほかのサイトの写しが `no-space` で落ちることはある）
 - サイトの DB 利用者：同時接続 30（deploy のたびに付け直す）
 - サイトの web は、そのサイトの web と Caddy だけが入るネットワーク。ほかのサイトのコンテナから直接は届かない

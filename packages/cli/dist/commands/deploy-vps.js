@@ -1,7 +1,7 @@
 import { buildArtifact, cleanupBuilds, newReleaseId } from "../deploy/build.js";
 import { postHealthAction, runHealthChecks } from "../deploy/health.js";
 import { ensureLayout, linkShared, migrate, optimize, switchCurrent, taxonomySync, } from "../deploy/release.js";
-import { acquireSiteLock, backupDatabaseVps, cleanupReleasesVps, dbUserLimits, healthyReleases, markHealthy, readCurrent, rebuildReleaseFromArtifact, releaseIdIsFree, rollbackTargetByHistory, releaseSiteLock, runScript, siteContainers, siteFsContext, siteRoute, uploadAndExtractVps, vpsDoctor, vpsSetupActions, } from "../deploy/providers/vps.js";
+import { acquireSiteLock, backupDatabaseVps, cleanupReleasesVps, dbUserLimits, healthyReleases, markHealthy, readCurrent, rebuildReleaseFromArtifact, releaseIdIsFree, rollbackTargetByHistory, releaseSiteLock, restartSiteCode, runScript, siteContainers, siteFsContext, siteRoute, uploadAndExtractVps, vpsDoctor, vpsReleaseContext, vpsSetupActions, } from "../deploy/providers/vps.js";
 import { vpsNames } from "../deploy/providers/vps-assets.js";
 import { worstStatus } from "../deploy/types.js";
 import { fail, heading, info, ok, warn } from "../ui.js";
@@ -105,6 +105,8 @@ export function vpsDeploySteps(ctx, artifactPath) {
         ["分類定義の同期（taxonomy-sync）", () => taxonomySync(ctx)],
         ["config / view キャッシュ", () => optimize(ctx)],
         ["current 切り替え", () => switchCurrent(fs, rel)],
+        // 乗っ取られたサイトがコンテナの中に残したプロセスを、出し直しで消す
+        ["サイトのコンテナを起こし直す（app / scheduler）", () => restartSiteCode(ctx)],
     ];
 }
 export async function runSteps(steps, previous) {
@@ -163,7 +165,13 @@ export async function vpsDeploy(root, cfg, exec, io, approval, opts) {
         warn("中止しました");
         return 1;
     }
-    const ctx = { cfg, exec, phpBin: "php", releaseId, log: info };
+    const ctx = vpsReleaseContext({
+        cfg,
+        exec,
+        phpBin: "php",
+        releaseId,
+        log: info,
+    });
     const lock = await acquireSiteLock(ctx, `deploy ${releaseId}`);
     if (!lock.ok) {
         fail({
@@ -242,13 +250,13 @@ async function deployLocked(ctx, root, artifactPath, io) {
 export async function vpsRollback(cfg, exec, io, approval) {
     const n = vpsNames(cfg);
     heading(`agentcms deploy rollback — vps / ${cfg.target}（サイト ${n.site}）`);
-    const ctx = {
+    const ctx = vpsReleaseContext({
         cfg,
         exec,
         phpBin: "php",
         releaseId: "rollback",
         log: info,
-    };
+    });
     const lock = await acquireSiteLock(ctx, "rollback");
     if (!lock.ok) {
         fail({
@@ -264,6 +272,14 @@ export async function vpsRollback(cfg, exec, io, approval) {
     finally {
         await releaseSiteLock(ctx);
     }
+}
+/** 作り直しのあと止めておいたサイトのコンテナを起こす。起こせなければ知らせる（health が続けて見る） */
+async function startAfterRebuild(ctx) {
+    const r = await restartSiteCode(ctx);
+    if (r.ok)
+        info(`  ${r.detail}`);
+    else
+        warn(r.detail ?? "サイトのコンテナを起こせませんでした");
 }
 async function rollbackLocked(ctx, io, approval) {
     const { cfg, exec } = ctx;
@@ -322,6 +338,8 @@ async function rollbackLocked(ctx, io, approval) {
         return 1;
     }
     if (rebuilt.rebuilt) {
+        // 作り直しのあと app・scheduler は止まっている。キャッシュは使い捨てのコンテナで作り、
+        // current を切り替えてから起こす（切り替える前に、いまのコードを起こし直さない）
         const rctx = { ...ctx, releaseId: prev };
         for (const [label, step] of [
             ["shared リンク", () => linkShared(siteFsContext(rctx))],
@@ -329,6 +347,7 @@ async function rollbackLocked(ctx, io, approval) {
         ]) {
             const r = await step();
             if (!r.ok) {
+                await startAfterRebuild(ctx);
                 fail({
                     what: `作り直した ${prev} の${label}に失敗しました（current は変えていません）`,
                     why: r.detail ?? "-",
@@ -349,6 +368,8 @@ async function rollbackLocked(ctx, io, approval) {
         return 1;
     }
     const rb = await switchCurrent(siteFsContext(ctx), `${n.appDir}/releases/${prev}`);
+    // 切り替えたら（切り替えに落ちても）、サイトのコードが動くコンテナを起こす（中のプロセスは全部新しくなる）
+    await startAfterRebuild(ctx);
     if (!rb.ok) {
         fail({
             what: "切り戻し失敗",

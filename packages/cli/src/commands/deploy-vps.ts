@@ -22,12 +22,14 @@ import {
   releaseIdIsFree,
   rollbackTargetByHistory,
   releaseSiteLock,
+  restartSiteCode,
   runScript,
   siteContainers,
   siteFsContext,
   siteRoute,
   uploadAndExtractVps,
   vpsDoctor,
+  vpsReleaseContext,
   vpsSetupActions,
 } from "../deploy/providers/vps.js";
 import { vpsNames } from "../deploy/providers/vps-assets.js";
@@ -44,7 +46,9 @@ import { fail, heading, info, ok, warn } from "../ui.js";
  * provider "vps" の deploy / rollback / setup / doctor（ADR-0021）。
  * 流れは Xserver と同じ release directory 方式で、違うのは次の 3 つだけ:
  *
- * - PHP はサイトのコンテナの中で動かす（`inDir()`）
+ * - PHP は Docker の中で動かす。サイトのコンテナ（app・scheduler）は自分のコードと .env を書けないので、
+ *   migration と config/view のキャッシュは使い捨てのコンテナで流す（`vpsReleaseContext()`）
+ * - current を切り替えたら、サイトのコードが動くコンテナを起こし直す（中に残ったプロセスを消す）
  * - 公開は docroot への同期ではなく、Caddy のサイトの行（`siteRoute()`）
  * - DB バックアップは MySQL のコンテナの中の mysqldump（`backupDatabaseVps()`）
  */
@@ -174,6 +178,8 @@ export function vpsDeploySteps(
     ["分類定義の同期（taxonomy-sync）", () => taxonomySync(ctx)],
     ["config / view キャッシュ", () => optimize(ctx)],
     ["current 切り替え", () => switchCurrent(fs, rel)],
+    // 乗っ取られたサイトがコンテナの中に残したプロセスを、出し直しで消す
+    ["サイトのコンテナを起こし直す（app / scheduler）", () => restartSiteCode(ctx)],
   ];
 }
 
@@ -255,7 +261,13 @@ export async function vpsDeploy(
     return 1;
   }
 
-  const ctx: DeployContext = { cfg, exec, phpBin: "php", releaseId, log: info };
+  const ctx: DeployContext = vpsReleaseContext({
+    cfg,
+    exec,
+    phpBin: "php",
+    releaseId,
+    log: info,
+  });
   const lock = await acquireSiteLock(ctx, `deploy ${releaseId}`);
   if (!lock.ok) {
     fail({
@@ -354,13 +366,13 @@ export async function vpsRollback(
 ): Promise<number> {
   const n = vpsNames(cfg);
   heading(`agentcms deploy rollback — vps / ${cfg.target}（サイト ${n.site}）`);
-  const ctx: DeployContext = {
+  const ctx: DeployContext = vpsReleaseContext({
     cfg,
     exec,
     phpBin: "php",
     releaseId: "rollback",
     log: info,
-  };
+  });
   const lock = await acquireSiteLock(ctx, "rollback");
   if (!lock.ok) {
     fail({
@@ -375,6 +387,13 @@ export async function vpsRollback(
   } finally {
     await releaseSiteLock(ctx);
   }
+}
+
+/** 作り直しのあと止めておいたサイトのコンテナを起こす。起こせなければ知らせる（health が続けて見る） */
+async function startAfterRebuild(ctx: DeployContext): Promise<void> {
+  const r = await restartSiteCode(ctx);
+  if (r.ok) info(`  ${r.detail}`);
+  else warn(r.detail ?? "サイトのコンテナを起こせませんでした");
 }
 
 async function rollbackLocked(
@@ -440,6 +459,8 @@ async function rollbackLocked(
     return 1;
   }
   if (rebuilt.rebuilt) {
+    // 作り直しのあと app・scheduler は止まっている。キャッシュは使い捨てのコンテナで作り、
+    // current を切り替えてから起こす（切り替える前に、いまのコードを起こし直さない）
     const rctx = { ...ctx, releaseId: prev };
     for (const [label, step] of [
       ["shared リンク", () => linkShared(siteFsContext(rctx))],
@@ -447,6 +468,7 @@ async function rollbackLocked(
     ] as Array<[string, () => Promise<StepResult>]>) {
       const r = await step();
       if (!r.ok) {
+        await startAfterRebuild(ctx);
         fail({
           what: `作り直した ${prev} の${label}に失敗しました（current は変えていません）`,
           why: r.detail ?? "-",
@@ -466,6 +488,8 @@ async function rollbackLocked(
     return 1;
   }
   const rb = await switchCurrent(siteFsContext(ctx), `${n.appDir}/releases/${prev}`);
+  // 切り替えたら（切り替えに落ちても）、サイトのコードが動くコンテナを起こす（中のプロセスは全部新しくなる）
+  await startAfterRebuild(ctx);
   if (!rb.ok) {
     fail({
       what: "切り戻し失敗",

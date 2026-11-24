@@ -41,6 +41,20 @@ export interface DeployContext {
   phpBin: string;
   releaseId: string;
   log: (msg: string) => void;
+  /**
+   * release の PHP（migration・分類の同期・config/view のキャッシュ）を流すコマンド行を作る。
+   * 無ければ `inDir()`。vps はサイトのコンテナがコードを書けないので、使い捨てのコンテナで流す
+   */
+  runIn?: (dir: string, cmd: string) => string;
+}
+
+/** release の中で PHP を流すコマンド行（`ctx.runIn` があればそれ、無ければ `inDir()`） */
+export function releaseCommand(
+  ctx: DeployContext,
+  dir: string,
+  cmd: string,
+): string {
+  return ctx.runIn ? ctx.runIn(dir, cmd) : inDir(ctx.cfg, dir, cmd);
 }
 
 const ok = (step: string, detail?: string): StepResult => ({
@@ -227,8 +241,8 @@ export async function pendingMigrations(ctx: DeployContext): Promise<string[]> {
   const { cfg, exec, phpBin, releaseId } = ctx;
   const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
   const r = await exec.exec(
-    inDir(
-      cfg,
+    releaseCommand(
+      ctx,
       rel,
       `${shq(phpBin)} artisan migrate:status --pending 2>/dev/null`,
     ),
@@ -246,8 +260,8 @@ export async function migrate(ctx: DeployContext): Promise<StepResult> {
   const { cfg, exec, phpBin, releaseId } = ctx;
   const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
   const r = await exec.exec(
-    inDir(
-      cfg,
+    releaseCommand(
+      ctx,
       rel,
       `${shq(phpBin)} artisan migrate --force --no-interaction 2>&1`,
     ),
@@ -271,7 +285,7 @@ export async function taxonomySync(ctx: DeployContext): Promise<StepResult> {
   const { cfg, exec, phpBin, releaseId } = ctx;
   const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
   const r = await exec.exec(
-    inDir(cfg, rel, `${shq(phpBin)} artisan agentcms:taxonomy-sync 2>&1`),
+    releaseCommand(ctx, rel, `${shq(phpBin)} artisan agentcms:taxonomy-sync 2>&1`),
     { timeoutMs: 120_000 },
   );
   if (r.code !== 0)
@@ -287,8 +301,8 @@ export async function optimize(ctx: DeployContext): Promise<StepResult> {
   const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
   // route:cache は closure ルートで失敗するため対象外（ADR-0008）
   const r = await exec.exec(
-    inDir(
-      cfg,
+    releaseCommand(
+      ctx,
       rel,
       // view:clear で前のコンパイル済みの view（storage の中＝書き換えられうる PHP）を消してから作り直す
       `${shq(phpBin)} artisan config:cache && ${shq(phpBin)} artisan view:clear && ${shq(phpBin)} artisan view:cache 2>&1`,

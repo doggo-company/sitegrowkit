@@ -24,6 +24,10 @@
  *     サーバーのディスク（Docker の置き場所・control）を埋められない
  *  6g. サイトの中から夜のバックアップの成功を装えない（成否はサーバーの backup のコンテナが control に書き、
  *     doctor はそちらを読む。サイトが DB のパスワードを変えて落とすと「失敗」と出る・上限・リンクを辿らない）
+ *  6h. 置き場所に書ける者がコードを書き換えると doctor が気づき、rollback は送った artifact から作り直す
+ *  6i. サイトのコンテナ（app・scheduler）は、コード・bootstrap/cache・shared/.env・置き場所を書き換えられない
+ *     （書けるのは shared/storage と /tmp だけ）。出し直し・戻しのあとに、コンテナが書いた物も、
+ *     コンテナの中に残したプロセスも残らない。管理画面での画像の追加・プロフィールの保存は動く
  *  7. サーバーで生成した秘密（APP_KEY・DB パスワード・MySQL root）が、CLI の出力・
  *     コンテナの設定（docker inspect）・compose/Caddy のファイルのどこにも出ていない
  *
@@ -1011,7 +1015,7 @@ exit 0`,
   check(s2ok === 200, "サイト 2 も 200 に戻る");
 
   // ------------------------------------------------------------ 6e. サイトの中から特権の処理へ届かない
-  // サイトのコンテナ（PHP が動く）は自分の置き場所を書き換えられる。そこに置いた値や
+  // サイトの置き場所に書ける者（前の版のキットのサイトのコンテナなど）が置いた値や
   // リンクを、setup・deploy（docker グループの利用者・MySQL の root）が信じないこと。
   step(
     "6e. サイトの中に置いた値・リンクが、MySQL の root・ほかのサイト・サーバーのファイルに届かない",
@@ -1034,8 +1038,8 @@ exit 0`,
     );
     return `${r.stdout}`.trim();
   };
-  // サイト 2 のコンテナの中で流す（＝サイトの PHP ができること）
-  const inS2 = (script, input = "") =>
+  // サイト 2 のコンテナ（app・scheduler）の中で流す（＝サイトの PHP ができること）
+  const inS2c = (service, script, input = "") =>
     sh(
       join(bin, "ssh"),
       [
@@ -1047,7 +1051,26 @@ exit 0`,
         "BatchMode=yes",
         "deploy@127.0.0.1",
         // 台本は単引用符で包む（サーバーのシェルに $ を解かせない）
-        `docker exec -i -w /srv/agentcms/sites/${S2.site} agentcms-${S2.site}-app sh -c '${script.replaceAll("'", `'\\''`)}'`,
+        `docker exec -i -w /srv/agentcms/sites/${S2.site} agentcms-${S2.site}-${service} sh -c '${script.replaceAll("'", `'\\''`)}'`,
+      ],
+      { input },
+    );
+  const inS2 = (script, input = "") => inS2c("app", script, input);
+  // サイト 2 の置き場所に書ける者（前の版のキットのサイトのコンテナ・手作業の誤りなど）が置く。
+  // いまのサイトのコンテナは storage の外を書けない（6i で確かめる）が、サーバーの処理が
+  // 置き場所の中の物を信じないことは、それとは別に確かめ続ける
+  const plantS2 = (script, input = "") =>
+    sh(
+      join(bin, "ssh"),
+      [
+        "-p",
+        String(ports.ssh),
+        "-i",
+        key,
+        "-o",
+        "BatchMode=yes",
+        "deploy@127.0.0.1",
+        `docker run --rm -i --pull never --network none --user "$(id -u):$(id -g)" -v /srv/agentcms/sites/${S2.site}:/srv/agentcms/sites/${S2.site} -w /srv/agentcms/sites/${S2.site} --entrypoint sh agentcms-php:8.5-2 -c '${script.replaceAll("'", `'\\''`)}'`,
       ],
       { input },
     );
@@ -1066,13 +1089,13 @@ exit 0`,
   // (a) shared/.env.pending の値を、setup が MySQL の root の SQL に入れない
   const payload =
     "x'; DROP DATABASE `sgk-e2e-canary`; GRANT SELECT ON `sgk-e2e-one`.* TO 'sgk-e2e-two'@'%'; -- ";
-  const planted = inS2(
+  const planted = plantS2(
     "set -e; cd shared; mv .env .env.e2e-saved; cat > .env.pending; echo planted",
     `DB_PASSWORD=${payload}\nAPP_KEY=base64:${Buffer.alloc(32, 7).toString("base64")}\n`,
   );
   check(
     planted.stdout.includes("planted"),
-    "サイト 2 のコンテナの中から shared/.env を外し、.env.pending を置けた（サイトができること）",
+    "置き場所に書ける者が、サイト 2 の shared/.env を外し、.env.pending を置けた（前の版のキットではサイトのコンテナができたこと）",
   );
   a = agentcms("setup-poisoned", ["deploy", "setup", "-t", S2.target, "-y"]);
   console.log(`    （setup の終了コード ${a.code}）`);
@@ -1087,7 +1110,7 @@ exit 0`,
     !grants.includes("sgk-e2e-one"),
     `サイト 2 の利用者にサイト 1 の DB の権限が足されていない（${grants.replace(/\n/g, " / ").slice(0, 160)}）`,
   );
-  inS2(
+  plantS2(
     "cd shared && rm -f .env.pending && mv .env.e2e-saved .env && echo restored",
   );
   const conns = rootQ(
@@ -1115,7 +1138,7 @@ exit 0`,
       "cd /srv/agentcms/e2e-canary && ls -la tmpdir | wc -l && stat -c '%a %s' marker compose nginx history && cat marker compose nginx history | sha256sum",
     ).stdout.trim();
   const before6e = canarySum();
-  const linked = inS2(
+  const linked = plantS2(
     [
       "set -e",
       "for f in .agentcms-site compose.yml nginx.conf releases.history run; do if [ -e $f ] || [ -L $f ]; then mv $f $f.e2e-saved; fi; done",
@@ -1129,7 +1152,7 @@ exit 0`,
   );
   check(
     linked.stdout.includes("linked"),
-    `サイト 2 のコンテナの中から、置き場所のファイル・ディレクトリをサーバーの物へのリンクに差し替えた${linked.stdout.includes("linked") ? "" : `（${`${linked.stdout}${linked.stderr}`.trim().slice(-200)}）`}`,
+    `置き場所に書ける者が、サイト 2 の置き場所のファイル・ディレクトリをサーバーの物へのリンクに差し替えた${linked.stdout.includes("linked") ? "" : `（${`${linked.stdout}${linked.stderr}`.trim().slice(-200)}）`}`,
   );
   // 前の版で作った利用者（上限なし）にも、deploy が接続の上限を付け直す
   rootQ("ALTER USER 'sgk-e2e-two'@'%' WITH MAX_USER_CONNECTIONS 0");
@@ -1172,7 +1195,7 @@ exit 0`,
     (await get(S1.host, "/healthz")).status === 200,
     "サイト 1 の /healthz は 200 のまま",
   );
-  inS2(
+  plantS2(
     [
       "rm -f .agentcms-site compose.yml nginx.conf releases.history run",
       "for f in .agentcms-site compose.yml nginx.conf releases.history run; do [ -e $f.e2e-saved ] && mv $f.e2e-saved $f || true; done",
@@ -1186,7 +1209,7 @@ exit 0`,
       `ls -1 ${s1}/releases ${s1}/backups /srv/agentcms/e2e-canary/tmpdir | sha256sum`,
     ).stdout.trim();
   const s1Before = s1List();
-  const linked2 = inS2(
+  const linked2 = plantS2(
     [
       "set -e",
       "mv releases releases.e2e-saved",
@@ -1222,7 +1245,7 @@ exit 0`,
     (await get(S1.host, "/healthz")).status === 200,
     "サイト 1 の /healthz は 200 のまま",
   );
-  inS2(
+  plantS2(
     "rm -f releases backups tmp; mv releases.e2e-saved releases; mv backups.e2e-saved backups; mv tmp.e2e-saved tmp; echo unlinked",
   );
   release("v5-two");
@@ -1249,7 +1272,7 @@ exit 0`,
     pathToFileURL(join(dirname(cli), "deploy", "providers", "vps-assets.js"))
       .href
   );
-  inS2("mkfifo backups/e2e-fifo && echo made");
+  plantS2("mkfifo backups/e2e-fifo && echo made");
   const psBefore = remote("docker ps -aq | wc -l").stdout.trim();
   const t0 = Date.now();
   const fifo = remote(
@@ -1267,7 +1290,7 @@ exit 0`,
       psAfter === psBefore,
     `サイトが置いた FIFO を読まされても、使い捨てのコンテナはサーバーの上で 3 秒で終わって消えた（${waited} 秒・rc=${fifoRc}・コンテナの数 ${psBefore} → ${psAfter}）`,
   );
-  inS2("rm -f backups/e2e-fifo");
+  plantS2("rm -f backups/e2e-fifo");
   rootQ("DROP DATABASE IF EXISTS `sgk-e2e-canary`");
 
   // ------------------------------------------------------------ 6f. 一時領域でサーバーのディスクを埋められない
@@ -1511,15 +1534,15 @@ exit 0`,
 
   // ------------------------------------------------------------ 6h. 公開中のコードの書き換えに気づく・rollback は送った物から作り直す
   step(
-    "6h. サイトの中からコードを書き換えると doctor が気づき、rollback は送った artifact から作り直す",
+    "6h. 置き場所に書ける者がコードを書き換えると doctor が気づき、rollback は送った artifact から作り直す",
   );
   a = agentcms("doctor-clean-code", ["deploy", "doctor", "-t", S2.target]);
   check(
     /公開中のコード[^\n]*\n?[^\n]*送った物と同じ/.test(a.out) || (a.out.includes("公開中のコード") && !a.out.includes("違います")),
     "書き換える前の doctor は、公開中のコードを送った物と同じと言う",
   );
-  // 乗っ取られたサイトができること: いまの release と、戻し先の古い release の両方にバックドアを置く
-  const tampered = inS2(
+  // 置き場所に書ける者（前の版のキットでは乗っ取られたサイトのコンテナ）が、いまの release と戻し先の古い release の両方にバックドアを置く
+  const tampered = plantS2(
     [
       "set -e",
       "for d in releases/*/; do printf '%s' '<?php echo \"e2e-backdoor\";' > \"$d\"public/e2e-backdoor.php; done",
@@ -1529,7 +1552,7 @@ exit 0`,
   ).stdout;
   check(
     tampered.includes("tampered") && (await get(S2.host, "/e2e-backdoor.php")).body.includes("e2e-backdoor"),
-    "サイト 2 の中から、いまの release と古い release にバックドアを置き、いまのコードを書き換えた（配信されている）",
+    "置き場所に書ける者が、サイト 2 のいまの release と古い release にバックドアを置き、いまのコードを書き換えた（配信されている）",
   );
   a = agentcms("doctor-tampered", ["deploy", "doctor", "-t", S2.target]);
   check(
@@ -1553,6 +1576,176 @@ exit 0`,
   check(
     a.code === 0 && /夜のバックアップ/.test(a.out) && !a.out.includes("db-auth"),
     "直ったあとの doctor は、夜のバックアップを PASS にする",
+  );
+  check(
+    (await waitHealthy()) === 200 && (await get(S2.host, "/healthz")).status === 200,
+    "サイト 1・2 の /healthz は 200",
+  );
+
+  // ------------------------------------------------------------ 6i. サイトのコンテナはコードと .env を書き換えられない
+  // 乗っ取られたサイトのコンテナ（app・scheduler）が自分のコード・.env・置き場所を書き換えられると、
+  // 運用者が出し直しても戻しても、乗っ取りが残る。書けるのは shared/storage だけであること・
+  // 出し直し・戻しのあとに、コンテナが書いた物と、コンテナの中に残したプロセスが残らないこと
+  step(
+    "6i. サイトのコンテナ（app・scheduler）は、コード・.env・置き場所を書き換えられない（書けるのは storage だけ）。出し直し・戻しのあとに残らない",
+  );
+  const tryWrites = (service) => {
+    const r = inS2c(
+      service,
+      [
+        `w() { if ( eval "$2" ) >/dev/null 2>&1; then echo "$1=written"; else echo "$1=denied"; fi; }`,
+        `w code 'printf "%s" "<?php echo \\"e2e-6i-${service}\\";" > current/public/e2e-6i-${service}.php'`,
+        `w bootcache 'printf x > current/bootstrap/cache/e2e-6i-${service}.php'`,
+        `w env 'printf "\\nE2E_6I_MARK=${service}\\n" >> shared/.env'`,
+        `w releases 'mkdir releases/e2e-6i-${service}'`,
+        `w siteroot 'printf x > e2e-6i-${service}'`,
+        `w backups 'printf x > backups/e2e-6i-${service}'`,
+        `w storage 'printf ok > shared/storage/app/e2e-6i-${service} && rm -f shared/storage/app/e2e-6i-${service}'`,
+        `w views 'printf x > shared/storage/framework/views/e2e-6i-${service}.txt && rm -f shared/storage/framework/views/e2e-6i-${service}.txt'`,
+        `w logs 'printf "" >> shared/storage/logs/e2e-6i-${service}.log && rm -f shared/storage/logs/e2e-6i-${service}.log'`,
+        `w tmp 'printf x > /tmp/e2e-6i && rm -f /tmp/e2e-6i'`,
+      ].join("\n"),
+    );
+    return Object.fromEntries(
+      `${r.stdout}`
+        .trim()
+        .split("\n")
+        .filter((l) => l.includes("="))
+        .map((l) => l.split("=")),
+    );
+  };
+  for (const service of ["app", "scheduler"]) {
+    const w = tryWrites(service);
+    const denied = ["code", "bootcache", "env", "releases", "siteroot", "backups"];
+    const allowed = ["storage", "views", "logs", "tmp"];
+    check(
+      denied.every((k) => w[k] === "denied"),
+      `サイト 2 の ${service} のコンテナから、いまのコード・bootstrap/cache・shared/.env・releases・置き場所の根・backups に書けない（${denied.map((k) => `${k}=${w[k] ?? "?"}`).join(" ")}）`,
+    );
+    check(
+      allowed.every((k) => w[k] === "written"),
+      `${service} のコンテナから、shared/storage（app・framework/views・logs）と /tmp には書ける（${allowed.map((k) => `${k}=${w[k] ?? "?"}`).join(" ")}）`,
+    );
+  }
+  check(
+    (await get(S2.host, "/e2e-6i-app.php")).status === 404,
+    "コンテナが書こうとしたコード（/e2e-6i-app.php）は配信されていない",
+  );
+  // コンテナの中にプロセスを残す（サイトの PHP が裏で起こせること）
+  for (const service of ["app", "scheduler"])
+    remote(`docker exec -d agentcms-${S2.site}-${service} sleep 3601`);
+  const lingering = () =>
+    ["app", "scheduler"]
+      .map((s) => remote(`docker top agentcms-${S2.site}-${s} 2>/dev/null | grep -c 'sleep 3601' || true`).stdout.trim())
+      .join(",");
+  console.log(`    （残したプロセス app,scheduler: ${lingering()}）`);
+  const envMarks = () =>
+    remote(`grep -c '^E2E_6I_MARK=' ${s2}/shared/.env || true`).stdout.trim();
+  await new Promise((res) => setTimeout(res, 1100));
+  release("v6-two");
+  a = agentcms("deploy-6i", [
+    "deploy",
+    "staging",
+    "-t",
+    S2.target,
+    "--confirm-target",
+    S2.target,
+    "-y",
+  ]);
+  check(
+    a.code === 0 && (await get(S2.host, "/e2e-version.php")).body.trim() === "php-v6-two",
+    "出し直し（deploy）が exit 0 で、新しい版を返す",
+  );
+  check(
+    envMarks() === "0",
+    `出し直したあとの shared/.env に、コンテナが書いた行は無い（${envMarks()} 行）`,
+  );
+  check(
+    lingering() === "0,0",
+    `出し直したあと、コンテナの中に残したプロセスは消えている（app,scheduler: ${lingering()}）`,
+  );
+  // 出し直したあとのコードにも書けない
+  const w2 = tryWrites("app");
+  check(
+    w2.code === "denied" && w2.bootcache === "denied" && w2.env === "denied",
+    `出し直したあとのコード・bootstrap/cache・.env にも書けない（code=${w2.code} bootcache=${w2.bootcache} env=${w2.env}）`,
+  );
+  for (const service of ["app", "scheduler"])
+    remote(`docker exec -d agentcms-${S2.site}-${service} sleep 3601`);
+  a = agentcms("rollback-6i", ["deploy", "rollback", "-t", S2.target, "--confirm-target", S2.target, "-y"]);
+  const afterRb3 = (await get(S2.host, "/e2e-version.php")).body.trim();
+  check(
+    a.code === 0 && /^php-v\d-two$/.test(afterRb3) && afterRb3 !== "php-v6-two",
+    `戻し（rollback）が exit 0 で、前の版を返す（${afterRb3.slice(0, 40)}）`,
+  );
+  check(
+    envMarks() === "0" && lingering() === "0,0",
+    `戻したあとも shared/.env にコンテナが書いた行は無く、残したプロセスも無い（.env ${envMarks()} 行・プロセス ${lingering()}）`,
+  );
+  // 書き込みが要る所が壊れていない: 管理画面でメディアを上げる（storage に書く）・プロフィールを保存する（DB）
+  const adminRun = sh(
+    process.execPath,
+    [
+      "-e",
+      `
+      const base = ${JSON.stringify(`https://${S1.host}:${ports.https}`)};
+      const jar = new Map();
+      const keep = (r) => { for (const c of r.headers.getSetCookie()) { const [kv] = c.split(";"); const i = kv.indexOf("="); jar.set(kv.slice(0, i), kv.slice(i + 1)); } return r; };
+      const cookie = () => [...jar].map(([k, v]) => k + "=" + v).join("; ");
+      const xsrf = () => decodeURIComponent(jar.get("XSRF-TOKEN") ?? "");
+      const req = async (path, init = {}) => keep(await fetch(base + path, { redirect: "manual", ...init, headers: { cookie: cookie(), "x-xsrf-token": xsrf(), ...(init.headers ?? {}) } }));
+      (async () => {
+        await req("/login");
+        const login = await req("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", accept: "text/html" }, body: new URLSearchParams({ email: process.env.E2E_EMAIL, password: process.env.E2E_PASSWORD }) });
+        const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR4nGM4UaFBEmIY1TCqYfhqAAADaGgQ43GRdgAAAABJRU5ErkJggg==", "base64");
+        const fd = new FormData();
+        fd.append("file", new Blob([png], { type: "image/png" }), "e2e-6i.png");
+        fd.append("name", "e2e-6i");
+        const up = await req("/admin/media", { method: "POST", headers: { accept: "application/json" }, body: fd });
+        const upBody = await up.text();
+        let url = null;
+        try { url = JSON.parse(upBody).data?.media?.url ?? null; } catch {}
+        let file = 0;
+        if (url) file = (await fetch(new URL(url, base))).status;
+        const prof = await req("/settings/profile", { method: "PATCH", headers: { "content-type": "application/x-www-form-urlencoded", accept: "text/html" }, body: new URLSearchParams({ name: "E2E 6i Admin", email: process.env.E2E_EMAIL }) });
+        console.log(JSON.stringify({ login: login.status, upload: up.status, uploadBody: upBody.slice(0, 160), url, file, profile: [prof.status, prof.headers.get("location")] }));
+      })().catch((e) => console.log(JSON.stringify({ error: String(e) })));
+    `,
+    ],
+    {
+      env: {
+        ...process.env,
+        NODE_EXTRA_CA_CERTS: caFile,
+        E2E_EMAIL: adminEmail,
+        E2E_PASSWORD: adminPassword,
+      },
+    },
+  );
+  let ar = {};
+  try {
+    ar = JSON.parse(adminRun.stdout.trim().split("\n").pop());
+  } catch {
+    ar = { error: adminRun.stderr.slice(-300) };
+  }
+  check(
+    ar.login === 302 && ar.upload === 201 && ar.file === 200,
+    `サイト 1 の管理画面で画像を上げられ（${ar.upload}）、上げた画像を配信できる（${ar.file}）（${JSON.stringify(ar).slice(0, 240)}）`,
+  );
+  const profName = remote(
+    `cd ${s1} && grep -E '^DB_PASSWORD=' shared/.env | cut -d= -f2- | docker exec -i agentcms-mysql sh -c 'IFS= read -r p; MYSQL_PWD="$p" exec mysql -h 127.0.0.1 -u sgk-e2e-one -D sgk-e2e-one -N -e "SELECT name FROM users WHERE email=\\"${adminEmail}\\""' 2>&1`,
+  ).stdout.trim();
+  check(
+    ar.profile?.[0] === 302 && /\/settings\/profile$/.test(ar.profile?.[1] ?? "") && profName === "E2E 6i Admin",
+    `サイト 1 の管理画面でプロフィールを保存できる（${JSON.stringify(ar.profile)}・DB: ${profName}）`,
+  );
+  const roErrors = remote(
+    `cat ${s1}/shared/storage/logs/*.log ${s2}/shared/storage/logs/*.log 2>/dev/null | grep -ciE 'read-only file system|failed to open stream: permission denied|must be present and writable' || true; for s in ${S1.site} ${S2.site}; do for c in app scheduler; do docker logs --since 30m agentcms-$s-$c 2>&1; done; done | grep -ciE 'read-only file system|permission denied|must be present and writable' || true`,
+  )
+    .stdout.trim()
+    .split("\n");
+  check(
+    roErrors.every((n) => n === "0"),
+    `アプリのログ・app と scheduler のコンテナのログに、書けなかったエラーが 0 件（アプリ ${roErrors[0]}・コンテナ ${roErrors[1]}）`,
   );
   check(
     (await waitHealthy()) === 200 && (await get(S2.host, "/healthz")).status === 200,

@@ -205,9 +205,25 @@ run("送った artifact を control に残し、そこから展開・作り直�
     expect(existsSync(join(n.appDir, "releases/20261124000000/.agentcms-healthy"))).toBe(true);
     expect(existsSync(join(n.appDir, "shared/storage/framework/maintenance.php"))).toBe(false);
     expect(existsSync(join(n.appDir, "shared/storage/framework/views/abc.php"))).toBe(false);
-    // 作り直す間は app と scheduler を止め、終わったら起こす
+    // 作り直す間は app と scheduler を止め、作り直せたら止めたまま返す（current を切り替えてから起こす）
     const log = readFileSync(join(root, "docker.log"), "utf8");
     expect(log).toMatch(/^stop agentcms-shop-a-app agentcms-shop-a-scheduler$/m);
+    expect(log).not.toMatch(/^start agentcms-shop-a-app/m);
+  });
+
+  it("作り直しが途中で落ちたら、止めた app と scheduler を起こして返す（current は変えていない）", async () => {
+    const n = vpsNames(cfgAt(root));
+    await uploadAndExtractVps(ctx("20261124000000"), artifact("v1"));
+    // checksum は合うが中身が壊れている artifact（artisan が無い）
+    const src = join(root, "art-src-broken");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(join(src, "README"), "x\n");
+    spawnSync("tar", ["-czf", join(n.controlDir, "artifacts/20261124000000.tar.gz"), "-C", src, "."]);
+    spawnSync("sh", ["-c", `cd ${n.controlDir}/artifacts && sha256sum 20261124000000.tar.gz > 20261124000000.sha256`]);
+    const r = await rebuildReleaseFromArtifact(ctx("rollback"), "20261124000000");
+    expect(r.ok).toBe(false);
+    const log = readFileSync(join(root, "docker.log"), "utf8");
+    expect(log.indexOf("stop agentcms-shop-a-app")).toBeGreaterThan(-1);
     expect(log.indexOf("stop agentcms-shop-a-app")).toBeLessThan(log.lastIndexOf("start agentcms-shop-a-app"));
   });
 

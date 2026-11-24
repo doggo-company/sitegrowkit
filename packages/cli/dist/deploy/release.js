@@ -26,6 +26,10 @@ export function inDir(cfg, dir, cmd) {
         return `docker exec -w ${shq(dir)} ${shq(container)} sh -c ${shq(cmd)}`;
     return `cd ${shq(dir)} && ${cmd}`;
 }
+/** release の中で PHP を流すコマンド行（`ctx.runIn` があればそれ、無ければ `inDir()`） */
+export function releaseCommand(ctx, dir, cmd) {
+    return ctx.runIn ? ctx.runIn(dir, cmd) : inDir(ctx.cfg, dir, cmd);
+}
 const ok = (step, detail) => ({
     step,
     ok: true,
@@ -174,7 +178,7 @@ export async function backupDatabase(ctx) {
 export async function pendingMigrations(ctx) {
     const { cfg, exec, phpBin, releaseId } = ctx;
     const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
-    const r = await exec.exec(inDir(cfg, rel, `${shq(phpBin)} artisan migrate:status --pending 2>/dev/null`));
+    const r = await exec.exec(releaseCommand(ctx, rel, `${shq(phpBin)} artisan migrate:status --pending 2>/dev/null`));
     if (r.code !== 0)
         return [];
     return r.stdout
@@ -187,7 +191,7 @@ export async function pendingMigrations(ctx) {
 export async function migrate(ctx) {
     const { cfg, exec, phpBin, releaseId } = ctx;
     const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
-    const r = await exec.exec(inDir(cfg, rel, `${shq(phpBin)} artisan migrate --force --no-interaction 2>&1`), { timeoutMs: 300_000 });
+    const r = await exec.exec(releaseCommand(ctx, rel, `${shq(phpBin)} artisan migrate --force --no-interaction 2>&1`), { timeoutMs: 300_000 });
     if (r.code !== 0)
         return ng("migrate", `migration 失敗: ${(r.stdout + r.stderr).slice(-500)}。current は切り替えていないため旧 release が稼働中です。DB 復元が必要な場合は backups/${releaseId}-db.sql.gz を使用してください（自動復元はしません）`);
     return ok("migrate");
@@ -201,7 +205,7 @@ export async function migrate(ctx) {
 export async function taxonomySync(ctx) {
     const { cfg, exec, phpBin, releaseId } = ctx;
     const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
-    const r = await exec.exec(inDir(cfg, rel, `${shq(phpBin)} artisan agentcms:taxonomy-sync 2>&1`), { timeoutMs: 120_000 });
+    const r = await exec.exec(releaseCommand(ctx, rel, `${shq(phpBin)} artisan agentcms:taxonomy-sync 2>&1`), { timeoutMs: 120_000 });
     if (r.code !== 0)
         return ng("taxonomy-sync", `分類の同期に失敗しました: ${(r.stdout + r.stderr).slice(-500)}。分類は変更していません。current は切り替えていないため旧 release が稼働中です`);
     return ok("taxonomy-sync");
@@ -210,7 +214,7 @@ export async function optimize(ctx) {
     const { cfg, exec, phpBin, releaseId } = ctx;
     const rel = `${cfg.remote.appDir}/releases/${releaseId}`;
     // route:cache は closure ルートで失敗するため対象外（ADR-0008）
-    const r = await exec.exec(inDir(cfg, rel, 
+    const r = await exec.exec(releaseCommand(ctx, rel, 
     // view:clear で前のコンパイル済みの view（storage の中＝書き換えられうる PHP）を消してから作り直す
     `${shq(phpBin)} artisan config:cache && ${shq(phpBin)} artisan view:clear && ${shq(phpBin)} artisan view:cache 2>&1`));
     if (r.code !== 0)

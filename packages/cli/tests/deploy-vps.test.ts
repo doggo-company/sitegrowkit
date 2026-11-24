@@ -306,7 +306,9 @@ describe("PHP-FPM はソケットでだけ待つ（別のサイトのコンテ�
     expect(y).toContain(
       "- /srv/agentcms/control/example-staging/nginx.conf:/etc/nginx/conf.d/default.conf:ro",
     );
-    expect(y).not.toMatch(/- \/srv\/agentcms\/sites\/example-staging\/[^:]+:/);
+    // 置き場所の中を mount の元にするのは shared/storage だけ（compose の前にリンクでないことを確かめる）
+    const subMounts = [...y.matchAll(/- (\/srv\/agentcms\/sites\/example-staging\/[^:]+):/g)].map((m) => m[1]);
+    expect(new Set(subMounts)).toEqual(new Set(["/srv/agentcms/sites/example-staging/shared/storage"]));
     // 1 サイトがサーバーを使い切らない上限（3 つのコンテナすべて）
     for (const line of [
       "mem_limit: 768m",
@@ -576,7 +578,9 @@ describe("deploy の工程の順", () => {
     expect(at("Caddy")).toBeGreaterThan(at("artifact アップロード"));
     expect(at("Caddy")).toBeGreaterThan(at("サイトのコンテナ"));
     expect(at("Caddy")).toBeLessThan(at("DB バックアップ"));
-    expect(at("current 切り替え")).toBe(labels.length - 1);
+    // 切り替えたら、サイトのコードが動くコンテナを起こし直す（中に残ったプロセスを消す）で終わる
+    expect(at("current 切り替え")).toBe(labels.length - 2);
+    expect(at("起こし直す")).toBe(labels.length - 1);
   });
 
   it("送信で落ちたら、Caddy の行には触らずに止まる（入口は前のまま）", async () => {

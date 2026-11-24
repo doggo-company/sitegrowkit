@@ -17,6 +17,7 @@ SiteGrowKit の変更履歴です。
 - VPS の deploy は送った artifact をサーバーの `control/<サイト名>/artifacts` に残し、そこから展開します。`agentcms deploy rollback` は戻す先をその artifact から作り直してから切り替え、`agentcms deploy doctor` はいま出ているコードが送った物と違えば知らせます（サイトの中から書き換えられた release を戻し先として信じない）
 - VPS の DB を戻す手順（docs/deployment/vps.md §8）は、サーバーの夜の写しから直接戻せ、戻したあとに全員のログインを切ります
 - health は、サイトの HTML が別の場所のアセットを指していても取りに行かず、応答の本文は 2MB までしか読みません
+- VPS のサイトのコンテナ（PHP-FPM・scheduler）は、サイトの置き場所を読むだけで入れ、書けるのは `shared/storage` だけにしました。乗っ取られたサイトが自分のコード・`bootstrap/cache`・`shared/.env` を書き換えて、出し直し・戻しのあとに乗っ取りを残すことを防ぎます。config / view のキャッシュと migration は deploy の使い捨てのコンテナで流し、current を切り替えたらサイトのコンテナを起こし直します（コンテナの中に残したプロセスを消す・数秒 502）。前の版で出したサイトは、次の deploy でこの形に変わります（それまでは doctor が知らせます）
 
 ## 未リリース — 毎日のバックアップを別の置き場所へ写せるようにしました
 

@@ -11,8 +11,8 @@
  *     compose.yml  Caddyfile
  *     sites/<site>.caddy       … サイトごとの行（agentcms deploy が書く）
  *     secrets/mysql-root       … MySQL の root パスワード（サーバーで生成・600）
- *   sites/<site>/              … サイトごと（= remote.appDir）。**サイトのコンテナが書き換えられる**
- *     releases/ shared/ backups/ tmp/ current -> releases/<id>
+ *   sites/<site>/              … サイトごと（= remote.appDir）。サイトのコンテナには**読むだけ**で入れ、
+ *     releases/ shared/ backups/ tmp/ current -> releases/<id>   書けるのは shared/storage だけ
  *   control/<site>/            … サイトごとの、サーバーだけが触る物（サイトのコンテナには見せない・700）
  *     compose.yml nginx.conf   … このサイトの PHP-FPM・web（nginx）・scheduler・backup
  *     backup.sh db-password    … 夜のバックアップの台本と、このサイトの DB 利用者のパスワード（600）
@@ -33,7 +33,15 @@
  * - サイトの置き場所の中のファイル操作は、**その置き場所だけを入れた使い捨てのコンテナの中**で
  *   サイトと同じ利用者で流す（`siteFs`・vps.ts）。symlink はコンテナの中で解けるので、外へ届かない
  *
- * **サイトのコンテナが書ける場所は、サイトの置き場所と、大きさを決めたメモリの上の場所だけ。**
+ * **サイトのコンテナ（app・scheduler）は、自分のコードと .env を書き換えられない。** 置き場所は読むだけで
+ * 入れ、書けるのは shared/storage（上げたファイル・ログ・コンパイル済みの view・アプリの記録）だけ。
+ * コード・bootstrap/cache・.env・current を書き換えられると、乗っ取られたあとに運用者が出し直しても
+ * 戻しても、乗っ取りが残る。config/view のキャッシュと migration は、deploy の使い捨てのコンテナ
+ * （その release の bootstrap/cache だけを書ける）で作る（`releaseRunCommand`・vps.ts）。
+ * ただし、前の版のキットで出したサイトの置き場所には、そのころのコンテナが書いた物が残りうるので、
+ * サーバーの処理は置き場所の中の物をこれまでどおり信じない。
+ *
+ * **サイトのコンテナが書ける場所は、shared/storage と、大きさを決めたメモリの上の場所だけ。**
  * コンテナの書ける層（/tmp など）は Docker の置き場所（MySQL と同じディスク）にあり、サイトの
  * ディスクの区切りの外になる。だから根は読むだけにし、/tmp・/dev/shm・PHP-FPM のソケットの
  * 置き場所は大きさを決めた tmpfs にする（`SITE_TMPFS`）。
@@ -299,6 +307,18 @@ server {
 }
 `;
 }
+/** サイトのコンテナが書ける、置き場所の中の唯一の場所 */
+export const SITE_WRITABLE = "shared/storage";
+/**
+ * サイトのコードが動くコンテナ（app・scheduler）の置き場所の入れ方。置き場所全体は読むだけ、
+ * shared/storage だけを書けるように重ねる。shared/storage は mount の元になるので、
+ * compose を起こす前に、リンクではない本物のディレクトリであることを確かめる（siteContainersScript）
+ */
+export function siteCodeVolumes(n) {
+    return `      - ${n.appDir}:${n.appDir}:ro
+      # 書けるのはここだけ（上げたファイル・ログ・コンパイル済みの view・アプリの記録）
+      - ${n.appDir}/${SITE_WRITABLE}:${n.appDir}/${SITE_WRITABLE}`;
+}
 /**
  * サイト 1 つ分の PHP-FPM・web・scheduler と、サーバーの夜のバックアップ（backup）。
  *
@@ -308,9 +328,11 @@ server {
  *   **本物のディレクトリとして作ってしまう**（そうなると `ln -sfn` が中に symlink を作る）
  * - scheduler は毎分 `current` へ入り直す。`schedule:work` のように 1 度入ったまま
  *   動き続けると、切り替えたあとも古い release で動く
- * - web は読むだけで入れる
+ * - **置き場所は読むだけで入れ、shared/storage だけを書けるように重ねて入れる**（app・scheduler）。
+ *   コード・bootstrap/cache・.env・current・releases を書き換えさせない（乗っ取りが出し直し・戻しを越えて残る）。
+ *   web は全部を読むだけで入れる
  * - 秘密は環境変数で渡さない（`docker inspect` に出る）。アプリは `shared/.env` を読む
- * - **根は読むだけ**（read_only）。書けるのはサイトの置き場所と、大きさを決めた tmpfs（/tmp・/dev/shm・
+ * - **根は読むだけ**（read_only）。書けるのは shared/storage と、大きさを決めた tmpfs（/tmp・/dev/shm・
  *   ソケットの置き場所）だけ。コンテナの書ける層（Docker の置き場所＝MySQL と同じディスク）や
  *   control（サーバーのディスク）に書かせない
  * - backup はサイトのコードを動かさない（MySQL の公式イメージの mysqldump・tar・gzip だけ）。
@@ -347,7 +369,7 @@ services:
     image: ${PHP_IMAGE}
 ${common}
     volumes:
-      - ${n.appDir}:${n.appDir}
+${siteCodeVolumes(n)}
       # PHP-FPM はこのソケットだけで待つ。置き場所は大きさを決めた tmpfs（app と web だけが入れる）
       - run:/run/agentcms
   web:
@@ -364,7 +386,7 @@ ${webCommon}
     image: ${PHP_IMAGE}
 ${common}
     volumes:
-      - ${n.appDir}:${n.appDir}
+${siteCodeVolumes(n)}
     command:
       - sh
       - -c
