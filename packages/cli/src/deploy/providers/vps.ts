@@ -543,7 +543,13 @@ export function integrityCheck(
   if (raw === "" || (raw === "none" && !published)) return null;
   const m = /^diff=(\d+) extra=(\d+)$/.exec(raw);
   if (m && m[1] === "0" && m[2] === "0")
-    return { key: "integrity", name, status: "PASS", detected: "送った物と同じ" };
+    return {
+      key: "integrity",
+      name,
+      status: "PASS",
+      // 比べた範囲だけを言う（deploy が作る bootstrap/cache と、shared の storage・.env は比べていない）
+      detected: "送ったソースと同じ（bootstrap/cache・shared の storage と .env は比べていない）",
+    };
   return {
     key: "integrity",
     name,

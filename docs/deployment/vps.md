@@ -152,7 +152,7 @@ health まで通った release には印が付き、公開した順に `releases
 - **rollback は、戻す先を置き場所の中の物のまま使わず、残した artifact から作り直してから切り替える。** 置き場所の中の古い release は、乗っ取られたサイトが書き換えられる（バックドアを置ける）ため。作り直す間は app と scheduler を止め（中のプロセスは起こし直すと全部新しくなる）、共有の storage の中で PHP が読み込む物（メンテナンスの印 `storage/framework/maintenance.php`・コンパイル済みの view）を片付ける。artifact の checksum が合わない・artifact が無い（前の版のキットで出した release）ときは、何も変えずに止まる
 - サイトの web は `/storage/`（上げられたファイル）と `/build/` の中の `.php` を PHP として動かさない
 - **まだ塞いでいないこと：サイトのコンテナは自分のコード（`releases/`）と共有の storage を書き換えられる。** 作り直しと doctor の比べは「書き換えられたあとで戻す・気づく」ための物で、書き換えそのものは止めない。乗っ取られたと分かったら、原因（脆弱性）を直したコードを出し直し、`shared/.env` の秘密（APP_KEY・DB のパスワード）と管理者のパスワードを替えること
-- **`agentcms deploy doctor` は、いま出ている release を送った artifact と比べる**（使い捨てのコンテナの中の GNU tar・サイトのコードは動かさない）。中身の違うファイル・足されたファイルがあれば WARN（数だけ・名前は出さない）。shared へのリンク（`storage`・`.env`・`public/storage`）と deploy が作る `bootstrap/cache` は比べない。サイトのコンテナは自分のコードを書き換えられるので、乗っ取りに気づく手がかりになる（書き換えを止めるものではない）
+- **`agentcms deploy doctor` は、いま出ている release を送った artifact と比べる**（使い捨てのコンテナの中の GNU tar・サイトのコードは動かさない）。中身の違うファイル・足されたファイルがあれば WARN（数だけ・名前は出さない）。shared へのリンク（`storage`・`.env`・`public/storage`）と deploy が作る `bootstrap/cache` は比べない（PASS の行にもそう出す。そこに置かれた PHP には、この比べでは気づけない）。サイトのコンテナは自分のコードを書き換えられるので、乗っ取りに気づく手がかりになる（書き換えを止めるものではない）
 
 ## 8. DB を戻す（手で）
 
