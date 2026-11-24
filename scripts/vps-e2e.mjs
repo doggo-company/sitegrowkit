@@ -27,7 +27,8 @@
  *  6h. 置き場所に書ける者がコードを書き換えると doctor が気づき、rollback は送った artifact から作り直す
  *  6i. サイトのコンテナ（app・scheduler）は、コード・bootstrap/cache・shared/.env・置き場所を書き換えられない
  *     （書けるのは shared/storage と /tmp だけ）。出し直し・戻しのあとに、コンテナが書いた物も、
- *     コンテナの中に残したプロセスも残らない。管理画面での画像の追加・プロフィールの保存は動く
+ *     コンテナの中に残したプロセスも、storage に置いたメンテナンスの印（PHP）も残らない。
+ *     管理画面での画像の追加・プロフィールの保存は動く
  *  7. サーバーで生成した秘密（APP_KEY・DB パスワード・MySQL root）が、CLI の出力・
  *     コンテナの設定（docker inspect）・compose/Caddy のファイルのどこにも出ていない
  *
@@ -486,8 +487,8 @@ exit 0`,
   );
   a = agentcms("deploy-broken", ["deploy", "staging", "-t", S1.target, "-y"]);
   check(
-    a.code !== 0 && a.out.includes("旧 release へ切り戻しました"),
-    "deploy は失敗し、自動で切り戻した",
+    a.code !== 0 && a.out.includes("旧 release へ切り戻しました") && a.out.includes("送った artifact から作り直しました"),
+    "deploy は失敗し、自動で切り戻した（戻す先は置き場所の中の物ではなく、送った artifact から作り直した）",
   );
   check(
     (await get(S1.host, "/e2e-version.php")).body.trim() === "php-v1",
@@ -1631,6 +1632,20 @@ exit 0`,
     (await get(S2.host, "/e2e-6i-app.php")).status === 404,
     "コンテナが書こうとしたコード（/e2e-6i-app.php）は配信されていない",
   );
+  // storage（書ける場所）に、PHP が最初に読み込むメンテナンスの印を置く（サイトの PHP ができること）
+  const maint = inS2(
+    `printf '%s' '<?php echo "e2e-maint-backdoor"; exit;' > shared/storage/framework/maintenance.php && echo put`,
+  ).stdout;
+  const maintServed = (await get(S2.host, "/")).body.includes("e2e-maint-backdoor");
+  check(
+    maint.includes("put") && maintServed,
+    `サイト 2 の app のコンテナから storage にメンテナンスの印を置け、どのページでも読み込まれる（置いた=${maint.includes("put")}・配信=${maintServed}）`,
+  );
+  a = agentcms("doctor-maint", ["deploy", "doctor", "-t", S2.target]);
+  check(
+    a.out.includes("メンテナンスの印"),
+    "doctor はメンテナンスの印に気づく",
+  );
   // コンテナの中にプロセスを残す（サイトの PHP が裏で起こせること）
   for (const service of ["app", "scheduler"])
     remote(`docker exec -d agentcms-${S2.site}-${service} sleep 3601`);
@@ -1663,6 +1678,11 @@ exit 0`,
   check(
     lingering() === "0,0",
     `出し直したあと、コンテナの中に残したプロセスは消えている（app,scheduler: ${lingering()}）`,
+  );
+  check(
+    !(await get(S2.host, "/")).body.includes("e2e-maint-backdoor") &&
+      remote(`test -e ${s2}/shared/storage/framework/maintenance.php && echo left || echo gone`).stdout.trim() === "gone",
+    "出し直したあと、storage に置いたメンテナンスの印は消え、読み込まれない",
   );
   // 出し直したあとのコードにも書けない
   const w2 = tryWrites("app");

@@ -153,7 +153,8 @@ health まで通った release には印が付き、公開した順に `releases
 
 - **rollback は、戻す先を置き場所の中の物のまま使わず、残した artifact から作り直してから切り替える。** 前の版のキットで出したサイトでは、置き場所の中の古い release を乗っ取られたサイトが書き換えられた（バックドアを置けた）ため。作り直す間は app と scheduler を止め、current を切り替えてから起こす（切り替える前にいまのコードを起こし直さない・中のプロセスは全部新しくなる）。共有の storage の中で PHP が読み込む物（メンテナンスの印 `storage/framework/maintenance.php`・コンパイル済みの view）を片付ける。artifact の checksum が合わない・artifact が無い（前の版のキットで出した release）ときは、何も変えずに止まる
 - サイトの web は `/storage/`（上げられたファイル）と `/build/` の中の `.php` を PHP として動かさない
-- **deploy と rollback は、current を切り替えたあとサイトのコンテナ（app・scheduler）を起こし直す。** 乗っ取られたサイトがコンテナの中に残したプロセスは、コンテナを止めるまで動き続けるため（その間の数秒は 502）
+- **deploy と rollback は、current を切り替えたあとサイトのコンテナ（app・scheduler）を止め、`shared/storage` の中で PHP が読み込む物（メンテナンスの印 `framework/maintenance.php`・コンパイル済みの view）を消してから起こす。** 乗っ取られたサイトがコンテナの中に残したプロセスはコンテナを止めるまで動き続け、storage はどの release からも同じ物が見えるため（その間の数秒は 502）。health が落ちたときの自動の切り戻しも、手での rollback と同じく送った artifact から作り直してから切り替える（artifact の無い release へは戻さない）。DB を戻す手順（§8）も、コードを合わせるときは artifact から作り直す
+- 前の版のキットで出したサイトを出し直すときは、展開より前に、置き場所全体を書ける形の app・scheduler を止める（新しい release を書き換えさせない。そのあいだは 502）
 - **サイトのコンテナが書けるのは `shared/storage` だけ。** そこ（上げられたファイル・コンパイル済みの view・ログ）と DB は、乗っ取られたサイトが書き換えられる。乗っ取られたと分かったら、原因（脆弱性）を直したコードを出し直し、`shared/.env` の秘密（APP_KEY・DB のパスワード）と管理者のパスワードを替え、storage と DB はサーバーの写し（§9）から戻すかを決めること。前の版のキットで出したサイトは、出し直すまでコンテナが置き場所全体を書ける形のまま（doctor が WARN を出す）
 - **`agentcms deploy doctor` は、いま出ている release を送った artifact と比べる**（使い捨てのコンテナの中の GNU tar・サイトのコードは動かさない）。中身の違うファイル・足されたファイルがあれば WARN（数だけ・名前は出さない）。shared へのリンク（`storage`・`.env`・`public/storage`）と deploy が作る `bootstrap/cache` は比べない（PASS の行にもそう出す。そこに置かれた PHP には、この比べでは気づけない）。サイトのコンテナはいまはコードを書けないが、前の版のキットで出したあいだに書き換えられていないかの手がかりになる
 
@@ -241,8 +242,26 @@ if [ "$(q "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 
   q "UPDATE users SET session_epoch = GREATEST($epoch, (SELECT m FROM (SELECT COALESCE(MAX(session_epoch), 0) AS m FROM users) t)) + 1, remember_token = NULL;" > /dev/null
 fi
 if [ "$(q "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'sessions';")" = 1 ]; then q "DELETE FROM sessions;" > /dev/null; fi
-# 5. コードを、この DB を取ったときに出ていた release へ合わせてから起こす
-if [ "$mode" != keep-code ]; then in_site "ln -sfn $dir/releases/$rel current" < /dev/null; fi
+# 5. コードを、この DB を取ったときに出ていた release へ合わせてから起こす。置き場所の中の release は
+#    前の版のキットではサイトが書き換えられたので、送った artifact（control の中・checksum つき）から作り直してから向ける。
+#    artifact が無ければ（前の版のキットで出した release）、コードは変えずに止める
+if [ "$mode" != keep-code ]; then
+  ( cd "$ctl/artifacts" && [ ! -L "$rel.tar.gz" ] && grep " $rel.tar.gz\$" "$rel.sha256" | sha256sum -c --quiet - ) \
+    || { echo "release $rel の送った artifact が無いか、checksum が合いません。DB は戻しました。コードは変えていません（アプリは止めたまま）。agentcms deploy で出し直してから docker compose -f $ctl/compose.yml start"; exit 1; }
+  r="releases/$rel"; t="releases/.rebuild-$rel"
+  in_site "set -e; rm -rf $t; mkdir $t; tar -xzf - -C $t; test -f $t/artisan; rm -rf $t/storage $t/.env; ln -sfn $dir/shared/storage $t/storage; ln -sfn $dir/shared/.env $t/.env; mkdir -p $t/public $t/bootstrap/cache; ln -sfn $dir/shared/storage/app/public $t/public/storage; touch $t/.agentcms-healthy; rm -rf $r; mv $t $r" < "$ctl/artifacts/$rel.tar.gz"
+  # キャッシュは、その release の bootstrap/cache と shared/storage だけを書ける使い捨てのコンテナで作る（途中にリンクがあれば入れない）
+  b=$(cd -P -- "$dir" && pwd)
+  [ "$(cd -P -- "$dir/$r/bootstrap/cache" && pwd)" = "$b/$r/bootstrap/cache" ] && [ "$(cd -P -- "$dir/shared/storage" && pwd)" = "$b/shared/storage" ]
+  docker run --rm --init --pull never --network agentcms --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:size=64m \
+    --memory 768m --memory-swap 768m --pids-limit 256 --cpus 1.0 --log-driver none --user "$(id -u):$(id -g)" \
+    -v "$dir:$dir:ro" -v "$dir/$r/bootstrap/cache:$dir/$r/bootstrap/cache" -v "$dir/shared/storage:$dir/shared/storage" -w "$dir/$r" \
+    --entrypoint timeout agentcms-php:8.5-2 -s KILL 900 sh -c "php artisan config:cache && php artisan view:clear && php artisan view:cache" < /dev/null
+  in_site "ln -sfn $dir/$r current" < /dev/null
+fi
+# storage の中で PHP が読み込む物（メンテナンスの印・コンパイル済みの view）は、起こす前に消す（サイトが置ける）
+#    （サイトが権限を外していても消せるように戻してから消し、消えたことを確かめる。消せなければ起こさずに止まる）
+in_site 'f=shared/storage/framework; if [ -e "$f" ] || [ -L "$f" ]; then chmod -R u+rwX "$f" 2>/dev/null || true; fi; rm -rf "$f/maintenance.php" "$f/down" && { [ ! -d "$f/views" ] || find "$f/views" -name "*.php" ! -type d -delete; } && [ ! -e "$f/maintenance.php" ] && [ ! -L "$f/maintenance.php" ] && { [ ! -d "$f/views" ] || [ -z "$(find "$f/views" -name "*.php" ! -type d | head -1)" ]; }' < /dev/null
 docker compose -f "$ctl/compose.yml" start
 echo "戻しました: DB は $id の${src:+（サーバーの写し）}直前 / current は $(basename "$(readlink "$dir/current")") / ログインは全員切りました"
 ```

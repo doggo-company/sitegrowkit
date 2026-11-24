@@ -20,6 +20,7 @@ import {
   releaseRunCommand,
   restartSiteCode,
   siteContainersScript,
+  stopLegacyWritable,
   vpsDoctor,
   vpsReleaseContext,
 } from "../src/deploy/providers/vps.js";
@@ -185,6 +186,10 @@ describe("release の PHP は使い捨てのコンテナで流す", () => {
       log: () => {},
     });
     const steps = vpsDeploySteps(ctx, "/tmp/a.tar.gz");
+    // 前の版の形のコンテナは、展開より前に止める
+    const at = (l: string) => steps.findIndex(([x]) => x.includes(l));
+    expect(at("前の版の形")).toBeGreaterThan(-1);
+    expect(at("前の版の形")).toBeLessThan(at("artifact アップロード"));
     const step = (s: string) => steps.find(([l]) => l.includes(s))![1];
     await step("DB migration")();
     await step("config / view")();
@@ -202,6 +207,7 @@ const FAKE_DOCKER = `#!/bin/bash
 printf '%s\\n' "$*" >> "$FAKE_LOG"
 case "$1" in
   run)
+    [ -z "\${FAKE_RUN_FAIL:-}" ] || exit 1
     shift; w=""
     while [ $# -gt 0 ]; do
       case "$1" in
@@ -350,26 +356,75 @@ run("置き場所の中のリンクを mount の元にしない・起こし直�
     expect(dockerLog()).not.toMatch(/^run /m);
   });
 
-  it("current を切り替えたら app と scheduler を起こし直す（中に残ったプロセスを消す）", async () => {
+  const ctxLocal = (env: Record<string, string> = {}): DeployContext => ({
+    cfg: cfgAt(root),
+    exec: new Local(env),
+    phpBin: "php",
+    releaseId: "20261124000000",
+    log: () => {},
+  });
+
+  it("current を切り替えたら app と scheduler を止め、storage の中の PHP が読み込む物を消してから起こす", async () => {
     const n = vpsNames(cfgAt(root));
-    const ctx: DeployContext = {
-      cfg: cfgAt(root),
-      exec: new Local(),
-      phpBin: "php",
-      releaseId: "20261124000000",
-      log: () => {},
-    };
-    const r = await restartSiteCode(ctx);
+    const fw = join(n.appDir, "shared", "storage", "framework");
+    mkdirSync(join(fw, "views"), { recursive: true });
+    writeFileSync(join(fw, "maintenance.php"), "<?php // BACKDOOR\n");
+    writeFileSync(join(fw, "views", "abc.php"), "<?php // BACKDOOR\n");
+    writeFileSync(join(n.appDir, "shared", "storage", "keep.txt"), "upload\n");
+    const r = await restartSiteCode(ctxLocal());
     expect(r.ok, r.detail).toBe(true);
-    expect(dockerLog()).toMatch(
-      new RegExp(`^restart -t 10 ${n.appContainer} ${n.schedulerContainer}$`, "m"),
-    );
+    expect(existsSync(join(fw, "maintenance.php"))).toBe(false);
+    expect(existsSync(join(fw, "views", "abc.php"))).toBe(false);
+    // 上げられたファイルなど、ほかの物は消さない
+    expect(existsSync(join(n.appDir, "shared", "storage", "keep.txt"))).toBe(true);
+    const log = dockerLog();
+    const stop = log.search(new RegExp(`^stop -t 10 ${n.appContainer} ${n.schedulerContainer}$`, "m"));
+    const clean = log.search(/^run .*maintenance\.php/m);
+    const start = log.search(new RegExp(`^start ${n.appContainer} ${n.schedulerContainer}$`, "m"));
+    expect(stop).toBeGreaterThan(-1);
+    // 止めてから消し、消してから起こす（動いているプロセスに置き直させない）
+    expect(clean).toBeGreaterThan(stop);
+    expect(start).toBeGreaterThan(clean);
+  });
+
+  it("サイトが framework の権限を外していても消す（同じ利用者なので戻せる）", async () => {
+    const n = vpsNames(cfgAt(root));
+    const fw = join(n.appDir, "shared", "storage", "framework");
+    mkdirSync(join(fw, "views", "sub"), { recursive: true });
+    writeFileSync(join(fw, "maintenance.php"), "<?php // BACKDOOR\n");
+    writeFileSync(join(fw, "views", "sub", "x.php"), "<?php // BACKDOOR\n");
+    chmodSync(join(fw, "views", "sub"), 0o555);
+    chmodSync(join(fw, "views"), 0o555);
+    chmodSync(fw, 0o555);
+    const r = await restartSiteCode(ctxLocal());
+    expect(r.ok, r.detail).toBe(true);
+    expect(existsSync(join(fw, "maintenance.php"))).toBe(false);
+    expect(existsSync(join(fw, "views", "sub", "x.php"))).toBe(false);
+  });
+
+  it("消せなければ app と scheduler を起こさず、失敗を返す（残った PHP を動かさない）", async () => {
+    const n = vpsNames(cfgAt(root));
+    const r = await restartSiteCode(ctxLocal({ FAKE_RUN_FAIL: "1" }));
+    expect(r.ok).toBe(false);
+    expect(r.detail).toContain("storage-clean-failed");
+    expect(dockerLog()).not.toMatch(new RegExp(`^start ${n.appContainer}`, "m"));
+  });
+
+  it("deploy の最初に、前の版の形のコンテナだけを止める", async () => {
+    const n = vpsNames(cfgAt(root));
+    const none = await stopLegacyWritable(ctxLocal({ FAKE_MOUNTS: `${n.appDir}=false` }));
+    expect(none.ok).toBe(true);
+    expect(dockerLog()).not.toMatch(/^stop /m);
+    const legacy = await stopLegacyWritable(ctxLocal({ FAKE_MOUNTS: `${n.appDir}=true` }));
+    expect(legacy.ok).toBe(true);
+    expect(legacy.detail).toContain("止めました");
+    expect(dockerLog()).toMatch(new RegExp(`^stop -t 10 ${n.appContainer} ${n.schedulerContainer}$`, "m"));
   });
 });
 
 describe("doctor: 前の版の形のコンテナに気づく", () => {
   const b64 = (s: string) => Buffer.from(s).toString("base64");
-  const doctorWith = async (codeRw: string) => {
+  const doctorWith = async (codeRw: string, extra: string[] = []) => {
     const lines = [
       "docker=28",
       "compose=2",
@@ -383,6 +438,7 @@ describe("doctor: 前の版の形のコンテナに気づく", () => {
       "backup_status=none",
       "backup_container=running",
       `code_rw=${codeRw}`,
+      ...extra,
       "server_now=1",
     ];
     const ex = new Canned((cmd) =>
@@ -402,5 +458,10 @@ describe("doctor: 前の版の形のコンテナに気づく", () => {
 
   it("読むだけの形なら何も足さない", async () => {
     expect((await doctorWith("0")).code_rw).toBeUndefined();
+  });
+
+  it("storage にメンテナンスの印があれば WARN（どのページでも PHP として読み込まれる）", async () => {
+    expect((await doctorWith("0", ["maint=yes"])).maintenance?.status).toBe("WARN");
+    expect((await doctorWith("0")).maintenance).toBeUndefined();
   });
 });

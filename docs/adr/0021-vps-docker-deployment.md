@@ -108,8 +108,10 @@ deploy の中でこの差し替えをするのは、送信・展開・サイト�
 - app・scheduler は置き場所を**読むだけ**で入れ、`shared/storage` だけを書けるように重ねて入れる（上げたファイル・ログ・コンパイル済みの view・アプリの記録）。web と backup は全部読むだけ。セッション・キャッシュ・キューは DB（`.env` のひな形）なので、ほかに書く場所は要らない
 - config / view のキャッシュ・migration・分類の同期は、その release の `bootstrap/cache` と `shared/storage` だけを書ける使い捨てのコンテナ（権限なし・根は読むだけ・上限つき・edge のネットワーク）で流す。動いているサイトのコンテナは使わない
 - `shared/storage` と `bootstrap/cache` は mount の元になる（Docker はホストでリンクを辿る）。入れる前に、置き場所から先にリンクを含まない本物のディレクトリであることを `cd -P` で確かめる。前の版の形（置き場所全体を書ける）のコンテナが動いていれば、確かめる前に止める（その間に差し替えさせない）
-- deploy と rollback は、current を切り替えたあと app・scheduler を起こし直す（コンテナの中に残したプロセスを消す。数秒 502）
-- doctor は、app・scheduler が前の版の形のままなら WARN を出す（出し直すと直る）
+- deploy と rollback は、current を切り替えたあと app・scheduler を止め、`shared/storage` の中で PHP が読み込む物（メンテナンスの印・コンパイル済みの view）を消してから起こす（コンテナの中に残したプロセスと、どの release からも読み込まれる storage の PHP を消す。数秒 502）。止める前に消すと、動いているプロセスに置き直される
+- health が落ちたときの自動の切り戻しと DB を戻す手順も、手での rollback と同じく送った artifact から作り直してから切り替える（artifact の無い release へは戻さない）
+- 前の版の形のコンテナは、deploy の最初（展開より前）に止める。止めないと、読むだけに替える前に新しい release を書き換えられる
+- doctor は、app・scheduler が前の版の形のままなら・storage にメンテナンスの印があれば WARN を出す（出し直すと直る）
 - 残ること：`shared/storage` の中（コンパイル済みの view・上げたファイル）と DB は、乗っ取られたサイトが書き換えられる。乗っ取られたと分かったら、秘密を替え、storage と DB はサーバーの写しから戻す
 
 ### 6. 試験

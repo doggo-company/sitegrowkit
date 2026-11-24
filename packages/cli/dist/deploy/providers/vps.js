@@ -178,13 +178,21 @@ export function vpsReleaseContext(ctx) {
  *
  * 出し直し・戻しで current を切り替えたあとに流す。乗っ取られたサイトがコンテナの中に残した
  * プロセス（裏で起こした PHP など）は、コンテナを止めるまで動き続け、出し直しても戻しても残る。
- * 起こし直すとコンテナの中のプロセスは全部新しくなり、/tmp・ソケットの置き場所（tmpfs）も空になる。
+ * 止めてから、サイトが書ける shared/storage の中で **PHP が読み込む物**（メンテナンスの印
+ * `framework/maintenance.php`・コンパイル済みの view）を消し、それから起こす。storage はどの release からも
+ * 同じ物を見るので、残すと出し直しても戻しても乗っ取りのコードが動く。止める前に消すと、
+ * 動いているプロセスに置き直される。view は必要になったときに作り直される。
+ * 起こすとコンテナの中のプロセスは全部新しくなり、/tmp・ソケットの置き場所（tmpfs）も空になる。
  * その間（数秒）web は 502 を返す
  */
 export async function restartSiteCode(ctx) {
     const n = vpsNames(ctx.cfg);
     const r = await runScript(ctx.exec, `set -u
-docker restart -t 10 ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null 2>&1 || docker start ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null
+${siteFsFns(n)}
+docker stop -t 10 ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null 2>&1 || true
+# 消せなければ起こさない（起こすと、残った PHP が動く）。止めたまま知らせる
+in_site ${shq(STORAGE_EXEC_CLEAN)} || { echo "storage-clean-failed: shared/storage の中の PHP が読み込む物（メンテナンスの印・コンパイル済みの view）を消せませんでした。サイトのコンテナは止めたままです（web は 502）。中を確かめてから docker start ${n.appContainer} ${n.schedulerContainer}"; exit 1; }
+docker start ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null
 for i in $(seq 1 30); do
   if [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.appContainer)} 2>/dev/null)" = true ] && [ "$(docker inspect -f '{{.State.Running}}' ${shq(n.schedulerContainer)} 2>/dev/null)" = true ] && docker exec ${shq(n.webContainer)} test -S ${FPM_SOCKET_IN_CONTAINER} 2>/dev/null; then
     echo restart-ok; exit 0
@@ -196,6 +204,39 @@ exit 1`);
     return r.code === 0 && r.stdout.includes("restart-ok")
         ? ok("restart", `${n.appContainer} / ${n.schedulerContainer} を起こし直しました（中に残ったプロセスは消えます）`)
         : ng("restart", `サイトのコンテナを起こし直せません: ${tail(r)}`);
+}
+/**
+ * shared/storage の中で、PHP が読み込む物（メンテナンスの印・コンパイル済みの view）を消すコマンド。
+ * どちらも作り直せる。サイトが書ける場所なので、出し直し・戻しのたびに、サイトのコンテナを止めてから消す
+ */
+export const STORAGE_EXEC_CLEAN = [
+    "f=shared/storage/framework",
+    // サイトが権限を外していても消せるように（同じ利用者の持ち物なので戻せる）。リンクはこのコンテナの中でしか解けない
+    'if [ -e "$f" ] || [ -L "$f" ]; then chmod -R u+rwX "$f" 2>/dev/null || true; fi',
+    'rm -rf "$f/maintenance.php" "$f/down"',
+    '{ [ ! -d "$f/views" ] || find "$f/views" -name "*.php" ! -type d -delete; }',
+    // 消えたことを確かめる（消せなければ失敗にする。黙って続けない）
+    '[ ! -e "$f/maintenance.php" ] && [ ! -L "$f/maintenance.php" ]',
+    '{ [ ! -d "$f/views" ] || [ -z "$(find "$f/views" -name "*.php" ! -type d | head -1)" ]; }',
+].join(" && ");
+/**
+ * 前の版の形（置き場所全体を書ける）のサイトのコンテナが動いていれば止める。deploy の最初に流す。
+ * 動いたままだと、展開した新しい release を、mount を読むだけに替える前に書き換えられる
+ */
+export async function stopLegacyWritable(ctx) {
+    const n = vpsNames(ctx.cfg);
+    const r = await runScript(ctx.exec, `set -u
+if docker inspect -f '{{range .Mounts}}{{.Destination}}={{.RW}}{{"\\n"}}{{end}}' ${shq(n.appContainer)} ${shq(n.schedulerContainer)} 2>/dev/null | grep -qxF ${shq(`${n.appDir}=true`)}; then
+  docker stop -t 10 ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null || { echo legacy-stop-failed; exit 1; }
+  echo legacy-stopped
+else
+  echo legacy-none
+fi`);
+    if (r.code !== 0 || !/legacy-(stopped|none)/.test(r.stdout))
+        return ng("legacy", `前の版の形のサイトのコンテナを止められません: ${tail(r)}`);
+    return r.stdout.includes("legacy-stopped")
+        ? ok("legacy", `前の版の形（置き場所全体を書ける）の ${n.appContainer} / ${n.schedulerContainer} を止めました（このあと読むだけの形で起こします。その間は 502）`)
+        : ok("legacy");
 }
 /**
  * Caddy を、あるサイトの web 用のネットワーク（そのサイトの web と Caddy だけ）へ入れる bash の関数。
@@ -294,7 +335,7 @@ sha256sum -c --quiet ${shq(`${id}.sha256`)} || { echo "artifact-odd: 残した a
 docker stop ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null
 trap 'docker start ${shq(n.appContainer)} ${shq(n.schedulerContainer)} >/dev/null 2>&1 || true' EXIT
 # 共有の storage の中で、PHP が読み込む物を片付ける（メンテナンスの印・コンパイル済みの view。どちらも作り直せる）
-in_site 'rm -f shared/storage/framework/maintenance.php shared/storage/framework/down; find shared/storage/framework/views -type f -name "*.php" -delete 2>/dev/null; true'
+in_site ${shq(STORAGE_EXEC_CLEAN)} || { trap - EXIT; echo "storage-clean-failed: shared/storage の中の PHP が読み込む物を消せませんでした。サイトのコンテナは止めたままです"; exit 1; }
 in_site_in ${shq(`set -e; rm -rf releases/.rebuild-${id}; mkdir releases/.rebuild-${id}; tar -xzf - -C releases/.rebuild-${id}; test -f releases/.rebuild-${id}/artisan; rm -rf releases/${id}; mv releases/.rebuild-${id} releases/${id}; touch releases/${id}/${HEALTHY_MARK}; echo rebuild-ok`)} < ${shq(`${id}.tar.gz`)}
 # 作り直せた: app・scheduler は止めたまま返す（起こすのは current を切り替えてから・restartSiteCode）
 trap - EXIT`, 600_000);
@@ -467,6 +508,15 @@ export async function vpsDoctor(exec, cfg) {
             what: `${n.appDir}/current がこのサイトの release（releases/<14 桁>）を指していません`,
             why: "サイトのコンテナが書き換えられる場所です。乗っ取られた可能性があります",
             fix: "`agentcms deploy` で出し直してください（deploy は current をこの形でしか信じません）",
+        });
+    if (fact("maint") === "yes")
+        add({
+            key: "maintenance",
+            name: "メンテナンスの印（shared/storage/framework/maintenance.php）",
+            status: "WARN",
+            what: "メンテナンスの印があります。アプリはどのページでも、起動する前にこのファイルを PHP として読み込みます",
+            why: "運用者が `php artisan down` したのでなければ、サイトの中から置かれた（乗っ取りの疑い）。storage はサイトが書ける場所です",
+            fix: "`agentcms deploy` で出し直すと消えます（サイトのコンテナを止めてから消し、起こし直します）",
         });
     if (Number(fact("code_rw")) > 0)
         add({
@@ -651,6 +701,8 @@ echo "mysql=$(docker inspect -f '{{.State.Running}}' ${MYSQL_CONTAINER} 2>/dev/n
 if docker image inspect ${shq(PHP_IMAGE)} >/dev/null 2>&1; then echo php_image=yes; else echo php_image=no; fi
 ${siteFsFns(n)}
 if [ -d ${shq(n.appDir)} ] && docker image inspect ${shq(PHP_IMAGE)} >/dev/null 2>&1 && in_site "grep -q '^APP_KEY=base64:' shared/.env" 2>/dev/null; then echo env=yes; else echo env=no; fi
+# メンテナンスの印（storage の中・PHP が最初に読み込む。サイトが置ける）
+if [ -d ${shq(n.appDir)} ] && docker image inspect ${shq(PHP_IMAGE)} >/dev/null 2>&1 && in_site "test -e shared/storage/framework/maintenance.php || test -L shared/storage/framework/maintenance.php" 2>/dev/null; then echo maint=yes; fi
 for g in ${shq(n.root + "/edge/sites")}/*.caddy; do
   [ -e "$g" ] || continue
   [ "$(basename "$g" .caddy)" = ${shq(n.site)} ] && continue

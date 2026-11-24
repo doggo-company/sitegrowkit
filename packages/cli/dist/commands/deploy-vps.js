@@ -1,7 +1,7 @@
 import { buildArtifact, cleanupBuilds, newReleaseId } from "../deploy/build.js";
 import { postHealthAction, runHealthChecks } from "../deploy/health.js";
 import { ensureLayout, linkShared, migrate, optimize, switchCurrent, taxonomySync, } from "../deploy/release.js";
-import { acquireSiteLock, backupDatabaseVps, cleanupReleasesVps, dbUserLimits, healthyReleases, markHealthy, readCurrent, rebuildReleaseFromArtifact, releaseIdIsFree, rollbackTargetByHistory, releaseSiteLock, restartSiteCode, runScript, siteContainers, siteFsContext, siteRoute, uploadAndExtractVps, vpsDoctor, vpsReleaseContext, vpsSetupActions, } from "../deploy/providers/vps.js";
+import { acquireSiteLock, backupDatabaseVps, cleanupReleasesVps, dbUserLimits, healthyReleases, markHealthy, readCurrent, rebuildReleaseFromArtifact, releaseIdIsFree, rollbackTargetByHistory, releaseSiteLock, restartSiteCode, runScript, stopLegacyWritable, siteContainers, siteFsContext, siteRoute, uploadAndExtractVps, vpsDoctor, vpsReleaseContext, vpsSetupActions, } from "../deploy/providers/vps.js";
 import { vpsNames } from "../deploy/providers/vps-assets.js";
 import { worstStatus } from "../deploy/types.js";
 import { fail, heading, info, ok, warn } from "../ui.js";
@@ -90,6 +90,8 @@ export function vpsDeploySteps(ctx, artifactPath) {
     const fs = siteFsContext(ctx);
     return [
         ["release の番号が空いているか", () => releaseIdIsFree(ctx)],
+        // 前の版の形（置き場所全体を書ける）のコンテナは、展開より前に止める（新しい release を書き換えさせない）
+        ["前の版の形のサイトのコンテナを止める", () => stopLegacyWritable(ctx)],
         ["レイアウト作成 + shared/.env 検査", () => ensureLayout(fs)],
         // 送った artifact は control に残し、そこから標準入力で展開する（サイトの tmp/ を経由しない）
         ["artifact アップロード + 展開", () => uploadAndExtractVps(ctx, artifactPath)],
@@ -211,14 +213,16 @@ async function deployLocked(ctx, root, artifactPath, io) {
     if (action.kind !== "continue") {
         if (action.kind === "rollback") {
             warn("health check に失敗したため旧 release へ切り戻します…");
-            const rb = await switchCurrent(siteFsContext(ctx), action.to);
+            // 手での rollback と同じ道（送った artifact から作り直す・止めてから切り替える・起こし直す）
+            const prevId = action.to.split("/").pop() ?? "";
+            const rb = await rebuildAndSwitch(ctx, prevId);
             if (rb.ok)
                 warn(`旧 release へ切り戻しました（${action.to}）。DB migration は自動では戻しません — 必要なら ${n.appDir}/backups/${releaseId}-db.sql.gz から手動で戻してください`);
             else
                 fail({
-                    what: "自動切り戻しにも失敗しました",
-                    why: rb.detail ?? "-",
-                    fix: `ssh でサーバーに入り、ln -sfn ${action.to} ${n.appDir}/current を流してください`,
+                    what: `自動切り戻しができませんでした: ${rb.error.what}`,
+                    why: rb.error.why,
+                    fix: rb.error.fix,
                 });
         }
         else {
@@ -272,6 +276,65 @@ export async function vpsRollback(cfg, exec, io, approval) {
     finally {
         await releaseSiteLock(ctx);
     }
+}
+/**
+ * 戻す先の release を、送った artifact（control の中）から作り直し、current を切り替え、
+ * サイトのコンテナを起こし直す（手での rollback と、deploy の health が落ちたときの自動の切り戻しで同じ道）。
+ *
+ * - 作り直す間 app・scheduler は止める。キャッシュは使い捨てのコンテナで作り、current を切り替えてから
+ *   起こす（切り替える前に、いまのコードを起こし直さない）。起こす前に storage の中の PHP が読み込む物を消す
+ * - artifact が無い（前の版のキットで出した）release は、確かめる物が無いので戻さない（current は変えない）
+ */
+async function rebuildAndSwitch(ctx, prev) {
+    const n = vpsNames(ctx.cfg);
+    const manual = `分かったうえで置き場所の中の物のまま戻すなら ssh で ln -sfn ${n.appDir}/releases/${prev} ${n.appDir}/current`;
+    const rebuilt = await rebuildReleaseFromArtifact(ctx, prev);
+    if (!rebuilt.ok)
+        return {
+            ok: false,
+            error: {
+                what: "戻す先を送った物から作り直せませんでした（current は変えていません）",
+                why: rebuilt.detail ?? "-",
+                fix: `${n.controlDir}/artifacts を確かめてください。${manual}`,
+            },
+        };
+    if (!rebuilt.rebuilt)
+        return {
+            ok: false,
+            error: {
+                what: `${prev} は送った artifact が残っていないので（前の版のキットで出した release）、作り直せません（current は変えていません）`,
+                why: "置き場所の中の古い release は、前の版のキットではサイトの中から書き換えられた可能性があり、確かめる物がありません",
+                fix: `手元の正しいコードから \`agentcms deploy\` で出し直してください。${manual}`,
+            },
+        };
+    const rctx = { ...ctx, releaseId: prev };
+    for (const [label, step] of [
+        ["shared リンク", () => linkShared(siteFsContext(rctx))],
+        ["config / view キャッシュ", () => optimize(rctx)],
+    ]) {
+        const r = await step();
+        if (!r.ok) {
+            await startAfterRebuild(ctx);
+            return {
+                ok: false,
+                error: {
+                    what: `作り直した ${prev} の${label}に失敗しました（current は変えていません）`,
+                    why: r.detail ?? "-",
+                    fix: "原因を直してから、もう一度流してください",
+                },
+            };
+        }
+    }
+    info(`  戻す先 ${prev} を、送った artifact から作り直しました（置き場所の中の古いコードは使いません）`);
+    const rb = await switchCurrent(siteFsContext(ctx), `${n.appDir}/releases/${prev}`);
+    // 切り替えたら（切り替えに落ちても）、サイトのコードが動くコンテナを起こす（中のプロセスは全部新しくなる）
+    await startAfterRebuild(ctx);
+    if (!rb.ok)
+        return {
+            ok: false,
+            error: { what: "切り戻し失敗", why: rb.detail ?? "-", fix: "ssh で current を確かめてください" },
+        };
+    return { ok: true };
 }
 /** 作り直しのあと止めておいたサイトのコンテナを起こす。起こせなければ知らせる（health が続けて見る） */
 async function startAfterRebuild(ctx) {
@@ -327,55 +390,10 @@ async function rollbackLocked(ctx, io, approval) {
         warn("中止しました");
         return 1;
     }
-    // 戻す先は、置き場所の中の物（サイトが書き換えられる）ではなく、送った artifact から作り直す
-    const rebuilt = await rebuildReleaseFromArtifact(ctx, prev);
-    if (!rebuilt.ok) {
-        fail({
-            what: "戻す先を送った物から作り直せませんでした（current は変えていません）",
-            why: rebuilt.detail ?? "-",
-            fix: `${n.controlDir}/artifacts を確かめてください。分かったうえで置き場所の中の物のまま戻すなら ssh で ln -sfn ${n.appDir}/releases/${prev} ${n.appDir}/current`,
-        });
-        return 1;
-    }
-    if (rebuilt.rebuilt) {
-        // 作り直しのあと app・scheduler は止まっている。キャッシュは使い捨てのコンテナで作り、
-        // current を切り替えてから起こす（切り替える前に、いまのコードを起こし直さない）
-        const rctx = { ...ctx, releaseId: prev };
-        for (const [label, step] of [
-            ["shared リンク", () => linkShared(siteFsContext(rctx))],
-            ["config / view キャッシュ", () => optimize(rctx)],
-        ]) {
-            const r = await step();
-            if (!r.ok) {
-                await startAfterRebuild(ctx);
-                fail({
-                    what: `作り直した ${prev} の${label}に失敗しました（current は変えていません）`,
-                    why: r.detail ?? "-",
-                    fix: "原因を直してから、もう一度 rollback を流してください",
-                });
-                return 1;
-            }
-        }
-        info(`  戻す先 ${prev} を、送った artifact から作り直しました（置き場所の中の古いコードは使いません）`);
-    }
-    else {
-        // 置き場所の中の古い release はサイトが書き換えられる。確かめられない物へは黙って戻さない
-        fail({
-            what: `${prev} は送った artifact が残っていないので（前の版のキットで出した release）、作り直せません（current は変えていません）`,
-            why: "置き場所の中の古い release は、サイトの中から書き換えられた可能性があり、確かめる物がありません",
-            fix: `手元の正しいコードから \`agentcms deploy\` で出し直してください。分かったうえで置き場所の中の物のまま戻すなら ssh で ln -sfn ${n.appDir}/releases/${prev} ${n.appDir}/current`,
-        });
-        return 1;
-    }
-    const rb = await switchCurrent(siteFsContext(ctx), `${n.appDir}/releases/${prev}`);
-    // 切り替えたら（切り替えに落ちても）、サイトのコードが動くコンテナを起こす（中のプロセスは全部新しくなる）
-    await startAfterRebuild(ctx);
-    if (!rb.ok) {
-        fail({
-            what: "切り戻し失敗",
-            why: rb.detail ?? "-",
-            fix: "ssh で current を確かめてください",
-        });
+    // 戻す先は、置き場所の中の物ではなく、送った artifact から作り直してから切り替える
+    const sw = await rebuildAndSwitch(ctx, prev);
+    if (!sw.ok) {
+        fail(sw.error);
         return 1;
     }
     const checks = await runHealthChecks(cfg.app.url, cfg.app.healthPath, cfg.target);
