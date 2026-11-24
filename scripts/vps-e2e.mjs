@@ -31,6 +31,8 @@
  *     管理画面での画像の追加・プロフィールの保存は動く
  *  6j. サイトのコンテナが画面の部品（storage の中のコンパイル済みの view）を書き換える・足すと、
  *     doctor が deploy のときに control に残した checksum と比べて気づく。出し直し・戻しのあとは元に戻る
+ *  6k. サイトのコンテナが HTML の整え方の記録（HTMLPurifier の定義キャッシュ）を storage に置いても、
+ *     本文の整え方は変わらない（キャッシュを使わない）。前の版が残した記録は出し直し・戻しで消え、doctor が知らせる
  *  7. サーバーで生成した秘密（APP_KEY・DB パスワード・MySQL root）が、CLI の出力・
  *     コンテナの設定（docker inspect）・compose/Caddy のファイルのどこにも出ていない
  *
@@ -327,6 +329,17 @@ function release(v) {
   writeTouched(
     join(project, "public", "e2e-version.php"),
     `<?php echo 'php-${v}';\n`,
+  );
+  // 6k: 公開の本文を通す道（Purifier）を、アプリと同じ起動で 1 回通して出力を返す
+  writeTouched(
+    join(project, "public", "e2e-purifier.php"),
+    `<?php
+require __DIR__.'/../vendor/autoload.php';
+$app = require __DIR__.'/../bootstrap/app.php';
+$app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap();
+echo $app->make(AgentCms\\Core\\Html\\Purifier::class)->clean('<p>e2e-6k<script>alert(1)</script></p>');
+echo '|', $app->make(AgentCms\\Core\\Html\\RestrictedHtml::class)->clean('<p>e2e-6k<script>alert(1)</script></p>');
+`,
   );
 }
 
@@ -1842,6 +1855,89 @@ exit 0`,
   check(
     a.code === 0 && afterRb6j !== "php-v7-two" && viewsPass(a2.out),
     `戻したあと（${afterRb6j.slice(0, 30)}）も、doctor は画面の部品を作り直した物と同じと言う（${viewsLine(a2.out).replace(/\s+/g, " ").slice(0, 120) || "行が無い"}）`,
+  );
+  check(
+    (await waitHealthy()) === 200 && (await get(S2.host, "/healthz")).status === 200,
+    "サイト 1・2 の /healthz は 200",
+  );
+
+  // ------------------------------------------------------------ 6k. HTML の整え方の記録（HTMLPurifier の定義キャッシュ）を信じない
+  // HTMLPurifier は定義キャッシュを unserialize で読む。置き場所が storage（サイトのコンテナが書ける）だと、
+  // 乗っ取られたサイトが置いた物を出し直しのあとも読み込む。キャッシュを使わず毎回コードから作ること、
+  // 前の版が storage に残した物を deploy が消し、doctor が知らせることを見る
+  step(
+    "6k. サイトのコンテナが HTML の整え方の記録（storage/app/purifier）を置いても、本文の整え方は変わらない。出し直しで消え、doctor が気づく",
+  );
+  const purified = async () => (await get(S2.host, "/e2e-purifier.php")).body;
+  const marked = (body) => body.includes("<script");
+  const pBefore = await purified();
+  check(
+    pBefore.includes("e2e-6k") && !marked(pBefore),
+    `置く前は、許していない tag（script）が本文から落ちる（${pBefore.slice(0, 80)}）`,
+  );
+  const cacheFiles = () =>
+    inS2c("app", `find shared/storage/app/purifier -mindepth 1 2>/dev/null | wc -l`).stdout.trim();
+  const cacheBefore = cacheFiles();
+  check(
+    cacheBefore === "0",
+    `本文を整えても、storage に HTML の整え方の記録を作らない（${cacheBefore} 個）`,
+  );
+  // サイト 2 の app のコンテナの中から（サイトの PHP ができることだけで）、いまのコードが使う設定と同じ
+  // 名前の記録を、script を許す設定で作った物に差し替えて置く（中身は HTMLPurifier 自身が作る定義）
+  const plant6kScript = `<?php
+require 'current/vendor/autoload.php';
+$app = require 'current/bootstrap/app.php';
+$app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap();
+$dir = 'shared/storage/app/purifier/HTML';
+is_dir($dir) || mkdir($dir, 0775, true);
+foreach ([AgentCms\\Core\\Html\\Purifier::class, AgentCms\\Core\\Html\\RestrictedHtml::class] as $cls) {
+    $real = (fn () => $this->instance())->call($app->make($cls))->config;
+    $key = (new HTMLPurifier_DefinitionCache_Serializer('HTML'))->generateKey($real);
+    $fake = HTMLPurifier_Config::createDefault();
+    $fake->loadArray($real->getAll());
+    $fake->set('HTML.Trusted', true);
+    $fake->set('HTML.Allowed', $real->get('HTML.Allowed').',script');
+    $fake->set('Cache.DefinitionImpl', null);
+    file_put_contents("$dir/$key.ser", serialize($fake->getHTMLDefinition()));
+    echo "planted\\n";
+}
+`;
+  const plant6k = inS2c("app", "php", plant6kScript);
+  const plantedN = (plant6k.stdout.match(/planted/g) ?? []).length;
+  const pPlanted = await purified();
+  check(
+    plantedN === 2 && pPlanted.includes("e2e-6k") && !marked(pPlanted),
+    `サイト 2 の app のコンテナから記録を置いても（${plantedN} 個・${plant6k.stderr.trim().slice(0, 80)}）、本文の整え方は変わらない（${pPlanted.slice(0, 80)}）`,
+  );
+  const purifierLine = (out) =>
+    (/HTML の整え方の記録[^\n]*(?:\n[^\n✔▲✘]*){0,2}/.exec(out) ?? [""])[0].replace(/\s+/g, " ").slice(0, 120);
+  a = agentcms("doctor-purifier-planted", ["deploy", "doctor", "-t", S2.target]);
+  check(
+    /storage\/app\/purifier/.test(purifierLine(a.out)) && /▲|WARN/.test(a.out),
+    `doctor は、storage に置かれた HTML の整え方の記録に気づく（${purifierLine(a.out) || "行が無い"}）`,
+  );
+  await new Promise((res) => setTimeout(res, 1100));
+  release("v8-two");
+  a = agentcms("deploy-6k", ["deploy", "staging", "-t", S2.target, "--confirm-target", S2.target, "-y"]);
+  const pAfter = await purified();
+  check(
+    a.code === 0 && (await get(S2.host, "/e2e-version.php")).body.trim() === "php-v8-two" &&
+      !marked(pAfter) && cacheFiles() === "0",
+    `出し直すと、置かれた記録は消え、本文の整え方は変わらない（${pAfter.slice(0, 80)}）`,
+  );
+  a = agentcms("doctor-purifier-after-deploy", ["deploy", "doctor", "-t", S2.target]);
+  check(
+    /✔ HTML の整え方の記録/.test(a.out) && !/storage\/app\/purifier/.test(purifierLine(a.out)),
+    `出し直したあとの doctor は、HTML の整え方の記録が無いと言う（${purifierLine(a.out) || "行が無い"}）`,
+  );
+  // 置き直してから戻す（rollback）。戻しでも消え、使われない
+  const replanted = (inS2c("app", "php", plant6kScript).stdout.match(/planted/g) ?? []).length;
+  a = agentcms("rollback-6k", ["deploy", "rollback", "-t", S2.target, "--confirm-target", S2.target, "-y"]);
+  const pRb = await purified();
+  check(
+    a.code === 0 && (await get(S2.host, "/e2e-version.php")).body.trim() !== "php-v8-two" &&
+      replanted === 2 && !marked(pRb) && cacheFiles() === "0",
+    `置き直して（${replanted} 個）戻したあとも、置かれた記録は消え、本文の整え方は変わらない（${pRb.slice(0, 80)}）`,
   );
   check(
     (await waitHealthy()) === 200 && (await get(S2.host, "/healthz")).status === 200,
