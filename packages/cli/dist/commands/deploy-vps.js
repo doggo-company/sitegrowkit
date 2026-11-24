@@ -1,7 +1,7 @@
 import { buildArtifact, cleanupBuilds, newReleaseId } from "../deploy/build.js";
 import { postHealthAction, runHealthChecks } from "../deploy/health.js";
 import { ensureLayout, linkShared, migrate, optimize, switchCurrent, taxonomySync, } from "../deploy/release.js";
-import { acquireSiteLock, backupDatabaseVps, cleanupReleasesVps, dbUserLimits, healthyReleases, markHealthy, readCurrent, rebuildReleaseFromArtifact, appendFirstRenderViews, recordViews, releaseIdIsFree, rollbackTargetByHistory, releaseSiteLock, runScript, startSiteCode, stopLegacyWritable, stopSiteCode, siteContainers, siteFsContext, siteRoute, uploadAndExtractVps, vpsDoctor, vpsReleaseContext, vpsSetupActions, } from "../deploy/providers/vps.js";
+import { acquireSiteLock, backupDatabaseVps, cleanupReleasesVps, dbUserLimits, healthyReleases, markHealthy, readCurrent, rebuildReleaseFromArtifact, recordViews, warmViews, releaseIdIsFree, rollbackTargetByHistory, releaseSiteLock, runScript, startSiteCode, stopLegacyWritable, stopSiteCode, siteContainers, siteFsContext, siteRoute, uploadAndExtractVps, vpsDoctor, vpsReleaseContext, vpsSetupActions, } from "../deploy/providers/vps.js";
 import { vpsNames } from "../deploy/providers/vps-assets.js";
 import { worstStatus } from "../deploy/types.js";
 import { fail, heading, info, ok, warn } from "../ui.js";
@@ -111,11 +111,20 @@ export function vpsDeploySteps(ctx, artifactPath) {
         ["config / view キャッシュ", () => optimize(ctx)],
         // 作った画面の部品（コンパイル済みの view・bootstrap/cache）の checksum を control に残す（doctor が比べる）。
         // サイトのコンテナを止めている間に取る（起こしたあとはサイトが storage の中を書き換えられる）
+        // 最初のページ・メールでアプリが作る view も、記録の前に作っておく（作れなくても止めない）
+        ["最初のページとメールの画面の部品を前もって作る", () => warmViewsStep(ctx, ctx.releaseId)],
         ["画面の部品の checksum を control に残す", () => recordViews(ctx, ctx.releaseId)],
         ["current 切り替え", () => switchCurrent(fs, rel)],
         // 中のプロセスは全部新しくなる（乗っ取られたサイトがコンテナの中に残したプロセスは消える）
         ["サイトのコンテナを起こす（app / scheduler）", () => startSiteCode(ctx)],
     ];
+}
+/** 最初のページとメールの画面の部品を前もって作る。作れなくても止めない（知らせて続ける） */
+async function warmViewsStep(ctx, id) {
+    const r = await warmViews(ctx, id);
+    if (!r.ok)
+        warn(r.detail ?? "最初のページとメールの画面の部品を前もって作れませんでした");
+    return { ...r, ok: true, detail: r.ok ? r.detail : undefined };
 }
 /** サイトのコードが動くコンテナを止めて storage を片付ける工程（ここで落ちたら起こさない） */
 const STOP_STEP = "サイトのコンテナを止め、storage の中の PHP を片付ける（app / scheduler）";
@@ -256,12 +265,6 @@ async function deployLocked(ctx, root, artifactPath, io) {
     const mark = await markHealthy(ctx);
     if (!mark.ok)
         warn(`release に印を付けられませんでした（rollback の候補に入りません）: ${mark.detail}`);
-    // health が開いたページでアプリが作った画面の部品（view:cache では作られない物）を記録に足す
-    const first = await appendFirstRenderViews(ctx, releaseId);
-    if (!first.ok)
-        warn(`${first.detail}（doctor が「足された物」と知らせることがあります）`);
-    else if (first.detail)
-        info(`  ${first.detail}`);
     // 印を付けられなかったときは掃除しない（記録の無い今の版を、残す数に数えられない）
     if (mark.ok) {
         const clean = await cleanupReleasesVps(ctx);
@@ -348,6 +351,7 @@ async function rebuildAndSwitch(ctx, prev) {
         }
     }
     // 画面の部品の checksum を残す（残せなくても戻すのは止めない。doctor が「記録が無い」と知らせる）
+    await warmViewsStep(rctx, prev);
     const rec = await recordViews(rctx, prev);
     if (!rec.ok)
         warn(`${rec.detail ?? "画面の部品の checksum を残せませんでした"}（doctor は比べられないと知らせます）`);
@@ -438,11 +442,6 @@ async function rollbackLocked(ctx, io, approval) {
         });
         return 1;
     }
-    const first = await appendFirstRenderViews(ctx, prev);
-    if (!first.ok)
-        warn(`${first.detail}（doctor が「足された物」と知らせることがあります）`);
-    else if (first.detail)
-        info(`  ${first.detail}`);
     ok(`rollback 完了: ${prev} が稼働中です`);
     return 0;
 }

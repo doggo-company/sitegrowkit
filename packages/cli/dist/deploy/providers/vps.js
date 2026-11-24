@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { shq } from "../executor.js";
+import { releaseCommand } from "../release.js";
 import { APP_KEY_PLACEHOLDER, FPM_SOCKET_IN_CONTAINER, MYSQL_IMAGE, BACKUP_RUNNING_HOURS, BACKUP_STALE_HOURS, backupScript, CADDY_CONTAINER, DB_MAX_USER_CONNECTIONS, DB_PASSWORD_PLACEHOLDER, DOMAIN_MARK, EDGE_NETWORK, edgeCaddyfile, edgeCompose, MYSQL_CONTAINER, PHP_IMAGE, phpDockerfile, siteCaddy, siteCompose, siteNginx, SITE_WRITABLE, vpsNames, } from "./vps-assets.js";
 import { minimalEnv } from "./xserver-setup.js";
 /**
@@ -321,14 +322,18 @@ const VIEWS_LIST_FN = `views_list() {
   for t in b v; do
     if [ "$t" = b ]; then d="$r/bootstrap/cache"; else d=/site/shared/storage/framework/views; fi
     if [ -L "$d" ] || [ ! -d "$d" ]; then echo "odd $t"; continue; fi
+    # 一覧が欠けたら（一覧を読めない dir・権限を外した dir・読めないファイル）、欠けた分を「消えた物」に
+    # させない。find がどこかで失敗したら odd を出す（途中までの一覧を正しい一覧として比べない）
     ( cd "$d" || { echo "odd $t"; exit 0; }
-      find . -mindepth 1 -regextype posix-extended ! -regex "$ok" -printf 'odd n\\n' | head -1000
-      find . -mindepth 1 -regextype posix-extended -regex "$ok" ! -type f -printf "%y - $t/%P\\n"
-      find . -mindepth 1 -regextype posix-extended -regex "$ok" -type f -printf '%P\\n' | while IFS= read -r p; do
+      find . -mindepth 1 -regextype posix-extended ! -regex "$ok" -printf 'odd n\\n' 2>/dev/null || echo "odd f"
+      find . -mindepth 1 -regextype posix-extended -regex "$ok" ! -type f -printf "%y - $t/%P\\n" 2>/dev/null || echo "odd f"
+      find . -mindepth 1 -regextype posix-extended -regex "$ok" -type f -printf '%P\\n' > /tmp/views-files 2>/dev/null || echo "odd f"
+      while IFS= read -r p; do
         h=$(sha256sum < "$p" 2>/dev/null | cut -c1-64)
         if [ \${#h} -eq 64 ]; then echo "f $h $t/$p"; else echo "odd u"; fi
-      done )
-  done | LC_ALL=C sort | head -100000
+      done < /tmp/views-files || echo "odd f"
+      rm -f /tmp/views-files )
+  done | LC_ALL=C sort
 }`;
 /** 記録の 1 行の形（deploy が control に書く前に確かめる） */
 const VIEWS_LINE_SRC = "^(f [0-9a-f]{64}|[a-zA-Z] -) [bv]/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$";
@@ -384,33 +389,45 @@ echo "views-ok $(printf '%s\\n' "$out" | wc -l)"`, 600_000);
         : ng("views", `画面の部品の checksum を残せません: ${tail(r)}`);
 }
 /**
- * health が通ったあと、記録に無い view（最初のページを開いたときにアプリが作る物）を記録に足す。
+ * 最初のページとメールでアプリが作る view を、公開の前（キャッシュを作ったあと・サイトのコンテナを
+ * 止めている間）に作っておく PHP。
  *
- * Inertia の外枠の部品のように、view:cache では作られず、最初にページを開いたときにアプリが
- * storage へ書く view がある（試験の「VPS の代わり」で、出した直後のサイトに毎回 4 個できた）。
- * これを記録に入れないと、doctor と見張りがいつも「足された物」と知らせる。
- * 足すのは `v/` の新しい名前だけで、記録にある物の checksum は変えない（キャッシュを作ったときの物のまま）。
- * health は起こし直したばかりの、送った artifact から作ったコードが答えている。そのあいだ（数秒〜数十秒）に
- * 新たに乗っ取られて置かれた物は、ここで記録に入りうる（docs の既知の限界）
+ * view:cache は view の置き場所にあるファイルしか作らない。Inertia の外枠の部品（`<x-inertia::head>`・
+ * `<x-inertia::app>`。中身を文字列で返す部品）とメールの部品（`mail::`）は、最初にページを開いた・
+ * メールを送ったときにアプリが storage へ書く（試験の「VPS の代わり」で、出した直後のサイトに毎回 4 個できた）。
+ * 前もって作って記録に入れておかないと、doctor と見張りがいつも「足された物」と知らせる。
+ * 公開したあとに見つかった物を記録へ足すことはしない（そのあいだに置かれた物を信じることになるため）
  */
-export async function appendFirstRenderViews(ctx, id) {
-    const n = vpsNames(ctx.cfg);
+export const WARM_VIEWS_PHP = `require 'vendor/autoload.php';
+$app = require 'bootstrap/app.php';
+$app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap();
+$app->instance('request', Illuminate\\Http\\Request::create('/'));
+$ok = 0;
+try { Illuminate\\Support\\Facades\\Blade::render('<x-inertia::head></x-inertia::head><x-inertia::app />', [], true); $ok++; } catch (Throwable $e) { fwrite(STDERR, 'inertia: ' . get_class($e) . "\\n"); }
+try {
+  $m = (new Illuminate\\Notifications\\Messages\\MailMessage)->greeting('x')->line('x')->action('x', 'https://example.invalid')->line('x');
+  $md = $app->make(Illuminate\\Mail\\Markdown::class);
+  $md->render('notifications::email', $m->data());
+  $md->renderText('notifications::email', $m->data());
+  $ok++;
+} catch (Throwable $e) { fwrite(STDERR, 'mail: ' . get_class($e) . "\\n"); }
+echo "warm-ok $ok\\n";`;
+/**
+ * WARM_VIEWS_PHP を、その release の bootstrap/cache と shared/storage だけを書ける使い捨てのコンテナで流す
+ * （optimize と同じ道・送った artifact から作ったコード）。作れなかった部品があっても deploy は止めない
+ * （doctor が「足された物」と知らせることがある）
+ */
+export async function warmViews(ctx, id) {
     if (!/^\d{14}$/.test(id))
-        return ng("views", `release の番号の形が違います: ${id}`);
-    const art = `${n.controlDir}/artifacts`;
-    const r = await runScript(ctx.exec, `set -uo pipefail
-id=${shq(id)}
-m=${shq(art)}/"$id".views
-if [ -L "$m" ] || [ ! -f "$m" ]; then echo "views-none: 記録がありません"; exit 1; fi
-out=$(${viewsCommand(n, "list")} "$id") || { echo "views-list-failed"; exit 1; }
-add=$(printf '%s\\n' "$out" | grep -E ${shq(VIEWS_LINE_SRC)} | awk 'NR == FNR { m[$3] = 1; next } $3 ~ /^v\\// && !($3 in m)' "$m" -) || true
-if [ -z "$add" ]; then echo "views-added 0"; exit 0; fi
-t=$(mktemp ${shq(art)}/.views.XXXXXX) && { cat "$m"; printf '%s\\n' "$add"; } | LC_ALL=C sort > "$t" && chmod 600 "$t" && mv -f "$t" "$m" || exit 1
-echo "views-added $(printf '%s\\n' "$add" | wc -l)"`, 600_000);
-    const m = /views-added\s+(\d+)/.exec(r.stdout);
-    return r.code === 0 && m
-        ? ok("views", m[1] === "0" ? undefined : `最初のページでアプリが作った画面の部品 ${m[1]} 個を記録に足しました`)
-        : ng("views", `最初のページで作られた画面の部品を記録に足せません: ${tail(r)}`);
+        return ng("warm", `release の番号の形が違います: ${id}`);
+    const rel = `${ctx.cfg.remote.appDir}/releases/${id}`;
+    const r = await ctx.exec.exec(releaseCommand(ctx, rel, `${shq(ctx.phpBin)} -r ${shq(WARM_VIEWS_PHP)} 2>&1`), {
+        timeoutMs: 300_000,
+    });
+    const m = /warm-ok (\d)/.exec(r.stdout);
+    return r.code === 0 && m?.[1] === "2"
+        ? ok("warm", "最初のページとメールで使う画面の部品を前もって作りました")
+        : ng("warm", `最初のページとメールで使う画面の部品の一部を前もって作れませんでした（doctor が「足された物」と知らせることがあります）: ${(r.stdout + r.stderr).trim().slice(-300)}`);
 }
 /**
  * doctor の「画面の部品が deploy で作った物のままか」の行。
@@ -437,7 +454,7 @@ export function viewsCheck(n, raw, published = false) {
             status: "WARN",
             what: `画面の部品が、deploy で作った物と違います（書き換え ${m[1]} 個・足された物 ${m[2]} 個）`,
             why: m[1] !== "0"
-                ? "コンパイル済みの view はどのページでも PHP として読み込まれ、サイトのコンテナから書き換えられます。deploy のあとにアプリが同じ物を書き直すことは無いので、乗っ取られた可能性があります"
+                ? "コンパイル済みの view はどのページでも PHP として読み込まれ、サイトのコンテナから書き換えられます。deploy のあとにアプリが同じ物を書き直すことは無いので、乗っ取られた可能性があります（一覧や中身を読めない物・名前の形が違う物も、書き換えに数えます）"
                 : "足された物は、メールを送ったときなどにアプリが後から作った view のこともあります（区別できません）。置かれた物なら、その view が使われたときに動きます",
             fix: `\`agentcms deploy\` で出し直すか \`agentcms deploy rollback\`（どちらも view を消して作り直し、記録し直します）。書き換えがあったなら、shared/storage・DB も確かめ、${n.controlDir}/backup の写しから戻すかを決めてください`,
         };

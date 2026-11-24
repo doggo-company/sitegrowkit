@@ -19,7 +19,8 @@ import { vpsDeploySteps } from "../src/commands/deploy-vps.js";
 import type { ExecResult, RemoteExecutor } from "../src/deploy/executor.js";
 import {
   VIEWS_LINE_RE,
-  appendFirstRenderViews,
+  WARM_VIEWS_PHP,
+  warmViews,
   recordViews,
   viewsCheck,
   viewsCommand,
@@ -120,6 +121,22 @@ describe("doctor: 画面の部品の行", () => {
     expect(r.detail).toContain("/srv/agentcms/control/shop-a/artifacts/20261124000000.views");
   });
 
+  it("deploy は、記録の前に最初のページとメールの部品を作る（作れなくても止めない・公開のあとで記録に足さない）", async () => {
+    const ex = new Canned(() => ({ code: 0, stdout: "warm-ok 1", stderr: "" }));
+    const ctx: DeployContext = { cfg: cfgAt("/srv/agentcms"), exec: ex, phpBin: "php", releaseId: "20261124000000", log: () => {} };
+    const steps = vpsDeploySteps(ctx, "/tmp/a.tar.gz");
+    const at = (l: string) => steps.findIndex(([x]) => x.includes(l));
+    expect(at("前もって作る")).toBeGreaterThan(at("config / view キャッシュ"));
+    expect(at("前もって作る")).toBeLessThan(at("画面の部品の checksum"));
+    const r = await steps[at("前もって作る")]![1]();
+    expect(r.ok).toBe(true);
+    expect((await warmViews(ctx, "20261124000000")).ok).toBe(false);
+    expect(WARM_VIEWS_PHP).toContain("<x-inertia::head>");
+    expect(WARM_VIEWS_PHP).toContain("renderText('notifications::email'");
+    // 公開のあとに見つかった物を記録へ足す工程は無い
+    expect(steps.some(([l]) => /health|足す/.test(l))).toBe(false);
+  });
+
   it("doctor の台本は、記録が control の物で、公開の記録にある release のときだけ比べる", async () => {
     let script = "";
     const ex = new Canned((cmd) => {
@@ -158,7 +175,8 @@ class Local implements RemoteExecutor {
   }
 }
 
-withDocker("画面の部品の記録と比べ（本物の Docker・MySQL のイメージの GNU find / awk）", () => {
+// 1 本ごとに docker run を何度か流す（ほかの試験と並ぶと 5 秒を超える）
+withDocker("画面の部品の記録と比べ（本物の Docker・MySQL のイメージの GNU find / awk）", { timeout: 120_000 }, () => {
   let root = "";
   const ID = "20261124000000";
   beforeEach(() => {
@@ -230,46 +248,33 @@ withDocker("画面の部品の記録と比べ（本物の Docker・MySQL のイ�
     expect(await check()).toBe("changed=1 extra=0 gone=3");
   });
 
+  it("一覧を読めなくする（検索はできるが一覧は読めない 0111・中の dir を読めなくする）→ 消えた物でなく書き換えに数える", async () => {
+    expect((await recordViews(ctx(), ID)).ok).toBe(true);
+    writeFileSync(join(views(), "0a1b.php"), "<?php system($_GET['c']); ?>\n");
+    chmodSync(views(), 0o111);
+    try {
+      const out = await check();
+      expect(out).toMatch(/^changed=[1-9]\d* extra=0 gone=\d+$/);
+    } finally {
+      chmodSync(views(), 0o755);
+    }
+    expect(await check()).toBe("changed=1 extra=0 gone=0");
+    mkdirSync(join(views(), "sub"));
+    writeFileSync(join(views(), "sub", "x.php"), "<?php\n");
+    chmodSync(join(views(), "sub"), 0o000);
+    try {
+      expect(await check()).toMatch(/^changed=[2-9]\d* extra=\d+ gone=0$/);
+    } finally {
+      chmodSync(join(views(), "sub"), 0o755);
+    }
+  });
+
   it("deploy の時点で形の違う物があれば記録しない（失敗にする）", async () => {
     writeFileSync(join(views(), "bad name.php"), "<?php\n");
     const r = await recordViews(ctx(), ID);
     expect(r.ok).toBe(false);
     expect(r.detail).toContain("views-odd");
     expect(existsSync(join(vpsNames(cfgAt(root)).controlDir, `artifacts/${ID}.views`))).toBe(false);
-  });
-
-  it("health のあと: 最初のページで作られた view だけを記録に足す（記録にある物の checksum は変えない・bootstrap/cache は足さない）", async () => {
-    expect((await recordViews(ctx(), ID)).ok).toBe(true);
-    const f = join(vpsNames(cfgAt(root)).controlDir, `artifacts/${ID}.views`);
-    const before = readFileSync(f, "utf8");
-    // 最初のページでアプリが作る物（Inertia の外枠の部品など）と、その前に書き換えられた物
-    writeFileSync(join(views(), "58f6.blade.php"), "@if($response)\n{!! $response->head !!}\n@endif\n");
-    writeFileSync(join(views(), "07be.php"), "<?php /* compiled */ ?>\n");
-    writeFileSync(join(views(), "0a1b.php"), "<?php system($_GET['c']); ?>\n");
-    writeFileSync(join(vpsNames(cfgAt(root)).appDir, `releases/${ID}/bootstrap/cache/evil.php`), "<?php\n");
-    writeFileSync(join(views(), "bad name.php"), "<?php\n");
-    expect(await check()).toBe("changed=2 extra=3 gone=0");
-    const r = await appendFirstRenderViews(ctx(), ID);
-    expect(r.ok, r.detail).toBe(true);
-    expect(r.detail).toContain("2 個");
-    const after = readFileSync(f, "utf8").trim().split("\n");
-    for (const l of after) expect(l).toMatch(VIEWS_LINE_RE);
-    for (const l of before.trim().split("\n")) expect(after).toContain(l);
-    expect(after).toHaveLength(before.trim().split("\n").length + 2);
-    // 書き換えられた物は書き換えのまま・bootstrap/cache に足された物・名前のおかしい物は足さない
-    expect(await check()).toBe("changed=2 extra=1 gone=0");
-    expect((await appendFirstRenderViews(ctx(), ID)).detail).toBeUndefined();
-  });
-
-  it("health のあと: 記録が無い・リンクなら足さずに失敗", async () => {
-    const r = await appendFirstRenderViews(ctx(), ID);
-    expect(r.ok).toBe(false);
-    const n = vpsNames(cfgAt(root));
-    mkdirSync(join(n.controlDir, "artifacts"), { recursive: true });
-    writeFileSync(join(root, "other.views"), "f 00 v/x.php\n");
-    symlinkSync(join(root, "other.views"), join(n.controlDir, `artifacts/${ID}.views`));
-    expect((await appendFirstRenderViews(ctx(), ID)).ok).toBe(false);
-    expect(readFileSync(join(root, "other.views"), "utf8")).toBe("f 00 v/x.php\n");
   });
 
   it("release の置き場所が無ければ missing", async () => {
